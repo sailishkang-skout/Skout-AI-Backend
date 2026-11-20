@@ -11,7 +11,7 @@ import {
 } from "../capture-panel.js";
 
 const FILES = ["capture/extract-common.js", "capture/company-sections.js", "capture/page-extract.js"];
-const PERSON_FILES = [...FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/capture-verify.js", "capture/person-capture.js"];
+const PERSON_FILES = [...FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/person-capture.js"];
 const person = (html) => loadCapturePage({ url: "https://www.linkedin.com/in/jane-doe/", html, files: FILES }).SkoutCapturePage.extractPerson();
 const top = (extra) => `<main><section id="profile-Topcard"><h1>Jane Doe</h1><p>Software Engineer at Uber</p>${extra}</section></main>`;
 const experience = (rows) => `<div componentkey="profile.ExperienceTopLevelSection">${rows.map((lines, index) =>

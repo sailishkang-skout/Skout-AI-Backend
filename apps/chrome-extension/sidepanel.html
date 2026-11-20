@@ -66,10 +66,6 @@
       <p id="capture-limits" class="vision-desc">Checking capture status…</p>
       <div id="capture-company-options" class="hidden">
         <label class="checkbox-row">
-          <input id="capture-include-jobs" type="checkbox" checked />
-          Scan job roles (an initial scan, then a verification scan)
-        </label>
-        <label class="checkbox-row">
           <input id="capture-include-people" type="checkbox" checked />
           Include visible associated people (discovery candidates)
         </label>
@@ -109,23 +105,6 @@
       <div id="capture-continue-box" class="capture-continue hidden">
         <p id="capture-continue-text" class="vision-desc"></p>
         <button id="capture-continue" type="button" class="primary">Continue capturing queue</button>
-      </div>
-      <div id="capture-jobs" class="capture-jobs">
-        <p class="vision-kicker">Job roles</p>
-        <p class="vision-desc">
-          Scans a company's jobs twice (its Jobs tab, then LinkedIn job search for the company), merges them without
-          duplicates, and reads the details of up to 15 roles Skout does not have yet. Shown under Companies in Skout.
-        </p>
-        <button id="capture-jobs-scan" type="button" disabled>Scan job roles</button>
-        <div id="capture-jobs-result" class="hidden" role="status" aria-live="polite">
-          <p id="capture-jobs-status" class="capture-jobs-status"></p>
-          <ul id="capture-jobs-notes" class="capture-notes"></ul>
-          <button id="capture-jobs-save" type="button" class="primary hidden">Save again</button>
-        </div>
-        <div id="capture-jobs-requested" class="capture-continue hidden">
-          <p class="vision-desc">Requested from your workspace (Companies → Latest job roles → Rescan):</p>
-          <ul id="capture-jobs-requested-list" class="capture-queue-list"></ul>
-        </div>
       </div>
       <details id="capture-queue" class="capture-queue">
         <summary>Company queue</summary>

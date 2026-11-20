@@ -19,13 +19,11 @@ export const CAPTURE_CONTENT_FILES = [
   'capture/page-extract.js',
   'capture/restriction-detect.js',
   'capture/capture-ui.js',
-  'capture/capture-verify.js',
   'capture/company-capture.js',
   'capture/person-capture.js',
   'capture/sales-navigator-capture.js',
   'capture/sales-lead-link-reader.js',
   'capture/company-people-search.js',
-  'capture/company-jobs.js',
   'capture/capture-content.js',
 ];
 
@@ -44,33 +42,16 @@ async function getStored(key) {
  * page a capture opens, so a LinkedIn warning or the workspace kill switch stops a long
  * run at the next step. A status that cannot be confirmed also stops it.
  */
-// The last "capture is enabled" the API confirmed. The API enforces the kill switch and the daily
-// limit on every save, so when one status check fails (a slow or restarting API) a recent
-// confirmation lets the reader carry on: nothing is saved without the API answering.
-const STATUS_FALLBACK_MS = 10 * 60 * 1000;
-let lastConfirmedStatus = null;
-
-/**
- * Why a capture may not read another page right now: `{ reason }`, with `transient: true` when
- * the cause is only that the status could not be confirmed (try again) rather than a decision
- * (a LinkedIn warning, the kill switch). Nothing blocks: `{}`.
- */
-async function captureBlockDetail() {
+async function captureBlock() {
   const halt = await getStored(CAPTURE_HALT_KEY);
-  if (halt) return { reason: `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.` };
+  if (halt) return `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.`;
   try {
     const status = await deps.skoutFetch(`${API}/capture/status`);
-    lastConfirmedStatus = status?.enabled ? { at: Date.now() } : null;
-    if (!status?.enabled) return { reason: `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}` };
+    if (!status?.enabled) return `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}`;
   } catch (error) {
-    if (lastConfirmedStatus && Date.now() - lastConfirmedStatus.at < STATUS_FALLBACK_MS) return {};
-    return { reason: `Capture status could not be confirmed (${error?.message || 'request failed'}).`, transient: true };
+    return `Capture status could not be confirmed (${error?.message || 'request failed'}).`;
   }
-  return {};
-}
-
-async function captureBlock() {
-  return (await captureBlockDetail()).reason;
+  return undefined;
 }
 
 // ── Sales Navigator: public-link lookup, one lead page at a time ──────────────
@@ -188,8 +169,8 @@ async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPAN
     let timeout;
     try {
       const result = await Promise.race([
-        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url,deep:request.deep === true}),
-        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),request.deep === true ? 90000 : 55000);}),
+        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url}),
+        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),55000);}),
       ]);
       return task.cancelled ? {ok:true,cancelled:true} : result;
     } finally {clearTimeout(timeout);}
@@ -312,13 +293,8 @@ async function readCompanyPeopleSearch(request, sender) {
     let afterPage;
     let lastReadUrl = draft?.lastReadUrl;
     for (; pagesRead < maxPages && !task.cancelled;) {
-      const block = await captureBlockDetail();
-      if (block.reason) {
-        // Only the status check failed: keep the pages already read as a batch instead of
-        // throwing them away; the next run continues from here.
-        if (block.transient && pagesRead > 0) { stopReason = 'the capture status could not be confirmed (it will continue next time)'; await saveDraft(); break; }
-        throw new Error(block.reason);
-      }
+      const blocked = await captureBlock();
+      if (blocked) throw new Error(blocked);
       const ready = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
       if (!ready) return {ok:true,cancelled:true};
       const result = await chrome.tabs.sendMessage(tab.id,{type:'COLLECT_COMPANY_PEOPLE_PAGE'});
@@ -406,7 +382,7 @@ async function readPersonPage(request, sender) {
     // Skills detail pages can load several bounded "Show more" batches.
     // Keep this user-triggered, same-profile reader alive long enough to
     // finish them; it still closes its temporary tab immediately afterward.
-    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url,deep:request.deep === true}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),request.deep === true ? 120000 : 45000);})]); }
+    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),45000);})]); }
     finally { clearTimeout(timeout); }
   } catch(error) { return task.cancelled ? {ok:true,cancelled:true} : {ok:false,error:error.message}; }
   finally {
@@ -416,349 +392,9 @@ async function readPersonPage(request, sender) {
   }
 }
 
-// ── Company job scans: an initial scan, an independent verification scan, then the details ───────
-// A scan never relies on one read. Pass 1 reads the company's Jobs tab (scrolling and pressing
-// "Show more" until nothing more loads). Pass 2 reads LinkedIn's job search for the same company,
-// newest first, page by page, which is a different source and catches what the tab did not show.
-// The two are merged without duplicates, and each pass says whether it reached the end of what
-// LinkedIn shows. The server decides what that can be trusted for (see recordJobScan). A scan that
-// failed, was restricted, or did not load is never reported as "no jobs".
-const jobReads = new Map();
-export const JOB_SCAN_LIMITS = { SEARCH_PAGES: 8, DETAIL_PAGES: 15, PAGE_GAP_MS: 2500 };
-export const JOB_SCAN_RESULT_KEY = 'skoutJobScanResult';
-export const JOB_SCAN_PENDING_KEY = 'skoutJobScanPending';
-
-export function jobsTabUrl(companyId) {
-  return COMPANY_ID.test(companyId || '') ? `https://www.linkedin.com/company/${companyId}/jobs/` : undefined;
-}
-/** LinkedIn's job search for one company, newest first. Only the company id and the page offset are ever set. */
-export function jobsSearchUrl(memberId, start = 0) {
-  if (!/^\d{1,20}$/.test(String(memberId || '')) || !Number.isInteger(start) || start < 0 || start > 1000) return undefined;
-  return `https://www.linkedin.com/jobs/search/?f_C=${memberId}&sortBy=DD&start=${start}`;
-}
-export function jobViewUrl(jobId) {
-  return /^\d{4,20}$/.test(String(jobId || '')) ? `https://www.linkedin.com/jobs/view/${jobId}/` : undefined;
-}
-/** The page LinkedIn showed is the one asked for (it may add tracking parameters or redirect). */
-function sameJobsPage(expected, actual) {
-  try {
-    const a = new URL(expected), b = new URL(actual);
-    if (a.pathname.replace(/\/$/, '') !== b.pathname.replace(/\/$/, '')) return false;
-    for (const key of ['f_C', 'start']) if ((a.searchParams.get(key) ?? '0') !== (b.searchParams.get(key) ?? '0') && a.searchParams.has(key)) return false;
-    return true;
-  } catch { return false; }
-}
-
-/** Reads one jobs page in a temporary tab and closes it. Returns the reader's answer. */
-async function readJobsPage(owner, task, url, message, timeoutMs = 90_000) {
-  if (!url) throw new Error('That jobs address is not allowed.');
-  const tab = await chrome.tabs.create({ url, active: true, openerTabId: owner });
-  task.tabId = tab.id;
-  try {
-    let ready = false;
-    for (let attempt = 0; attempt < 40 && !task.cancelled; attempt++) {
-      try {
-        const response = await chrome.tabs.sendMessage(tab.id, { type: 'JOBS_READER_READY' });
-        if (response?.ok && sameJobsPage(url, response.url)) { ready = true; break; }
-      } catch { /* the document is still loading */ }
-      await companyReadDelay(500);
-    }
-    if (task.cancelled) return { ok: true, cancelled: true };
-    if (!ready) return { ok: true, state: 'not_loaded', jobs: [], complete: false, notes: ['The page did not become readable.'] };
-    let timer;
-    try {
-      return await Promise.race([
-        chrome.tabs.sendMessage(tab.id, message),
-        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('The jobs page took too long to load.')), timeoutMs); }),
-      ]);
-    } finally { clearTimeout(timer); }
-  } finally {
-    task.tabId = null;
-    await chrome.tabs.remove(tab.id).catch(() => {});
-  }
-}
-
-/** Trims a scan to what the API accepts: bounded text, valid dates, known work modes, LinkedIn job URLs. */
-export function sanitizeJobScan(scan) {
-  const cut = (value, max) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined);
-  const iso = (value) => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined; };
-  const jobs = [];
-  const seen = new Set();
-  for (const job of scan.jobs || []) {
-    const title = cut(job?.title, 300);
-    if (!title) continue;
-    const jobId = /^\d{4,20}$/.test(String(job.jobId || '')) ? String(job.jobId) : undefined;
-    const key = jobId ? `id:${jobId}` : `text:${title.toLowerCase()}|${(job.location || '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const entry = {
-      jobId, jobUrl: jobId ? jobViewUrl(jobId) : undefined, title,
-      companyName: cut(job.companyName, 300), department: cut(job.department, 200), location: cut(job.location, 300),
-      country: cut(job.country, 120), employmentType: cut(job.employmentType, 80),
-      workplaceType: ['remote', 'hybrid', 'on_site'].includes(job.workplaceType) ? job.workplaceType : undefined,
-      description: cut(job.description, 30000), requirements: cut(job.requirements, 15000),
-      postedAt: iso(job.postedAt), postedText: cut(job.postedText, 100), source: cut(job.source, 60),
-    };
-    jobs.push(Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined)));
-    if (jobs.length >= 500) break;
-  }
-  return {
-    clientScanId: scan.clientScanId,
-    status: scan.status,
-    ...(cut(scan.source, 60) ? { source: cut(scan.source, 60) } : {}),
-    passes: (scan.passes || []).slice(0, 5).map((pass) => ({
-      pass: pass.pass, ...(cut(pass.method, 80) ? { method: cut(pass.method, 80) } : {}),
-      found: Math.max(0, Math.min(5000, Number(pass.found) || 0)), complete: pass.complete === true,
-      ...(cut(pass.note, 300) ? { note: cut(pass.note, 300) } : {}),
-    })),
-    jobs,
-    notes: (scan.notes || []).map((note) => cut(note, 300)).filter(Boolean).slice(0, 30),
-    ...(cut(scan.error, 500) ? { error: cut(scan.error, 500) } : {}),
-    ...(iso(scan.startedAt) ? { startedAt: iso(scan.startedAt) } : {}),
-    ...(iso(scan.completedAt) ? { completedAt: iso(scan.completedAt) } : {}),
-  };
-}
-
-const mergeJob = (a, b) => ({ ...a, ...Object.fromEntries(Object.entries(b).filter(([, value]) => value !== undefined && value !== '')) });
-
-/**
- * Runs both scans and the detail reads for one company and returns the scan (not saved yet).
- * `owner` is the LinkedIn tab the user started it from: progress is shown for it and its stop
- * button cancels the scan.
- */
-export async function collectJobScan({ owner, companyId, memberId, publicName }) {
-  const task = { tabId: null, cancelled: false };
-  jobReads.set(owner, task);
-  const startedAt = new Date().toISOString();
-  const jobs = new Map();
-  const passes = [];
-  const notes = [];
-  let status = 'completed';
-  let error;
-  const progress = (text) => setProgress({ kind: 'jobs', tabId: owner, active: true, text });
-  const add = (list) => {
-    let added = 0;
-    for (const job of list || []) {
-      const key = job.jobId ? `id:${job.jobId}` : `text:${(job.title || '').toLowerCase()}|${(job.location || '').toLowerCase()}`;
-      if (!jobs.has(key)) added++;
-      jobs.set(key, mergeJob(jobs.get(key) || {}, job));
-    }
-    return added;
-  };
-  /** Stops reading when LinkedIn warns, the workspace switched capture off, or the user stopped it. */
-  const blocked = async () => {
-    if (task.cancelled) return 'Stopped.';
-    const block = await captureBlockDetail();
-    if (block.reason && !block.transient) { status = block.reason.includes('stopped') ? 'restricted' : 'failed'; error = block.reason; return block.reason; }
-    return block.transient ? block.reason : undefined;
-  };
-  const record = (pass, method, found, complete, note) => passes.push({ pass, method, found, complete, ...(note ? { note } : {}) });
-
-  try {
-    // Pass 1: the company's Jobs tab.
-    progress(`Job roles: initial scan of ${publicName || companyId}'s Jobs tab…`);
-    const stopReason = await blocked();
-    if (stopReason) {
-      // Nothing was read yet: the scan did not run, and that is a failure with its reason, not "no jobs".
-      if (status === 'completed') status = 'failed';
-      error = error || stopReason;
-      throw Object.assign(new Error(error), { handled: true });
-    }
-    const first = await readJobsPage(owner, task, jobsTabUrl(companyId), { type: 'COLLECT_JOBS_PAGE', options: { source: 'company-jobs-tab' } });
-    if (first.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
-    if (!first.ok) throw new Error(first.error || 'The Jobs tab could not be read.');
-    add(first.jobs);
-    memberId = memberId || first.memberId;
-    record(1, 'company-jobs-tab', (first.jobs || []).length, first.state === 'ok' || first.state === 'empty' ? first.complete === true : false, (first.notes || [])[0]);
-    notes.push(...(first.notes || []));
-    if (first.state === 'restricted') { status = 'restricted'; error = (first.notes || [])[0]; throw Object.assign(new Error(error || 'LinkedIn restricted this page.'), { handled: true }); }
-
-    // Pass 2: verification by LinkedIn's job search for the same company (another source).
-    await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
-    progress('Job roles: verification scan…');
-    let secondFound = 0;
-    let secondComplete = false;
-    let secondMethod = 'job-search';
-    const before = jobs.size;
-    if (memberId) {
-      let start = 0;
-      for (let page = 0; page < JOB_SCAN_LIMITS.SEARCH_PAGES; page++, start += 25) {
-        const stop = await blocked();
-        if (stop) { notes.push(`Verification stopped: ${stop}`); break; }
-        progress(`Job roles: verification scan, results page ${page + 1} (${jobs.size} roles so far)…`);
-        // A page that fails is an incomplete verification, not a failed scan: what pass 1 found is kept.
-        const result = await readJobsPage(owner, task, jobsSearchUrl(memberId, start), { type: 'COLLECT_JOBS_PAGE', options: { source: 'job-search' } })
-          .catch((failure) => ({ ok: false, error: failure?.message }));
-        if (result.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
-        if (!result.ok) { notes.push(`Verification page ${page + 1}: ${result.error || 'could not be read'}`); break; }
-        if (result.state === 'restricted') { status = 'restricted'; error = (result.notes || [])[0]; break; }
-        if (result.state === 'not_loaded') { notes.push(`Verification page ${page + 1} did not load.`); break; }
-        secondFound += (result.jobs || []).length;
-        add(result.jobs);
-        if (result.state === 'empty' || !result.hasNext) { secondComplete = result.complete !== false; break; }
-        if (page === JOB_SCAN_LIMITS.SEARCH_PAGES - 1) notes.push(`Verification stopped after ${JOB_SCAN_LIMITS.SEARCH_PAGES} result pages (${secondFound} roles); more may exist.`);
-        await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
-      }
-    } else {
-      // LinkedIn's company id was not found, so job search cannot be filtered to this company.
-      secondMethod = 'company-jobs-tab-deep';
-      notes.push("LinkedIn's company id was not found on the page, so the verification pass re-read the Jobs tab with deeper loading.");
-      const result = await readJobsPage(owner, task, jobsTabUrl(companyId), { type: 'COLLECT_JOBS_PAGE', options: { source: 'company-jobs-tab', maxPasses: 70, wait: 900 } })
-        .catch((failure) => ({ ok: false, error: failure?.message }));
-      if (result.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
-      if (result.ok && (result.state === 'ok' || result.state === 'empty')) { secondFound = (result.jobs || []).length; secondComplete = result.complete === true; add(result.jobs); }
-      else if (result.state === 'restricted') { status = 'restricted'; error = (result.notes || [])[0]; }
-      else notes.push('The deeper Jobs tab read did not load.');
-    }
-    record(2, secondMethod, secondFound, secondComplete);
-    const missedByFirst = jobs.size - before;
-    if (missedByFirst > 0) notes.push(`The verification scan found ${missedByFirst} role${missedByFirst === 1 ? '' : 's'} the first scan missed; they were merged in.`);
-    else if (jobs.size && secondComplete) notes.push('The verification scan found nothing the first scan had missed.');
-    if (!jobs.size && !(passes[0]?.complete && secondComplete)) notes.push('No jobs were found, but the scans could not confirm that there are none.');
-
-    // Details: the description and requirements of roles the workspace does not have them for yet.
-    if (jobs.size && status === 'completed') {
-      let known = new Map();
-      try {
-        const body = await deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/known`);
-        known = new Map((body?.jobs || []).map((entry) => [String(entry.jobId), entry.detailsComplete === true]));
-      } catch { /* every role without a description is read */ }
-      const wanted = [...jobs.values()]
-        .filter((job) => job.jobId && !job.description && !known.get(String(job.jobId)))
-        .sort((a, b) => String(b.postedAt || '').localeCompare(String(a.postedAt || '')))
-        .slice(0, JOB_SCAN_LIMITS.DETAIL_PAGES);
-      let skipped = 0;
-      for (const [index, job] of wanted.entries()) {
-        if (await blocked()) break;
-        progress(`Job roles: reading details ${index + 1} of ${wanted.length}…`);
-        await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
-        const result = await readJobsPage(owner, task, jobViewUrl(job.jobId), { type: 'COLLECT_JOB_DETAIL' }, 60_000).catch(() => undefined);
-        if (result?.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
-        if (result?.state === 'restricted') { status = 'restricted'; error = result.note; break; }
-        if (result?.ok && result.detail?.description) {
-          const detail = result.detail;
-          // The description and requirements come from the job's own page; card facts stay unless missing.
-          const key = `id:${job.jobId}`;
-          const current = jobs.get(key) || job;
-          jobs.set(key, { ...mergeJob(detail, current), description: detail.description, requirements: detail.requirements ?? current.requirements, department: detail.department ?? current.department });
-        } else skipped++;
-      }
-      const unread = jobs.size - [...jobs.values()].filter((job) => job.description).length;
-      if (skipped) notes.push(`${skipped} job page${skipped === 1 ? '' : 's'} did not load, so those roles have no description yet.`);
-      if (unread > 0 && !skipped) notes.push(`${unread} role${unread === 1 ? '' : 's'} have no description yet (details are read ${JOB_SCAN_LIMITS.DETAIL_PAGES} per scan; rescan to continue).`);
-    }
-  } catch (caught) {
-    if (!caught?.handled) { status = status === 'restricted' ? status : 'failed'; error = caught?.message || 'The job scan failed.'; }
-    else if (caught.stopped) { status = 'failed'; error = 'The job scan was stopped.'; }
-    // A page the scan could not get to before stopping is an incomplete pass, not an empty one.
-    if (!passes.length) record(1, 'company-jobs-tab', jobs.size, false, error);
-  } finally {
-    jobReads.delete(owner);
-  }
-  // A scan that read nothing because the pages never loaded is "not loaded", not "failed".
-  if (status === 'completed' && !jobs.size && passes.length && passes.every((pass) => !pass.complete) && notes.some((note) => /did not (?:finish loading|load|become readable)/i.test(note))) status = 'not_loaded';
-  return sanitizeJobScan({
-    clientScanId: globalThis.crypto?.randomUUID?.() || `scan-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    status, source: 'company-jobs-tab+job-search', passes, jobs: [...jobs.values()], notes, error, startedAt, completedAt: new Date().toISOString(),
-  });
-}
-
-/** What the side panel shows for a finished scan. */
-export function jobScanSummary(scan, saved) {
-  return {
-    status: saved?.status || scan.status,
-    jobsFound: scan.jobs.length,
-    jobsNew: saved?.jobsNew,
-    jobsUpdated: saved?.jobsUpdated,
-    verified: saved?.verified === true,
-    passes: scan.passes,
-    notes: scan.notes,
-    error: scan.error,
-    at: Date.now(),
-  };
-}
-
-async function saveJobScan(companyId, scan) {
-  let last;
-  for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt++) {
-    try {
-      // The same scan id every time: a repeated request is recorded once.
-      return await deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/scan`, { method: 'POST', body: JSON.stringify(scan), timeoutMs: 60_000 });
-    } catch (error) {
-      last = error;
-      if (!(error?.transient || error?.timedOut) || attempt >= SAVE_ATTEMPTS) break;
-      await timing.delay(Math.min(15_000, 3_000 * attempt));
-    }
-  }
-  throw last;
-}
-
-/**
- * A job scan started from the side panel (or a workspace request): scans, then saves it. A save that
- * cannot be confirmed keeps the scan so "Save again" is safe.
- */
-async function runJobScan(message) {
-  const companyId = String(message.companyId || '');
-  if (!COMPANY_ID.test(companyId)) return { ok: false, error: 'Not a LinkedIn company.' };
-  if (message.tabId == null) return { ok: false, error: 'Open the company on LinkedIn first.' };
-  if (jobReads.has(message.tabId)) return { ok: false, error: 'A job scan is already running on this tab.' };
-  const block = await captureBlockDetail();
-  if (block.reason) return { ok: false, error: block.reason };
-  const scanId = globalThis.crypto?.randomUUID?.() ?? `scan-${Date.now()}`;
-  // Tell the workspace it started (best effort): it shows "In progress" and answers a rescan request.
-  deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/scan/start`, { method: 'POST', body: JSON.stringify({ clientScanId: scanId }) }).catch(() => {});
-  const scan = await collectJobScan({ owner: message.tabId, companyId, publicName: message.name });
-  scan.clientScanId = scanId;
-  let result = { ok: true, scan: jobScanSummary(scan) };
-  try {
-    const saved = await saveJobScan(companyId, scan);
-    await chrome.storage.local.remove(JOB_SCAN_PENDING_KEY);
-    result = { ok: true, scan: jobScanSummary(scan, saved?.scan || saved) , saved: true };
-    await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId, name: message.name, ...result.scan } });
-    await setProgress({ kind: 'jobs', tabId: message.tabId, active: false, text: `Job roles saved: ${scan.jobs.length} found.` });
-  } catch (error) {
-    const unconfirmed = error?.transient || error?.timedOut;
-    if (error?.body?.error === 'company_not_captured' || /capture this company first/i.test(error?.message || '')) {
-      result = { ok: false, error: 'Capture this company first, then its job roles can be saved.', scan: jobScanSummary(scan) };
-    } else if (unconfirmed) {
-      await chrome.storage.local.set({ [JOB_SCAN_PENDING_KEY]: { companyId, name: message.name, scan } });
-      result = { ok: false, pending: true, error: `The scan finished but Skout did not confirm the save (${error.message}). It is kept: choose Save again. It will not be saved twice.`, scan: jobScanSummary(scan) };
-    } else {
-      result = { ok: false, error: error?.message || 'The job scan could not be saved.', scan: jobScanSummary(scan) };
-    }
-    await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId, name: message.name, ...result.scan, saveError: result.error } });
-    await setProgress({ kind: 'jobs', tabId: message.tabId, active: false, isError: true, text: result.error });
-  }
-  return result;
-}
-
-async function retryJobScanSave() {
-  const pending = await getStored(JOB_SCAN_PENDING_KEY);
-  if (!pending?.scan) return { ok: false, error: 'There is no job scan waiting to be saved.' };
-  try {
-    const saved = await saveJobScan(pending.companyId, pending.scan);
-    await chrome.storage.local.remove(JOB_SCAN_PENDING_KEY);
-    const summary = jobScanSummary(pending.scan, saved?.scan || saved);
-    await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId: pending.companyId, name: pending.name, ...summary } });
-    return { ok: true, scan: summary, saved: true };
-  } catch (error) {
-    return { ok: false, pending: true, error: error?.message || 'The job scan could not be saved.' };
-  }
-}
-
-/** Companies the workspace asked to rescan, for the side panel. */
-async function listRequestedJobScans() {
-  try {
-    const body = await deps.skoutFetch(`${API}/capture/job-scans/requested`);
-    return { ok: true, scans: (body?.scans || []).filter((scan) => COMPANY_ID.test(scan.companyPublicId || '')) };
-  } catch (error) {
-    return { ok: false, error: error?.message || 'Requested job scans could not be loaded.' };
-  }
-}
-
 // ── Drafts, progress, halt ────────────────────────────────────────────────────
 
-const taskMaps = () => [salesLinkReads, companyReads, personReads, companyPeopleReads, jobReads];
+const taskMaps = () => [salesLinkReads, companyReads, personReads, companyPeopleReads];
 
 function cancelTask(task) {
   task.cancelled = true;
@@ -823,8 +459,6 @@ async function storeDraft(message, sender) {
     notes: Array.isArray(message.notes) ? message.notes.filter(Boolean).map(String) : [],
     sourceUrl: message.sourceUrl,
     capturedAt: message.capturedAt || new Date().toISOString(),
-    // Names this capture for idempotent saves (see sendCapture).
-    clientRunId: globalThis.crypto?.randomUUID?.(),
     tabId: sender.tab?.id,
     meta: {
       companyId: message.kind === 'company' ? data.publicId : undefined,
@@ -858,7 +492,6 @@ export function buildCapturePayload(draft, data) {
     throw new Error(`A capture run saves at most ${CAPTURE_CAPS.MAX_LEADS} leads. Remove ${leads.length - CAPTURE_CAPS.MAX_LEADS} before saving.`);
   }
   const capturedAt = draft.capturedAt;
-  const key = draft.clientRunId ? { clientRunId: draft.clientRunId } : {};
   if (draft.kind === 'sales') {
     return {
       sourceUrl: clean.sourceUrl,
@@ -867,11 +500,10 @@ export function buildCapturePayload(draft, data) {
       resultCount: clean.resultCount,
       peopleProfiles: leads || [],
       capturedAt,
-      ...key,
     };
   }
   if (draft.kind === 'company') {
-    const payload = { ...clean, capturedAt, ...key };
+    const payload = { ...clean, capturedAt };
     if (leads?.length) {
       payload.peopleProfiles = leads;
       payload.pagesRead = Math.min(CAPTURE_CAPS.MAX_PAGES, Number(draft.meta?.progress?.pagesThisBatch) || 0);
@@ -881,11 +513,9 @@ export function buildCapturePayload(draft, data) {
     }
     return payload;
   }
-  return { ...clean, capturedAt, ...key };
+  return { ...clean, capturedAt };
 }
 
-// A save that times out is sent again this many times in all before the user is asked to retry.
-const SAVE_ATTEMPTS = 3;
 const INGEST_PATHS = { person: 'person', company: 'company', sales: 'sales-search' };
 
 /**
@@ -900,29 +530,8 @@ async function sendCapture(message) {
   let body;
   try {
     const payload = buildCapturePayload(draft, message.data || draft.data);
-    // The same capture carries the same clientRunId every time, so sending it again after a
-    // timeout is safe: the API replays what it recorded instead of saving it twice.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
-        break;
-      } catch (error) {
-        if (!(error?.transient || error?.timedOut) || attempt >= SAVE_ATTEMPTS) throw error;
-        await timing.delay(Math.min(15_000, 3_000 * attempt));
-      }
-    }
+    body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
   } catch (error) {
-    if (error?.timedOut || error?.transient) {
-      // A timeout does not mean the capture failed: it may be saved, or still saving. The reviewed
-      // batch is kept, and Save again is safe (it is not saved twice).
-      return {
-        ok: false,
-        pending: true,
-        error: `Skout is taking longer than usual to confirm this save (${error.message}). Your reviewed capture is kept: choose Save again in a moment. It will not be saved twice.`,
-        code: 'save_unconfirmed',
-        run: null,
-      };
-    }
     // The API lists the fields that failed validation under details.fields.
     const issues = (error?.body?.details?.fields || []).slice(0, 5).map(issue => `${issue.path}: ${issue.message}`);
     return {
@@ -1134,8 +743,6 @@ const MAX_QUEUE_COMPANIES = 200;
 const RUN_QUEUE_GAP_MS = 3000;
 // A company read "until finished" stops after this many saved batches (250 people each).
 const MAX_BATCHES_PER_COMPANY = 40;
-// A queue waits this many times (with growing pauses) for a status check that cannot be confirmed.
-const MAX_STATUS_RETRIES = 6;
 
 async function getRunQueue() {
   return (await getStored(RUN_QUEUE_KEY)) || null;
@@ -1219,16 +826,8 @@ async function advanceRunQueue() {
       if (queue.items.some(entry => ['running', 'review'].includes(entry.status))) return;
       const next = queue.items.find(entry => entry.status === 'pending');
       if (!next) return setRunQueue({ ...queue, active: false, note: 'Every selected company has been read.', finishedAt: Date.now() });
-      const block = await captureBlockDetail();
-      if (block.transient && (queue.statusRetries || 0) < MAX_STATUS_RETRIES) {
-        // A slow or restarting API is not a reason to stop the queue: wait, then try again.
-        const waitMs = Math.min(5 * 60_000, 20_000 * 2 ** (queue.statusRetries || 0));
-        await setRunQueue({ ...queue, statusRetries: (queue.statusRetries || 0) + 1, note: `Waiting for Skout to answer (retry in ${Math.round(waitMs / 1000)} s).` });
-        timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
-        return;
-      }
-      if (block.reason) return setRunQueue({ ...queue, active: false, note: block.reason });
-      if (queue.statusRetries) queue.statusRetries = 0;
+      const blocked = await captureBlock();
+      if (blocked) return setRunQueue({ ...queue, active: false, note: blocked });
       next.status = 'running';
       await setRunQueue(queue);
       const result = await continueCaptureQueue({ companyId: next.companyPublicId, tabId: queue.tabId });
@@ -1537,15 +1136,6 @@ export function handleCaptureMessage(message, sender) {
       return fromExtensionPage(sender) ? autoCaptureStatus() : undefined;
     case 'capture-auto-start':
       return fromExtensionPage(sender) ? startAutoCapture(message) : undefined;
-    case 'capture-jobs-scan':
-      return fromExtensionPage(sender) ? runJobScan(message) : undefined;
-    case 'capture-jobs-retry-save':
-      return fromExtensionPage(sender) ? retryJobScanSave() : undefined;
-    case 'capture-job-scans-requested':
-      return fromExtensionPage(sender) ? listRequestedJobScans() : undefined;
-    case 'SCAN_COMPANY_JOBS':
-      // From the company capture on a LinkedIn tab: scan, and hand the scan to the review (saved with the company).
-      return sender.tab?.id == null ? undefined : collectJobScan({ owner: sender.tab.id, companyId: String(message.companyId || ''), memberId: message.memberId, publicName: message.name }).then(scan => ({ ok: true, scan }));
     case 'capture-requested':
       return fromExtensionPage(sender) ? listRequestedJobs() : undefined;
     case 'capture-queue-start':
@@ -1623,4 +1213,4 @@ export function resumeJobFromWeb(companyId, name) {
   return startRunQueue({ companies: [{ companyPublicId: companyId, name: String(name || companyId) }], untilComplete: true });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, captureBlockDetail, resetStatusCache: () => { lastConfirmedStatus = null; }, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };

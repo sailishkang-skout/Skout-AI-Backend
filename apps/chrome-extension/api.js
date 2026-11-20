@@ -163,8 +163,6 @@ const AUTH_REFRESH_TIMEOUT_MS = 32_000;
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
 const READ_RETRY_ATTEMPTS = 5;
-/** A read that timed out is tried this many times in all (20 s each at most). */
-const READ_TIMEOUT_ATTEMPTS = 2;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 const READ_RETRY_MAX_DELAY_MS = 4_000;
 
@@ -245,31 +243,22 @@ export async function skoutFetch(path, options = {}) {
     bearerToken = auth?.token ?? null;
   }
 
-  const reachError = (error) => {
-    const timedOut = isAbortError(error);
-    const failure = timedOut
+  const reachError = (error) =>
+    isAbortError(error)
       ? new Error(`The API at ${config.apiUrl} didn't respond in time. Check it's running, then try again.`)
       : new Error(`Cannot reach API at ${config.apiUrl}. Check the API URL in extension settings.`);
-    // Callers tell a slow or unreachable API from a refusal: it is temporary, and a write that
-    // timed out may still have been saved.
-    failure.transient = true;
-    failure.timedOut = timedOut;
-    return failure;
-  };
 
   // A restart can leave the API, or its database, unreachable for a few seconds. Reads are
   // safe to repeat, so a refused connection or a 502/503/504 is retried a few times with
-  // backoff (honouring Retry-After); a read that timed out is tried once more (READ_TIMEOUT_ATTEMPTS)
-  // because one slow answer must not stop a long capture. Writes stay single-attempt here: callers
-  // that retry a write send an idempotency key (clientRunId) so a capture is never saved twice.
-  const isRead = READ_METHODS.has(method.toUpperCase());
-  const attempts = isRead ? READ_RETRY_ATTEMPTS : 1;
+  // backoff (honouring Retry-After). Writes stay single-attempt: a capture whose response was
+  // lost after it saved must not be sent twice. A timeout is not retried.
+  const attempts = READ_METHODS.has(method.toUpperCase()) ? READ_RETRY_ATTEMPTS : 1;
   let res;
   for (let attempt = 1; ; attempt++) {
     try {
       res = await timeStep(`fetch ${method} ${path}`, () => request(path, options, bearerToken));
     } catch (error) {
-      if ((isAbortError(error) && (!isRead || attempt >= READ_TIMEOUT_ATTEMPTS)) || attempt >= attempts) throw reachError(error);
+      if (isAbortError(error) || attempt >= attempts) throw reachError(error);
       log(`${method} ${path} could not connect (attempt ${attempt} of ${attempts}); retrying`);
       await pause(readRetryDelayMs(attempt, null));
       continue;

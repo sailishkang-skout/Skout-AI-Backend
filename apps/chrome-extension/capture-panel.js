@@ -4,8 +4,6 @@ export const DRAFT_KEY = "skoutCaptureDraft";
 export const PROGRESS_KEY = "skoutCaptureProgress";
 export const HALT_KEY = "skoutCaptureHalt";
 export const RUN_QUEUE_KEY = "skoutCaptureRunQueue";
-export const JOB_SCAN_RESULT_KEY = "skoutJobScanResult";
-export const JOB_SCAN_PENDING_KEY = "skoutJobScanPending";
 const checkpointKey = (companyId) => `company-people-capture:${companyId}`;
 /** Matches capture-background.js: a reader silent for this long is no longer running. */
 const PROGRESS_STALE_MS = 3 * 60 * 1000;
@@ -47,12 +45,9 @@ export function companyIdForUrl(url) {
 const isPublicProfileUrl = (value) => /^https:\/\/(www\.)?linkedin\.com\/in\/[^/]+\/?$/.test(value || "");
 
 /** The draft as it will be saved: the edited data minus the leads the reviewer unticked. */
-export function reviewedData(data, excludedIds, options = {}) {
-  let out = data;
-  // The reviewer can leave the job roles out of what is saved with the company.
-  if (options.skipJobs && out?.jobScan) { const { jobScan: _jobScan, ...rest } = out; out = rest; }
-  if (!Array.isArray(out?.peopleProfiles) || !excludedIds?.size) return out;
-  return { ...out, peopleProfiles: out.peopleProfiles.filter((profile) => !excludedIds.has(profile.publicId)) };
+export function reviewedData(data, excludedIds) {
+  if (!Array.isArray(data?.peopleProfiles) || !excludedIds?.size) return data;
+  return { ...data, peopleProfiles: data.peopleProfiles.filter((profile) => !excludedIds.has(profile.publicId)) };
 }
 
 /** One-line counts of what a draft contains. */
@@ -72,11 +67,9 @@ export function draftSummary(kind, data) {
   } else if (kind === "company") {
     parts.push(`${Object.keys(data.sectionCaptures || {}).length} company sections`);
     if (data.employeesOnLi != null) parts.push(`${data.employeesOnLi} members on LinkedIn`);
-    for (const [key, label] of [["products", "products"], ["recentPosts", "posts"]]) {
+    for (const [key, label] of [["openJobs", "jobs"], ["products", "products"], ["recentPosts", "posts"]]) {
       if (size(data[key])) parts.push(`${size(data[key])} ${label}`);
     }
-    if (data.jobScan) parts.push(`${size(data.jobScan.jobs)} job roles (${jobScanStatusLabel(data.jobScan)})`);
-    else if (size(data.openJobs)) parts.push(`${size(data.openJobs)} jobs`);
     parts.push(`${size(data.peopleProfiles)} people (discovery candidates)`);
   } else {
     const leads = data.peopleProfiles || [];
@@ -191,54 +184,6 @@ export function runItemText(item) {
     case "skipped": return "Skipped";
     case "failed": return `Could not read: ${item.error || "unknown error"}`;
     default: return "Waiting";
-  }
-}
-
-const VERIFICATION_LABELS = {
-  verified: "Completed & verified",
-  missing_data: "Completed with missing data",
-  verification_required: "Verification required",
-  partial: "Partial capture",
-  not_loaded: "Not loaded",
-  restricted: "Restricted by LinkedIn",
-  failed: "Failed",
-};
-const SECTION_WORDS = { complete: "matches what LinkedIn shows", incomplete: "short of what LinkedIn shows", none: "none on LinkedIn (confirmed)", not_loaded: "did not load", restricted: "restricted by LinkedIn", failed: "could not be read" };
-
-/** The review lines for a capture's verification scan: the verdict, each section, and what was not found. */
-export function verificationLines(verification) {
-  if (!verification) return [];
-  const lines = [`Verification: ${VERIFICATION_LABELS[verification.status] || "Unknown"} (${verification.passes} scan${verification.passes === 1 ? "" : "s"})`];
-  for (const [key, section] of Object.entries(verification.sections || {})) {
-    const name = key.charAt(0).toUpperCase() + key.slice(1);
-    lines.push(`${name}: ${section.found}${section.expected !== undefined ? ` of ${section.expected}` : ""} · ${SECTION_WORDS[section.state] || section.state}${section.note ? ` (${section.note})` : ""}`);
-  }
-  if (verification.missing?.length) lines.push(`Not found on the profile: ${verification.missing.join(", ")}. Fill any you know below.`);
-  lines.push(...(verification.notes || []).filter((note) => !/^(Skills|Education|Experience): captured/.test(note)));
-  return lines;
-}
-
-/** How far a job scan can be trusted, in words (before and after the workspace has judged it). */
-export function jobScanStatusLabel(scan) {
-  const jobs = Array.isArray(scan?.jobs) ? scan.jobs.length : Number(scan?.jobsFound) || 0;
-  const passes = Array.isArray(scan?.passes) ? scan.passes : [];
-  switch (scan?.status) {
-    case "completed_verified": return "Completed & verified";
-    case "verification_required": return "Verification required";
-    case "partial": return "Partial capture";
-    case "not_found": return "Not found (confirmed by two scans)";
-    case "restricted": return "Restricted by LinkedIn";
-    case "not_loaded": return "Not loaded";
-    case "failed": return "Failed";
-    case "in_progress": return "In progress";
-    case "requested": return "Requested";
-    case "completed": {
-      // A finished scan the workspace has not judged yet: the same rules apply.
-      const twice = passes.length >= 2 && passes.every((pass) => pass.complete);
-      if (twice) return jobs ? "Completed & verified" : "Not found (confirmed by two scans)";
-      return passes.some((pass) => !pass.complete) && jobs ? "Partial capture" : "Verification required";
-    }
-    default: return "Unknown";
   }
 }
 
@@ -357,7 +302,7 @@ export function initCapturePanel() {
   const runResumeBtn = $("capture-run-resume");
   const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "", skipJobs: false, jobScan: null, jobScanPending: false, requestedJobScans: [] };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "" };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -630,7 +575,7 @@ export function initCapturePanel() {
   }
 
   function currentData() {
-    return reviewedData(state.data, state.excluded, { skipJobs: state.skipJobs });
+    return reviewedData(state.data, state.excluded);
   }
 
   function syncJson() {
@@ -650,7 +595,6 @@ export function initCapturePanel() {
     reviewNotesEl.replaceChildren(
       ...[
         draftSummary(draft.kind, currentData()),
-        ...verificationLines(data.verification),
         `Source: ${draft.sourceUrl || data.sourceUrl || "unknown"} · captured ${new Date(draft.capturedAt).toLocaleString()}`,
         ...(draft.kind === "sales" ? (data.filters || []).map((filter) => `Your filter: ${filter}`) : []),
         ...(draft.notes || []),
@@ -737,13 +681,6 @@ export function initCapturePanel() {
     renderCoverage();
     reviewFieldsEl.replaceChildren(...(fieldEls.length ? [coverageEl, ...fieldEls] : []));
 
-    if (draft.kind === "company" && data.jobScan) {
-      const jobsBox = Object.assign(document.createElement("label"), { className: "checkbox-row" });
-      const skip = Object.assign(document.createElement("input"), { type: "checkbox", checked: !state.skipJobs });
-      skip.addEventListener("change", () => { state.skipJobs = !skip.checked; reviewNotesEl.firstChild.textContent = draftSummary(draft.kind, currentData()); syncJson(); });
-      jobsBox.append(skip, document.createTextNode(` Save the ${data.jobScan.jobs.length} job roles with this company (${jobScanStatusLabel(data.jobScan)})`));
-      reviewFieldsEl.append(jobsBox);
-    }
     const leads = Array.isArray(data.peopleProfiles) ? data.peopleProfiles : [];
     show(reviewLeadsEl, leads.length > 0);
     reviewLeadsEl.replaceChildren(
@@ -776,7 +713,6 @@ export function initCapturePanel() {
 
   function applyDraft(draft) {
     state.draft = draft || null;
-    state.skipJobs = false;
     state.data = draft ? structuredClone(draft.data) : null;
     state.excluded = new Set();
     renderReview();
@@ -810,9 +746,8 @@ export function initCapturePanel() {
   async function refreshTab() {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const kind = captureKindForUrl(tab?.url);
-    state.tab = tab?.id != null ? { id: tab.id, url: tab.url, title: tab.title, kind } : null;
+    state.tab = tab?.id != null ? { id: tab.id, url: tab.url, kind } : null;
     renderStart();
-    renderJobs();
     await renderCheckpoint();
   }
 
@@ -825,7 +760,6 @@ export function initCapturePanel() {
         ? {
             includeCompany: true,
             includePeople: $("capture-include-people").checked,
-            includeJobs: $("capture-include-jobs").checked,
             focus: { departments: $("capture-departments").value.trim(), seniorities: $("capture-seniorities").value.trim() },
           }
         : undefined;
@@ -883,8 +817,7 @@ export function initCapturePanel() {
       setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
     } else {
       const runState = response.run ? ` Capture run status: ${response.run.status}.` : "";
-      // A save that could not be confirmed is not a failure: the batch is kept and Save is safe to repeat.
-      setResult(response.pending ? response.error : `Not saved: ${response.error}${runState}`, "capture-error");
+      setResult(`Not saved: ${response.error}${runState}`, "capture-error");
       sendBtn.disabled = false;
     }
     await refreshStatus();
@@ -894,86 +827,8 @@ export function initCapturePanel() {
 
   continueBtn.addEventListener("click", () => void continueQueue(state.continueCompany));
 
-  // ── Job roles: scan a company's jobs twice, save them, retry a save, answer workspace requests ──
-  const jobsBtn = $("capture-jobs-scan");
-  const jobsResultEl = $("capture-jobs-result");
-  const jobsStatusEl = $("capture-jobs-status");
-  const jobsNotesEl = $("capture-jobs-notes");
-  const jobsSaveBtn = $("capture-jobs-save");
-  const jobsRequestedEl = $("capture-jobs-requested");
-  const jobsRequestedListEl = $("capture-jobs-requested-list");
-
-  const companyNameFromTab = () => (state.tab?.title || "").replace(/^\(\d+\)\s*/, "").replace(/\s*\|\s*LinkedIn.*$/i, "").trim();
-
-  function renderJobs() {
-    const busy = isProgressActive(state.progress);
-    const onCompany = state.tab?.kind === "company";
-    jobsBtn.disabled = !onCompany || busy || Boolean(state.draft) || Boolean(state.halt) || state.saving;
-    jobsBtn.title = onCompany ? "" : "Open a company page on LinkedIn to scan its job roles.";
-    const result = state.jobScan;
-    show(jobsResultEl, Boolean(result));
-    if (result) {
-      const found = Number(result.jobsFound) || 0;
-      const counts = result.jobsNew != null ? ` · ${result.jobsNew} new, ${result.jobsUpdated || 0} updated` : "";
-      jobsStatusEl.textContent = `${result.name || result.companyId || "Company"}: ${jobScanStatusLabel(result)} · ${found} role${found === 1 ? "" : "s"} found${counts}`;
-      const lines = [...(result.saveError ? [result.saveError] : []), ...(result.error ? [`Error: ${result.error}`] : []), ...(result.notes || [])];
-      jobsNotesEl.replaceChildren(...lines.map((line) => Object.assign(document.createElement("li"), { textContent: line })));
-    }
-    show(jobsSaveBtn, state.jobScanPending);
-    const requested = state.requestedJobScans;
-    show(jobsRequestedEl, requested.length > 0);
-    jobsRequestedListEl.replaceChildren(
-      ...requested.map((entry) => {
-        const row = Object.assign(document.createElement("li"), { className: "capture-queue-item" });
-        const name = Object.assign(document.createElement("span"), { className: "capture-queue-name", textContent: entry.name || entry.companyPublicId, title: entry.name });
-        const go = Object.assign(document.createElement("button"), { type: "button", className: "primary", textContent: "Scan" });
-        go.disabled = busy || Boolean(state.draft) || state.tab?.id == null;
-        go.addEventListener("click", () => void scanJobs(entry.companyPublicId, entry.name));
-        row.append(name, go);
-        return row;
-      })
-    );
-  }
-
-  async function scanJobs(companyId, name) {
-    if (state.tab?.id == null) return setResult("Open a LinkedIn tab first.", "capture-error");
-    setResult("");
-    jobsBtn.disabled = true;
-    const response = await send("capture-jobs-scan", { tabId: state.tab.id, companyId, name });
-    if (response.scan) state.jobScan = { companyId, name, ...response.scan, ...(response.error ? { saveError: response.error } : {}) };
-    state.jobScanPending = Boolean(response.pending);
-    if (!response.ok && !response.scan) setResult(`Job scan did not start: ${response.error}`, "capture-error");
-    await refreshJobScans();
-    renderJobs();
-  }
-
-  async function refreshJobScans() {
-    const stored = await chrome.storage.local.get([JOB_SCAN_RESULT_KEY, JOB_SCAN_PENDING_KEY]);
-    state.jobScan = stored[JOB_SCAN_RESULT_KEY] || state.jobScan;
-    state.jobScanPending = Boolean(stored[JOB_SCAN_PENDING_KEY]);
-    const requested = await send("capture-job-scans-requested");
-    state.requestedJobScans = requested.ok ? requested.scans || [] : [];
-    renderJobs();
-  }
-
-  jobsBtn.addEventListener("click", () => {
-    const companyId = companyIdForUrl(state.tab?.url);
-    if (companyId) void scanJobs(companyId, companyNameFromTab());
-  });
-  jobsSaveBtn.addEventListener("click", async () => {
-    jobsSaveBtn.disabled = true;
-    const response = await send("capture-jobs-retry-save");
-    if (response.scan) state.jobScan = { ...state.jobScan, ...response.scan, saveError: undefined };
-    state.jobScanPending = Boolean(response.pending);
-    if (!response.ok) setResult(response.error, "capture-error");
-    jobsSaveBtn.disabled = false;
-    renderJobs();
-  });
-
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    if (changes[JOB_SCAN_RESULT_KEY] || changes[JOB_SCAN_PENDING_KEY]) void refreshJobScans();
-    if (changes[PROGRESS_KEY]) renderJobs();
     if (changes[PROGRESS_KEY]) {
       state.progress = changes[PROGRESS_KEY].newValue || null;
       renderProgress();
@@ -1014,6 +869,6 @@ export function initCapturePanel() {
     applyDraft(stored[DRAFT_KEY]);
     state.run = (await chrome.storage.local.get(RUN_QUEUE_KEY))[RUN_QUEUE_KEY] || null;
     renderRun();
-    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies(), refreshServerAuto(), refreshJobScans()]);
+    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies(), refreshServerAuto()]);
   })();
 }

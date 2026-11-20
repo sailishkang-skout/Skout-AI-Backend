@@ -498,7 +498,7 @@ describe("person capture run", () => {
       url: `https://www.linkedin.com/in/jane-doe/${detailPath}/`,
       html: "<main><h1>Jane Doe</h1></main>",
       chrome,
-      files: [...EXTRACT_FILES, "capture/capture-verify.js", "capture/person-capture.js"],
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
     });
     window.scrollTo = () => {};
     window.scrollBy = (...args) => onScroll(window, ...args);
@@ -550,7 +550,7 @@ describe("person capture run", () => {
       url: "https://www.linkedin.com/in/jane-doe/",
       html: PROFILE_HTML,
       chrome,
-      files: [...EXTRACT_FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/capture-verify.js", "capture/person-capture.js"],
+      files: [...EXTRACT_FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/person-capture.js"],
     });
     window.setTimeout = (callback) => {
       callback();
@@ -561,18 +561,13 @@ describe("person capture run", () => {
     expect(window.SkoutPersonCapture.pageUrl("/in/jane-doe/overlay/contact-info/", "jane-doe")).toBe("https://www.linkedin.com/in/jane-doe/overlay/contact-info/");
 
     await window.SkoutPersonCapture.start();
-    // The first scan reads these pages; the verification scan then looks again (the profile first,
-    // then any section that is short or never loaded), and never opens anything else.
-    expect(opened.slice(0, 5)).toEqual([
+    expect(opened).toEqual([
       "https://www.linkedin.com/in/jane-doe/",
       "https://www.linkedin.com/in/jane-doe/details/experience/",
       "https://www.linkedin.com/in/jane-doe/details/education/",
       "https://www.linkedin.com/in/jane-doe/details/skills/",
       "https://www.linkedin.com/in/jane-doe/overlay/contact-info/",
     ]);
-    expect(opened[5]).toBe("https://www.linkedin.com/in/jane-doe/");
-    for (const url of opened) expect(window.SkoutPersonCapture.pageUrl(url, "jane-doe")).toBe(url);
-    expect(sent.filter((message) => message.type === "READ_PERSON_PAGE" && message.deep).length).toBe(opened.length - 5);
     const review = sent.find((message) => message.type === "SKOUT_CAPTURE_REVIEW");
     expect(review).toMatchObject({ kind: "person", sourceUrl: "https://www.linkedin.com/in/jane-doe/" });
     expect(review.capturedAt).toBeTruthy();
@@ -624,7 +619,7 @@ describe("person capture run", () => {
       url: "https://www.linkedin.com/in/jane-doe/",
       html: '<main><h1>Jane Doe</h1><a href="https://www.linkedin.com/in/jane-doe/overlay/contact-info/">Contact info</a></main>',
       chrome,
-      files: [...EXTRACT_FILES, "capture/capture-verify.js", "capture/person-capture.js"],
+      files: [...EXTRACT_FILES, "capture/person-capture.js"],
     });
     let clicks = 0;
     window.document.querySelector("a").addEventListener("click", (event) => {
