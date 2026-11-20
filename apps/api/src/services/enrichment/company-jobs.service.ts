@@ -391,6 +391,17 @@ export async function listRequestedJobScans(db: Db, workspaceId: string) {
     .map((row) => ({ scanId: row.id, companyPublicId: row.key.slice("company:".length), name: row.name, requestedAt: row.requestedAt?.toISOString() ?? null }));
 }
 
+/** The jobs already saved for a company, so a scan reads the details only of the jobs that lack them. */
+export async function knownCompanyJobs(db: Db, workspaceId: string, companyId: string) {
+  const roles = schema.companyJobRoles;
+  const rows = await db
+    .select({ jobId: roles.externalJobId, detailsComplete: roles.detailsComplete })
+    .from(roles)
+    .where(and(eq(roles.workspaceId, workspaceId), eq(roles.companyId, companyId), sql`${roles.externalJobId} IS NOT NULL`))
+    .limit(1000);
+  return rows.map((row) => ({ jobId: row.jobId!, detailsComplete: row.detailsComplete }));
+}
+
 export const jobListSchema = z.object({
   includeNotSeen: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),

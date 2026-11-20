@@ -44,6 +44,15 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     return result;
   }
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  /** One line for the review: what the job scan found and how far it can be trusted. */
+  function jobScanNote(scan) {
+    const count = (scan.jobs || []).length;
+    const verified = (scan.passes || []).length >= 2 && scan.passes.every(pass => pass.complete);
+    if (scan.status === 'restricted') return `Job roles: LinkedIn restricted the page (${scan.error || 'a warning was shown'}). ${count} roles were read before it stopped.`;
+    if (scan.status === 'not_loaded') return 'Job roles: the pages did not finish loading, so nothing can be said about open roles. Scan again.';
+    if (scan.status === 'failed') return `Job roles: the scan failed (${scan.error || 'unknown error'}). ${count} roles were read before it stopped.`;
+    return `Job roles: ${count} found by ${(scan.passes || []).length} scans${verified ? ', verified' : ', not fully verified'}.`;
+  }
   // One reviewed batch saves at most this many people (the API's per-run cap).
   const BATCH_LEAD_LIMIT = 250;
   /**
@@ -199,6 +208,14 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
       }
       if (!stopped && options.includePeople && !peopleSearchUrl) {
         warnings.push('LinkedIn did not render an associated-members results link for this company, so no profile search was started.');
+      }
+      // Job roles: an initial scan and an independent verification scan (see collectJobScan).
+      if (!stopped && options.includeCompany && options.includeJobs !== false) {
+        status.textContent = 'Scanning job roles: initial scan, then a verification scan…';
+        try {
+          const scanned = await message({type:'SCAN_COMPANY_JOBS', companyId, memberId: data.memberId, name: data.name});
+          if (scanned.scan) { data.jobScan = scanned.scan; warnings.push(jobScanNote(scanned.scan)); }
+        } catch (error) { errors.push(`job roles: ${error.message}`); }
       }
       const focus = selectedProfileFocus(options.focus);
       if (!options.includePeople) delete data.peopleProfiles;

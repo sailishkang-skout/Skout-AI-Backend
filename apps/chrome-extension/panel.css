@@ -316,3 +316,14 @@ body.side-panel {
 .capture-run-item[data-status="failed"] .capture-company-meta {
   color: #b42318;
 }
+
+.capture-jobs {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #e6e6e6;
+}
+
+.capture-jobs-status {
+  margin: 8px 0 4px;
+  font-weight: 600;
+}

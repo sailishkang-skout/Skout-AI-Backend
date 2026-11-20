@@ -72,6 +72,7 @@
         "capture/sales-navigator-capture.js",
         "capture/sales-lead-link-reader.js",
         "capture/company-people-search.js",
+        "capture/company-jobs.js",
         "capture/capture-content.js"
       ],
       "run_at": "document_idle"

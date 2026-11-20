@@ -880,6 +880,13 @@ describe("ENR-02 Latest Job Roles", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("tells the extension which jobs already have their details", async () => {
+    const known = (await get("/enrichment/companies/jobs-co/jobs/known")).json().jobs as Array<{ jobId: string; detailsComplete: boolean }>;
+    expect(known.find((entry) => entry.jobId === "400000001")).toMatchObject({ detailsComplete: true });
+    expect(known.find((entry) => entry.jobId === "400000002")).toMatchObject({ detailsComplete: false });
+    expect((await get("/enrichment/companies/never-heard-of/jobs/known")).json().jobs).toEqual([]);
+  });
+
   it("keeps jobs inside the workspace", async () => {
     expect((await get(`/enrichment/companies/${companyId}/jobs`, outsider)).statusCode).toBe(404);
     expect((await post(`/enrichment/companies/${companyId}/jobs/rescan`, {}, outsider)).statusCode).toBe(404);

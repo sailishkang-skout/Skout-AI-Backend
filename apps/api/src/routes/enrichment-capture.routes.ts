@@ -50,7 +50,7 @@ import {
   pauseAutoCapture,
   startAutoCapture,
 } from "../services/enrichment/capture-auto.service.js";
-import { companyIdForPublicId, listRequestedJobScans, recordJobScan, startJobScan } from "../services/enrichment/company-jobs.service.js";
+import { companyIdForPublicId, knownCompanyJobs, listRequestedJobScans, recordJobScan, startJobScan } from "../services/enrichment/company-jobs.service.js";
 import { jobScanSchema } from "../services/enrichment/capture-schemas.js";
 import { indexCapturedPeople } from "../services/enrichment/capture-search-index.js";
 import { openSearchConfigFromEnv } from "../lib/opensearch-config.js";
@@ -332,6 +332,13 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     const companyId = await companyIdForPublicId(db, actor.workspaceId, captureQueueIdSchema.parse(publicId));
     if (!companyId) return reply.status(409).send({ error: "company_not_captured", message: "Capture this company first, then its job roles can be saved." });
     return reply.send(await startJobScan(db, actor, companyId, clientScanId));
+  });
+
+  app.get("/enrichment/companies/:publicId/jobs/known", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const { publicId } = request.params as { publicId: string };
+    const companyId = await companyIdForPublicId(db, actor.workspaceId, captureQueueIdSchema.parse(publicId));
+    return reply.send({ jobs: companyId ? await knownCompanyJobs(db, actor.workspaceId, companyId) : [] });
   });
 
   // Job scans asked for in the workspace, for the extension's side panel.
