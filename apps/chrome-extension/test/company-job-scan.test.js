@@ -119,7 +119,7 @@ describe("double scan", () => {
     });
     const result = await scan();
     expect(result.passes[1]).toMatchObject({ pass: 2, complete: false });
-    expect(result.notes.join(" ")).toMatch(/Verification stopped after 8 result pages/);
+    expect(result.notes.join(" ")).toMatch(/Verification stopped after 40 result pages/);
   });
 
   it("reads the Jobs tab again, deeper, when LinkedIn's company id cannot be found", async () => {
@@ -187,19 +187,20 @@ describe("double scan", () => {
   });
 
   it("reads details only for roles the workspace lacks them for, newest first, up to the cap", async () => {
-    const jobs = Array.from({ length: 20 }, (_, i) => card(i + 1, { postedAt: `2026-11-${String(i + 1).padStart(2, "0")}T00:00:00.000Z` }));
+    const jobs = Array.from({ length: 30 }, (_, i) => card(i + 1, { postedAt: `2026-11-${String(i + 1).padStart(2, "0")}T00:00:00.000Z` }));
     const env = linkedin((url, message) => {
       if (message.type === "COLLECT_JOB_DETAIL") return detail(url.match(/view\/(\d+)/)[1]);
       if (url === tabUrl) return ok(jobs, { memberId: "1441" });
       return ok(jobs, { hasNext: false });
-    }, { known: [{ jobId: id_(20), detailsComplete: true }, { jobId: id_(19), detailsComplete: false }] });
+    }, { known: [{ jobId: id_(30), detailsComplete: true }, { jobId: id_(29), detailsComplete: false }] });
     const result = await scan();
     const read = env.opened.filter((url) => url.includes("/jobs/view/")).map((url) => url.match(/view\/(\d+)/)[1]);
-    expect(read).toHaveLength(15);
-    expect(read).not.toContain(id_(20));
-    expect(read[0]).toBe(id_(19));
-    expect(result.jobs.filter((job) => job.description)).toHaveLength(15);
-    expect(result.notes.join(" ")).toMatch(/5 roles have no description yet/);
+    expect(read).toHaveLength(25);
+    expect(read).not.toContain(id_(30));
+    expect(read[0]).toBe(id_(29));
+    expect(result.jobs.filter((job) => job.description)).toHaveLength(25);
+    expect(result.notes.join(" ")).toMatch(/4 roles still have no description/);
+    expect(result.counts).toMatchObject({ found: 30, detailsRead: 25, remaining: 4, failed: 0 });
   });
 });
 
@@ -291,5 +292,93 @@ describe("what is sent to the API", () => {
     expect(clean.passes[0].method).toHaveLength(80);
     expect(clean.notes).toEqual(["n".repeat(300), "ok"]);
     expect(clean.error).toHaveLength(500);
+  });
+});
+
+describe("a rescan resumes, and a scan only ever keeps its own company's jobs", () => {
+  const withName = (n, name = "Acme") => card(n, { companyName: name });
+  const pageOf = (from, count, name) => Array.from({ length: count }, (_, i) => withName(from + i, name));
+
+  it("continues at the page the last scan stopped on instead of starting over", async () => {
+    let failFrom = 50;
+    const env = linkedin((url, message) => {
+      if (message.type === "COLLECT_JOB_DETAIL") return detail("x");
+      if (url === tabUrl) return ok(pageOf(1, 25), { memberId: "1441", expectedTotal: 25 });
+      const start = Number(new URL(url).searchParams.get("start"));
+      if (start >= failFrom) return { ok: true, state: "not_loaded", jobs: [], complete: false, notes: ["The jobs did not finish loading."] };
+      return ok(pageOf(100 + start, 25), { hasNext: true, expectedTotal: 100 });
+    });
+    const first = await scan();
+    expect(first.passes[1]).toMatchObject({ pass: 2, complete: false });
+    expect(first.jobs).toHaveLength(75);
+    expect(first.counts).toMatchObject({ found: 75, resumed: false, retries: 2 });
+    expect(JSON.stringify(env.store)).toContain('"nextStart":50');
+
+    failFrom = 1000;
+    env.opened.length = 0;
+    const second = await scan();
+    expect(env.opened.some((url) => url === tabUrl)).toBe(false);
+    expect(env.opened[0]).toBe(search(50));
+    expect(second.counts).toMatchObject({ resumed: true, found: 125 });
+    expect(second.jobs).toHaveLength(125);
+    expect(second.notes.join(" ")).toMatch(/Resumed an earlier scan: 75 roles were already read/);
+    expect(second.passes.every((pass) => pass.complete)).toBe(true);
+  });
+
+  it("removes the checkpoint once the scan has genuinely finished", async () => {
+    const env = linkedin((url, message) => (message.type === "COLLECT_JOB_DETAIL" ? detail("x") : ok(pageOf(1, 3), { memberId: "1441", hasNext: false, expectedTotal: 3 })));
+    const result = await scan();
+    expect(result.passes.every((pass) => pass.complete)).toBe(true);
+    expect(Object.keys(env.store).filter((key) => key.startsWith("skoutJobScanCheckpoint:"))).toEqual([]);
+  });
+
+  it("starts over when asked to, and ignores a checkpoint that is more than a day old", async () => {
+    const env = linkedin((url, message) => (message.type === "COLLECT_JOB_DETAIL" ? detail("x") : ok(pageOf(1, 2), { memberId: "1441", hasNext: false })));
+    await chrome.storage.local.set({ "skoutJobScanCheckpoint:acme": { companyId: "acme", memberId: "1441", firstDone: true, jobs: pageOf(500, 5), nextStart: 25, savedAt: Date.now() - 25 * 3600 * 1000 } });
+    expect((await scan()).counts.resumed).toBe(false);
+    await chrome.storage.local.set({ "skoutJobScanCheckpoint:acme": { companyId: "acme", memberId: "1441", firstDone: true, jobs: pageOf(500, 5), nextStart: 25, savedAt: Date.now() } });
+    const fresh = await scan({ resume: false });
+    expect(fresh.counts.resumed).toBe(false);
+    expect(fresh.jobs.map((job) => job.jobId)).not.toContain(id_(500));
+    expect(env.opened).toContain(tabUrl);
+  });
+
+  it("tries a page that did not load again, and says it did", async () => {
+    let tries = 0;
+    const env = linkedin((url, message) => {
+      if (message.type === "COLLECT_JOB_DETAIL") return detail("x");
+      if (url === tabUrl) return ok(pageOf(1, 2), { memberId: "1441" });
+      if (++tries === 1) return { ok: true, state: "not_loaded", jobs: [], complete: false, notes: ["The jobs did not finish loading."] };
+      return ok(pageOf(1, 2), { hasNext: false });
+    });
+    const result = await scan();
+    expect(result.counts.retries).toBe(1);
+    expect(result.passes.every((pass) => pass.complete)).toBe(true);
+    expect(env.opened.filter((url) => url === search(0))).toHaveLength(2);
+  });
+
+  it("does not keep another company's jobs, and does not trust a search filtered to the wrong company", async () => {
+    linkedin((url, message) => {
+      if (message.type === "COLLECT_JOB_DETAIL") return detail("x");
+      if (url === tabUrl) return ok(pageOf(1, 2, "Meta Platforms, Inc."), { memberId: "999" });
+      return ok(pageOf(40, 3, "Globex Corporation"), { hasNext: false });
+    });
+    const wrong = await scan({ publicName: "Meta" });
+    expect(wrong.jobs.map((job) => job.companyName)).toEqual(["Meta Platforms, Inc.", "Meta Platforms, Inc."]);
+    expect(wrong.counts).toMatchObject({ skipped: 3, found: 2 });
+    expect(wrong.notes.join(" ")).toMatch(/returned another company's jobs/);
+    expect(wrong.passes[1].complete).toBe(false);
+  });
+
+  it("keeps the company's own jobs from a mixed results page and reports what it left out", async () => {
+    linkedin((url, message) => {
+      if (message.type === "COLLECT_JOB_DETAIL") return detail("x");
+      if (url === tabUrl) return ok(pageOf(1, 2), { memberId: "1441" });
+      return ok([...pageOf(1, 2), withName(60, "Acme Labs"), withName(61, "Other Inc")], { hasNext: false });
+    });
+    const result = await scan();
+    expect(result.jobs.map((job) => job.title).sort()).toEqual(["Role 1", "Role 2", "Role 60"]);
+    expect(result.counts.skipped).toBe(1);
+    expect(result.notes.join(" ")).toMatch(/Left out 1 role/);
   });
 });

@@ -2,7 +2,7 @@
 // EnrichmentTool prototype. Read-only: no network requests, clicks, scrolling or navigation,
 // and no reads of inline page JSON or private APIs.
 globalThis.SkoutCapturePage = (() => {
-const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace } =
+const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace, resolveCompanyCountry } =
   window.SkoutCaptureExtract;
 
 // ---------------------------------------------------------------------------
@@ -625,6 +625,10 @@ function extractCompany() {
   const peopleProfiles = window.SkoutCompanySections.peopleProfiles();
   const insights = extractCompanyInsights();
 
+  const companyCountry = resolveCompanyCountry({
+    structured: structuredCountry(),
+    headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
+  });
   const company = {
     publicId,
     sourceUrl: window.location.href.split('?')[0],
@@ -633,8 +637,9 @@ function extractCompany() {
     logoUrl,
     industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
     headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
-    // The country of the headquarters: written there, or known from its state or city.
-    locationCountry: countryFromPlace(detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter),
+    // The country: what the page states, else the country of the headquarters' state or city (never guessed).
+    locationCountry: companyCountry.country,
+    locationCountrySource: companyCountry.source,
     memberId,
     followers,
     size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() ||
@@ -669,6 +674,21 @@ function extractCompany() {
   };
   company.sectionCaptures = window.SkoutCompanySections.captures(company);
   return company;
+}
+
+/** The country in the page's structured data (an Organization's address), when LinkedIn includes it. */
+function structuredCountry() {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const data = JSON.parse(script.textContent || 'null');
+      for (const item of [].concat(data?.['@graph'] || data || [])) {
+        const address = [].concat(item?.address || item?.location?.address || [])[0];
+        const code = typeof address?.addressCountry === 'string' ? address.addressCountry : address?.addressCountry?.name;
+        if (code) return code;
+      }
+    } catch { /* not JSON */ }
+  }
+  return undefined;
 }
 
 function countTruthy(obj) {

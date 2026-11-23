@@ -383,7 +383,7 @@ export function initPanel() {
         (f) => `
         <div class="enrich-result-row" data-field="${f}">
           <span class="enrich-result-label">${FIELD_LABELS[f] || f}</span>
-          <span class="enrich-result-value" style="color:#475569">⏳</span>
+          <span class="enrich-result-value" style="color:#b4c0d4">⏳</span>
           <span class="enrich-result-icon"></span>
         </div>`
       )
@@ -410,8 +410,8 @@ export function initPanel() {
         if (iconEl) { iconEl.textContent = "in"; iconEl.style.color = "#60a5fa"; }
         return;
       }
-      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#b4c0d4"; }
+      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#b4c0d4"; }
       return;
     }
     if (match.validationStatus === "skipped") {
@@ -435,8 +435,8 @@ export function initPanel() {
     }
     const displayValue = displayValueForResult(row.getAttribute("data-field"), match);
     if (!displayValue || match.status === "not_found") {
-      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+      if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#b4c0d4"; }
+      if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#b4c0d4"; }
       return;
     }
     if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
@@ -613,7 +613,7 @@ export function initPanel() {
       }
     } catch (error) {
       enrichResultsEl?.querySelectorAll(".enrich-result-value").forEach((el) => {
-        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }
+        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#b4c0d4"; }
       });
       const msg = error instanceof Error ? error.message : "Enrich failed";
       const isCreditsError =

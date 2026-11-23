@@ -8,8 +8,13 @@
   </head>
   <body class="side-panel">
     <header>
-      <h1>Skout AI</h1>
-      <p>Stays open while you browse · use the LinkedIn sidebar on profiles</p>
+      <div class="brand">
+        <img class="brand-logo" src="icons/icon48.png" width="36" height="36" alt="" />
+        <div class="brand-text">
+          <h1>Skout AI</h1>
+          <p>Stays open while you browse · use the LinkedIn sidebar on profiles</p>
+        </div>
+      </div>
     </header>
 
     <section class="card vision-pillar" aria-label="Primary decision">
@@ -114,11 +119,14 @@
         <p class="vision-kicker">Job roles</p>
         <p class="vision-desc">
           Scans a company's jobs twice (its Jobs tab, then LinkedIn job search for the company), merges them without
-          duplicates, and reads the details of up to 15 roles Skout does not have yet. Shown under Companies in Skout.
+          duplicates, and reads the details of up to 25 roles Skout does not have yet; a scan that could not finish is resumed, not repeated. Shown under Companies in Skout.
         </p>
-        <button id="capture-jobs-scan" type="button" disabled>Scan job roles</button>
+        <button id="capture-jobs-scan" type="button" class="primary" disabled>Scan job roles</button>
+        <p id="capture-jobs-reason" class="capture-reason hidden" role="status"></p>
+        <button id="capture-jobs-restart" type="button" class="hidden">Start over (discard what was read)</button>
         <div id="capture-jobs-result" class="hidden" role="status" aria-live="polite">
           <p id="capture-jobs-status" class="capture-jobs-status"></p>
+          <p id="capture-jobs-counts" class="capture-jobs-counts"></p>
           <ul id="capture-jobs-notes" class="capture-notes"></ul>
           <button id="capture-jobs-save" type="button" class="primary hidden">Save again</button>
         </div>

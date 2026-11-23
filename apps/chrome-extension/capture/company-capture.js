@@ -39,7 +39,7 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     }
     // About values are more precise than the abbreviated topcard on other tabs.
     if (/\/about\/$/.test(previous.sourceUrl || '') && !/\/about\/$/.test(next.sourceUrl || '')) {
-      for (const field of ['industry','headquarter','locationCountry','size','website','domain','phone','employeesOnLi','foundedAt','specialties','overview']) if (previous[field] !== undefined) result[field] = previous[field];
+      for (const field of ['industry','headquarter','locationCountry','locationCountrySource','size','website','domain','phone','employeesOnLi','foundedAt','specialties','overview']) if (previous[field] !== undefined) result[field] = previous[field];
     }
     return result;
   }

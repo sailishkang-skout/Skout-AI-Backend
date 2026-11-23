@@ -145,22 +145,35 @@
     return number ? Number(number) : undefined;
   }
 
-  /** LinkedIn's id for this company, from the "all jobs" link, which carries it as f_C. */
+  /**
+   * LinkedIn's id for this company, from the "all jobs" link, which carries it as f_C. Links in side
+   * panels, footers and "similar companies" lists point at other companies, so only links in the main
+   * column count, and when there are several the id most links agree on wins.
+   */
   function memberIdFromPage(root = document) {
-    for (const link of root.querySelectorAll('a[href*="/jobs/search"]')) {
+    const votes = new Map();
+    for (const link of root.querySelectorAll('main a[href*="/jobs/search"]')) {
+      if (link.closest('aside, footer, nav, [role="dialog"], [class*="similar"], [class*="affiliated"], [class*="recommend"]')) continue;
       try {
         const id = new URL(link.getAttribute('href'), location.origin).searchParams.get('f_C');
+        // A link may list the company and its subsidiaries; the company's own id comes first.
         const first = (id || '').split(',')[0];
-        if (/^\d{1,20}$/.test(first)) return first;
+        if (!/^\d{1,20}$/.test(first)) continue;
+        votes.set(first, (votes.get(first) || 0) + 1);
       } catch { /* next link */ }
     }
-    return undefined;
+    return [...votes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   }
 
+  /** The job list's own "Show more jobs" control. Other "See more" buttons on the page (About, similar pages) are never pressed. */
   function showMoreButton(root = document) {
-    return Array.from(root.querySelectorAll('main button, main a[role="button"]')).find((button) => {
+    const cards = root.querySelector(JOB_LINK)?.closest('ul, ol, section, [class*="jobs-"], [class*="job-list"]');
+    const scope = cards?.parentElement || root.querySelector('main') || root;
+    return Array.from(scope.querySelectorAll('button, a[role="button"]')).find((button) => {
+      if (button.closest('aside, footer, nav, [role="dialog"], [class*="about"], [class*="similar"]')) return false;
       const label = (button.getAttribute('aria-label') || compact(button) || '').trim();
-      return /^(?:show|see)\s+more(?:\s+jobs)?$/i.test(label) && !button.disabled && button.getAttribute('aria-disabled') !== 'true';
+      return /^(?:show|see)\s+more\s+jobs$|^(?:show|see)\s+more$/i.test(label) && !button.disabled && button.getAttribute('aria-disabled') !== 'true' &&
+        (/jobs/i.test(label) || button.closest('[class*="jobs-"], [class*="job-list"], [data-view-name*="job"]'));
     });
   }
 
@@ -169,37 +182,75 @@
     return root.querySelector('.jobs-search-results-list, .scaffold-layout__list, [class*="jobs-search-results-list"]');
   }
 
+  /** The nearest ancestor that scrolls on its own: where the cards actually are when the list has no known class. */
+  function scrollParent(node) {
+    for (let el = node?.parentElement; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      const overflow = getComputedStyle(el).overflowY;
+      if (/(auto|scroll)/.test(overflow) && el.scrollHeight > el.clientHeight + 20) return el;
+    }
+    return null;
+  }
+
+  /** Scrolls one screen further down the list (or the page). Returns whether it was already at the bottom. */
+  function scrollOneScreen(root) {
+    const firstLink = root.querySelector(JOB_LINK);
+    const target = listContainer(root) || scrollParent(firstLink);
+    if (target) {
+      const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 4;
+      target.scrollTop += Math.max(300, Math.floor(target.clientHeight * 0.8));
+      return atBottom;
+    }
+    const doc = document.documentElement;
+    const atBottom = window.scrollY + window.innerHeight >= doc.scrollHeight - 4;
+    try { window.scrollBy?.({ top: Math.max(400, Math.floor(window.innerHeight * 0.8)), behavior: 'auto' }); } catch { /* not scrollable */ }
+    return atBottom;
+  }
+
   /**
-   * Loads every card the page will show: scrolls the page and the list, and presses "Show more".
-   * Stops when the count stops growing, and says whether it reached the end of what LinkedIn
-   * shows (complete) or was cut short.
+   * Loads every card the page will show. LinkedIn renders cards only as they scroll into view (and may
+   * drop them again), so this scrolls a screen at a time and keeps every card it has seen. It presses
+   * the list's own "Show more" while that keeps adding roles, and stops when it has reached the bottom with
+   * nothing new. It says whether it reached the end (complete) or was cut short.
    */
-  async function loadAllCards({ maxPasses = 40, wait = 700, root = document, source = 'company-jobs-tab' } = {}) {
+  async function loadAllCards({ maxPasses = 80, wait = 700, root = document, source = 'company-jobs-tab' } = {}) {
+    const collected = new Map();
+    const absorb = () => {
+      for (const card of extractJobCards(root, source)) collected.set(card.jobId, { ...(collected.get(card.jobId) || {}), ...card });
+      return collected.size;
+    };
+    const total = expectedTotal(root);
     let previous = -1;
     let stable = 0;
     let expanded = 0;
+    let idleClicks = 0;
     let reachedEnd = false;
     for (let pass = 0; pass < maxPasses; pass++) {
-      const count = extractJobCards(root, source).length;
-      stable = count === previous ? stable + 1 : 0;
-      previous = count;
-      const more = showMoreButton(root);
+      const count = absorb();
+      // Every slot LinkedIn announced for the list is rendered: nothing is waiting to load.
+      const slots = root.querySelectorAll('[data-occludable-job-id]').length;
+      const pending = slots > count;
+      if (source === 'company-jobs-tab' && total && count >= total) { reachedEnd = true; break; }
+      const more = idleClicks < 2 ? showMoreButton(root) : undefined;
       if (more) {
         more.click();
         expanded++;
+        await pause(wait * 1.5);
+        idleClicks = absorb() > count ? 0 : idleClicks + 1;
         stable = 0;
-      } else if (stable >= 3) {
-        reachedEnd = true;
-        break;
+        previous = collected.size;
+        continue;
       }
-      const list = listContainer(root);
-      if (list) list.scrollTop = list.scrollHeight;
-      const last = Array.from(root.querySelectorAll(JOB_LINK)).at(-1);
-      last?.scrollIntoView?.({ block: 'end' });
-      window.scrollBy?.({ top: Math.max(500, Math.floor(window.innerHeight * 0.8)), behavior: 'auto' });
+      const atBottom = scrollOneScreen(root);
       await pause(wait);
+      const after = absorb();
+      // Quiet only counts once the bottom was reached; a slow load (waiting slots) needs more quiet passes.
+      stable = after === previous && atBottom ? stable + 1 : after === previous ? stable : 0;
+      previous = after;
+      if (stable >= (pending ? 6 : 3)) { reachedEnd = true; break; }
     }
-    return { cards: extractJobCards(root, source), complete: reachedEnd && !showMoreButton(root), expanded };
+    absorb();
+    const stillMore = idleClicks < 2 && Boolean(showMoreButton(root));
+    return { cards: [...collected.values()], complete: reachedEnd && !stillMore, expanded, expectedTotal: total };
   }
 
   /** The page's own state: rendered cards, a real "no jobs" message, a LinkedIn warning, or not loaded. */
@@ -220,7 +271,7 @@
   }
 
   /** One page of jobs: waits for LinkedIn to render, loads everything, reports what it could and could not see. */
-  async function collectJobsPage({ source = 'company-jobs-tab', maxPasses = 40, wait = 700, readyAttempts = 40 } = {}) {
+  async function collectJobsPage({ source = 'company-jobs-tab', maxPasses = 80, wait = 700, readyAttempts = 40 } = {}) {
     let status = { state: 'pending' };
     for (let attempt = 0; attempt < readyAttempts; attempt++) {
       status = pageState();
@@ -240,7 +291,7 @@
     const notes = [];
     // Another results page follows when this one is full and LinkedIn counts more than this page and the pages before it.
     const hasNext = source === 'job-search' && (total ? start + loaded.cards.length < total : loaded.cards.length >= SEARCH_PAGE_SIZE);
-    if (!loaded.complete) notes.push(`Stopped loading after ${loaded.cards.length} roles (the page kept growing or was cut short).`);
+    if (!loaded.complete) notes.push(`Stopped loading after ${loaded.cards.length} roles${total ? ` of ${total}` : ''} (the page kept growing or was cut short).`);
     return {
       ok: true,
       state: 'ok',

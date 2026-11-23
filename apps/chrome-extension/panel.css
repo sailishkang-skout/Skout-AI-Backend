@@ -7,11 +7,11 @@ body.side-panel {
 
 .vision-kicker {
   margin: 0 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #60a5fa;
+  color: var(--link);
 }
 
 .vision-title {
@@ -22,9 +22,9 @@ body.side-panel {
 
 .vision-desc {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .vision-chips {
@@ -38,29 +38,29 @@ body.side-panel {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid #334155;
-  background: #1e293b;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
   padding: 2px 8px;
-  font-size: 10px;
-  color: #cbd5e1;
+  font-size: 11px;
+  color: var(--text-2);
 }
 
 .vision-chip.warning {
-  border-color: #b45309;
-  color: #fcd34d;
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
 .vision-chip.danger {
-  border-color: #b91c1c;
-  color: #fca5a5;
+  border-color: var(--danger-strong);
+  color: var(--danger-strong);
 }
 
 .capture-notice,
 .capture-notes {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .capture-notes {
@@ -70,9 +70,9 @@ body.side-panel {
 .capture-person-preview {
   margin: 8px 0;
   padding: 8px;
-  border: 1px solid #334155;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #0f172a;
+  background: var(--surface);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -89,20 +89,20 @@ body.side-panel {
 .capture-person-preview ul {
   margin: 0;
   padding-left: 16px;
-  color: #cbd5e1;
+  color: var(--text-2);
 }
 
 .capture-person-preview .capture-empty {
-  color: #fcd34d;
+  color: var(--warning);
 }
 
 .capture-banner {
   margin: 0 0 8px;
   padding: 8px;
-  border: 1px solid #b91c1c;
+  border: 1px solid var(--danger-strong);
   border-radius: 6px;
-  background: #450a0a;
-  color: #fecaca;
+  background: var(--danger-bg);
+  color: var(--danger-text);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -112,11 +112,11 @@ body.side-panel {
 }
 
 .capture-error {
-  color: #fca5a5;
+  color: var(--danger-strong);
 }
 
 .capture-success {
-  color: #86efac;
+  color: var(--success);
 }
 
 .capture-result {
@@ -151,7 +151,7 @@ body.side-panel {
   max-height: 220px;
   margin: 8px 0;
   overflow-y: auto;
-  border: 1px solid #334155;
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -186,12 +186,12 @@ body.side-panel {
 }
 
 .capture-lead-name {
-  color: #e2e8f0;
+  color: var(--text);
   font-weight: 600;
 }
 
 .capture-lead-role {
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .capture-lead .vision-chip {
@@ -201,12 +201,12 @@ body.side-panel {
 .capture-field-error {
   display: block;
   margin-top: 2px;
-  color: #fca5a5;
+  color: var(--danger-strong);
   font-size: 11px;
 }
 
 .capture-fields input[aria-invalid="true"] {
-  border-color: #f87171;
+  border-color: var(--danger-strong);
 }
 
 /* Review fields LinkedIn did not show: still editable, clearly marked. */
@@ -214,9 +214,9 @@ body.side-panel {
   margin-left: 6px;
   padding: 0 6px;
   border-radius: 999px;
-  background: #fff4e5;
-  color: #8a4b00;
-  font-size: 10px;
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -229,7 +229,7 @@ body.side-panel {
 
 .capture-fields input.capture-field-missing::placeholder,
 .capture-fields textarea.capture-field-missing::placeholder {
-  color: #8a4b00;
+  color: var(--warning-text);
   font-weight: 600;
 }
 
@@ -241,9 +241,9 @@ body.side-panel {
 .capture-continue {
   margin-top: 10px;
   padding: 10px;
-  border: 1px solid #c7dcf5;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: #f1f7fe;
+  background: var(--info-bg);
 }
 
 .capture-queue {
@@ -265,7 +265,7 @@ body.side-panel {
 .capture-company-list {
   max-height: 260px;
   overflow-y: auto;
-  border: 1px solid #e6e6e6;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 
@@ -276,7 +276,7 @@ body.side-panel {
   gap: 8px;
   align-items: start;
   padding: 6px 8px;
-  border-top: 1px solid #e6e6e6;
+  border-top: 1px solid var(--border);
 }
 
 .capture-company-item:first-child,
@@ -303,27 +303,56 @@ body.side-panel {
 
 .capture-company-meta {
   display: block;
-  color: #666;
+  color: var(--muted);
   font-size: 11px;
 }
 
 .capture-run-item[data-status="running"] .capture-company-meta,
 .capture-run-item[data-status="review"] .capture-company-meta {
-  color: #0a66c2;
+  color: var(--link);
   font-weight: 600;
 }
 
 .capture-run-item[data-status="failed"] .capture-company-meta {
-  color: #b42318;
+  color: var(--danger-strong);
 }
 
 .capture-jobs {
   margin-top: 12px;
   padding-top: 8px;
-  border-top: 1px solid #e6e6e6;
+  border-top: 1px solid var(--border);
 }
 
 .capture-jobs-status {
   margin: 8px 0 4px;
   font-weight: 600;
 }
+
+/* Brand header, reasons a control is disabled, scan counts, retry buttons. */
+.capture-reason {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.capture-jobs-counts { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.capture-jobs-status { color: var(--text); }
+
+.capture-continue { color: var(--info-text); }
+.capture-continue .vision-desc { color: var(--info-text); }
+
+.capture-run-item { align-items: center; }
+.capture-run-item .capture-run-retry { grid-column: 1 / -1; width: auto; margin: 4px 0 0; padding: 5px 10px; justify-self: start; }
+.capture-run-item[data-status="done"] .capture-company-meta { color: var(--success); }
+.capture-run-item[data-status="pending"] .capture-company-meta { color: var(--text-2); }
+
+.capture-queue summary { color: var(--text); }
+.capture-queue-list { list-style: none; margin: 6px 0; padding: 0; }
+.capture-queue-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); }
+.capture-queue-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+.capture-queue-item button { width: auto; margin: 0; padding: 5px 12px; }

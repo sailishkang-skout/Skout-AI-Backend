@@ -106,6 +106,52 @@ describe("loading every card", () => {
   });
 });
 
+describe("lists that render cards only as they scroll into view", () => {
+  it("collects every card even when LinkedIn removes the ones scrolled past", async () => {
+    const slots = Array.from({ length: 20 }, (_, i) => `<li data-occludable-job-id="80${i + 10}0001" data-slot="${i}"></li>`).join("");
+    const window = load(`<main><ul id="list">${slots}</ul></main>`);
+    const doc = window.document;
+    // Each scroll renders a window of 5 cards around the current position and empties the rest.
+    let position = 0;
+    const render = () => {
+      doc.querySelectorAll("#list li").forEach((li, i) => {
+        li.innerHTML = i >= position && i < position + 5 ? searchCard(`80${i + 10}0001`, `Role ${i}`).replace(/^\s*<li[^>]*>|<\/li>\s*$/g, "") : "";
+      });
+    };
+    render();
+    window.scrollBy = () => { position = Math.min(15, position + 4); render(); };
+    const result = await window.SkoutCompanyJobs.loadAllCards({ wait: 0, maxPasses: 40, source: "job-search" });
+    expect(result.cards.map((card) => card.title).sort()).toEqual(Array.from({ length: 20 }, (_, i) => `Role ${i}`).sort());
+    expect(result.complete).toBe(true);
+  });
+
+  it("never presses an unrelated See more button (About, similar pages), and still finishes", async () => {
+    const window = load(`<main><ul>${[1, 2, 3].map((n) => squareCard(`61${n}0001`, `Role ${n}`)).join("")}</ul><section class="about"><button id="about-more">See more</button></section></main>`);
+    let pressed = 0;
+    window.document.getElementById("about-more").addEventListener("click", () => { pressed++; });
+    const result = await window.SkoutCompanyJobs.loadAllCards({ wait: 0, maxPasses: 20 });
+    expect(pressed).toBe(0);
+    expect(result.cards).toHaveLength(3);
+    expect(result.complete).toBe(true);
+  });
+
+  it("gives up on a Show more jobs button that adds nothing instead of pressing it for ever", async () => {
+    const window = load(`<main><ul>${[1, 2, 3].map((n) => squareCard(`62${n}0001`, `Role ${n}`)).join("")}</ul><button id="more">Show more jobs</button></main>`);
+    let pressed = 0;
+    window.document.getElementById("more").addEventListener("click", () => { pressed++; });
+    const result = await window.SkoutCompanyJobs.loadAllCards({ wait: 0, maxPasses: 30 });
+    expect(pressed).toBe(2);
+    expect(result.cards).toHaveLength(3);
+    expect(result.complete).toBe(true);
+  });
+
+  it("takes the company id from its own all-jobs link, not from side panels or lists of other companies", () => {
+    const page = reader(`<main><a href="/jobs/search/?f_C=1441">See all jobs</a><aside><a href="/jobs/search/?f_C=999">Other</a><a href="/jobs/search/?f_C=999">Other</a></aside><section class="similar-pages"><a href="/jobs/search/?f_C=555">Rival</a><a href="/jobs/search/?f_C=555">Rival</a></section></main>`);
+    expect(page.memberIdFromPage()).toBe("1441");
+    expect(reader(`<main><aside><a href="/jobs/search/?f_C=999">Other</a></aside></main>`).memberIdFromPage()).toBeUndefined();
+  });
+});
+
 describe("what a page can say", () => {
   it("tells apart cards, a real empty list, a LinkedIn warning and a page that did not load", async () => {
     expect(reader(`<main>${squareCard("4010001", "Engineer")}</main>`).pageState().state).toBe("ok");

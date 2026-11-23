@@ -175,6 +175,11 @@ window.SkoutCaptureExtract = (function () {
   // US state codes win a clash ("Seattle, WA" is Washington, not Western Australia).
   const REGION_CODES = new Map(Object.keys(US_STATES).map((code) => [code, 'United States']));
   for (const [country, , codes] of REGIONS) for (const code of codes) if (!REGION_CODES.has(code)) REGION_CODES.set(code, country);
+  // City names that exist in several countries. On their own they are not enough to name a country, so
+  // they are left unresolved rather than guessed ("Cambridge" is not always England). With a state,
+  // province or country after them ("Cambridge, MA", "London, Ontario") the place is clear.
+  const AMBIGUOUS_CITIES = new Set(['cambridge','birmingham','manchester','perth','victoria','georgia','washington','valencia','richmond','portland','hyderabad','columbia','alexandria','newcastle','lancaster','springfield','naples','hamilton','kingston','granada','santiago','san jose','la paz','córdoba','cordoba','salem','durham','dover','plymouth']);
+  const ISO_CODES = {US:'United States',GB:'United Kingdom',UK:'United Kingdom',IN:'India',CA:'Canada',AU:'Australia',DE:'Germany',FR:'France',NL:'Netherlands',IE:'Ireland',ES:'Spain',IT:'Italy',CH:'Switzerland',SE:'Sweden',NO:'Norway',DK:'Denmark',FI:'Finland',SG:'Singapore',JP:'Japan',CN:'China',HK:'Hong Kong',BR:'Brazil',MX:'Mexico',AE:'United Arab Emirates',SA:'Saudi Arabia',IL:'Israel',ZA:'South Africa',NG:'Nigeria',KE:'Kenya',EG:'Egypt',PK:'Pakistan',BD:'Bangladesh',ID:'Indonesia',PH:'Philippines',VN:'Vietnam',MY:'Malaysia',TH:'Thailand',PL:'Poland',PT:'Portugal',BE:'Belgium',AT:'Austria',NZ:'New Zealand',KR:'South Korea',TR:'Turkey',RU:'Russia',UA:'Ukraine',AR:'Argentina',CL:'Chile',CO:'Colombia',PE:'Peru',TW:'Taiwan',LK:'Sri Lanka',NP:'Nepal',QA:'Qatar',KW:'Kuwait',LU:'Luxembourg',CZ:'Czechia',RO:'Romania',HU:'Hungary',GR:'Greece'};
   // Names that are both a US state and a country: after a city they are the state.
   const US_STATE_FIRST = new Set(['georgia']);
 
@@ -193,7 +198,10 @@ window.SkoutCaptureExtract = (function () {
       if (index > 0 && /^[A-Z]{2,3}$/.test(part) && REGION_CODES.has(part)) return REGION_CODES.get(part);
       if (index > 0 && US_STATE_FIRST.has(part.toLowerCase())) return 'United States';
       const known = PLACE_INDEX.get(part.toLowerCase());
-      if (known) return known;
+      if (known) {
+        if (parts.length === 1 && AMBIGUOUS_CITIES.has(part.toLowerCase())) return undefined;
+        return known;
+      }
       // "San Francisco Bay Area" and "Greater Bengaluru Area" were trimmed above; try the leading words.
       const words = part.split(' ');
       for (let length = Math.min(4, words.length - 1); length >= 1; length--) {
@@ -204,5 +212,34 @@ window.SkoutCaptureExtract = (function () {
     return undefined;
   }
 
-  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace };
+  /** The country a place names outright ("Dublin, Ireland", "Toronto, ON, Canada"): its last part is a country, nothing inferred. */
+  function explicitCountry(value) {
+    if (!value || typeof value !== 'string' || value.length > 300) return undefined;
+    const parts = value.split(/[,·|]/).map((part) => part.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (parts.length < 2) return undefined;
+    const last = parts[parts.length - 1].toLowerCase();
+    return COUNTRIES.find((country) => country.toLowerCase() === last) || COUNTRY_ALIASES[last];
+  }
+
+  /** A country from an ISO 3166 two-letter code ("US"), or from a country written out; undefined for anything else. */
+  function countryFromCode(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return undefined;
+    if (/^[A-Za-z]{2}$/.test(raw)) return ISO_CODES[raw.toUpperCase()];
+    return COUNTRIES.find((country) => country.toLowerCase() === raw.toLowerCase()) || COUNTRY_ALIASES[raw.toLowerCase()];
+  }
+
+  /**
+   * A company's country and where it came from. First what the page states itself (structured data, or a
+   * headquarters line that ends in a country); then the country its headquarters city or state belongs
+   * to. An ambiguous place is left unresolved: no country is better than a guessed one.
+   */
+  function resolveCompanyCountry({ structured, headquarter } = {}) {
+    const direct = countryFromCode(structured) || explicitCountry(headquarter);
+    if (direct) return { country: direct, source: 'linkedin_page' };
+    const inferred = countryFromPlace(headquarter);
+    return inferred ? { country: inferred, source: 'headquarters' } : { country: undefined, source: undefined };
+  }
+
+  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace, explicitCountry, countryFromCode, resolveCompanyCountry };
 })();
