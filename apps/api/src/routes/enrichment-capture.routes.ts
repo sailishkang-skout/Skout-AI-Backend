@@ -43,6 +43,7 @@ import {
   removeFromCaptureQueue,
   requestCaptureResume,
   syncCaptureQueue,
+  verifyCaptureWorkflow,
 } from "../services/enrichment/capture-queue.service.js";
 import {
   autoCaptureAvailability,
@@ -239,6 +240,13 @@ export async function enrichmentCaptureRoutes(app: FastifyInstance) {
     const details = await captureJobDetails(db, actor.workspaceId, publicId);
     if (!details) return reply.status(404).send({ error: "not_found", message: "That capture job does not exist." });
     return reply.send(details);
+  });
+
+  // What the workspace actually holds for a company: the extension's final "verify" step reads this.
+  app.get("/enrichment/capture/queue/:publicId/verify", async (request, reply) => {
+    const { db, actor } = await authorize(request, "enrichment:capture");
+    const publicId = captureQueueIdSchema.parse((request.params as { publicId: string }).publicId);
+    return reply.send(await verifyCaptureWorkflow(db, actor.workspaceId, publicId));
   });
 
   app.post("/enrichment/capture/queue/:publicId/cancel", async (request, reply) => {
