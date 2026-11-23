@@ -13,6 +13,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } 
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
+import { jobRoleCounts } from "./company-jobs.service.js";
 import { cleanCompanyName, normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
@@ -345,6 +346,8 @@ export async function getPerson(db: Db, workspaceId: string, prospectId: string)
     followersCount: typeof snapshot.followersCount === "number" ? snapshot.followersCount : null,
     website: text(snapshot.website),
     websites: list("websites"),
+    /** What the capture's verification scan concluded (statuses, sections, what was not found). */
+    verification: (snapshot.verification as Json | undefined) ?? null,
     relationshipContext: (snapshot.relationshipContext as Json | undefined) ?? null,
     experience: { current: list("currentCompanies"), previous: list("previousCompanies") },
     educations: list("educations"),
@@ -440,11 +443,14 @@ export async function listCompanies(db: Db, workspaceId: string, filters: { q?: 
     .limit(filters.pageSize)
     .offset((filters.page - 1) * filters.pageSize);
   const counts = await companyPeopleCounts(db, workspaceId, rows.map((row) => row.id));
+  const openRoles = await jobRoleCounts(db, workspaceId, rows.map((row) => row.id));
   return {
     companies: rows.map((row) => {
       const people = counts.get(row.id)!;
       return {
         ...row,
+        /** Job roles the latest scans saw as open (Latest Job Roles). */
+        openRoles: openRoles.get(row.id) ?? 0,
         verifiedEmployees: people.verified,
         discoveryCandidates: people.candidates,
         // ENR-01 response shape, kept for existing consumers.
@@ -534,6 +540,8 @@ export async function getCompany(db: Db, workspaceId: string, companyId: string)
       discoveryCandidates: counts.get(companyId)!.candidates,
     },
     facts,
+    /** What the capture's verification scan concluded for this company (people, jobs, About details). */
+    verification: (capture.verification as Json | undefined) ?? null,
     evidence: rows.slice(0, 100).map((evidence) => toFact(evidence)),
     changes: changes.map(toChange),
     freshness: { capturedAt: snapshot?.capturedAt.toISOString() ?? null, stale: facts.length > 0 && facts.every((fact) => fact.stale) },

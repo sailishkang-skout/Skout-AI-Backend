@@ -1,0 +1,60 @@
+-- Latest Job Roles: captured job listings per company, and the scans that found them.
+CREATE TABLE IF NOT EXISTS "company_job_roles" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+	"company_id" uuid NOT NULL,
+	"job_key" text NOT NULL,
+	"external_job_id" text,
+	"title" text NOT NULL,
+	"company_name" text,
+	"department" text,
+	"location" text,
+	"country" text,
+	"employment_type" text,
+	"workplace_type" text,
+	"description" text,
+	"requirements" text,
+	"posted_at" timestamp with time zone,
+	"posted_text" text,
+	"job_url" text,
+	"source" text DEFAULT 'linkedin_extension' NOT NULL,
+	"status" text DEFAULT 'open' NOT NULL,
+	"missed_scans" integer DEFAULT 0 NOT NULL,
+	"details_complete" boolean DEFAULT false NOT NULL,
+	"first_detected_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_verified_at" timestamp with time zone,
+	"changed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "company_job_roles_status_check" CHECK ("status" IN ('open','not_seen')),
+	CONSTRAINT "company_job_roles_workplace_check" CHECK ("workplace_type" IS NULL OR "workplace_type" IN ('remote','hybrid','on_site')),
+	CONSTRAINT "company_job_roles_company_workspace_fk" FOREIGN KEY ("workspace_id","company_id") REFERENCES "companies"("workspace_id","id") ON DELETE cascade
+);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "company_job_roles_company_key_unique_idx" ON "company_job_roles" ("workspace_id","company_id","job_key");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "company_job_roles_company_detected_idx" ON "company_job_roles" ("workspace_id","company_id","first_detected_at");--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "company_job_scans" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE cascade,
+	"company_id" uuid NOT NULL,
+	"status" text DEFAULT 'requested' NOT NULL,
+	"client_scan_id" text,
+	"source" text,
+	"passes" integer DEFAULT 0 NOT NULL,
+	"jobs_found" integer DEFAULT 0 NOT NULL,
+	"jobs_new" integer DEFAULT 0 NOT NULL,
+	"jobs_updated" integer DEFAULT 0 NOT NULL,
+	"verified" boolean DEFAULT false NOT NULL,
+	"details" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"error" text,
+	"requested_by" uuid REFERENCES "users"("id") ON DELETE set null,
+	"user_id" uuid REFERENCES "users"("id") ON DELETE set null,
+	"requested_at" timestamp with time zone,
+	"started_at" timestamp with time zone,
+	"completed_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "company_job_scans_status_check" CHECK ("status" IN ('requested','in_progress','completed_verified','verification_required','partial','not_found','restricted','not_loaded','failed')),
+	CONSTRAINT "company_job_scans_company_workspace_fk" FOREIGN KEY ("workspace_id","company_id") REFERENCES "companies"("workspace_id","id") ON DELETE cascade
+);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "company_job_scans_company_created_idx" ON "company_job_scans" ("workspace_id","company_id","created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "company_job_scans_client_scan_unique_idx" ON "company_job_scans" ("workspace_id","company_id","client_scan_id") WHERE "client_scan_id" IS NOT NULL;
