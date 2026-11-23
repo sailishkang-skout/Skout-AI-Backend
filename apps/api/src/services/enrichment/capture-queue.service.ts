@@ -13,6 +13,7 @@
 import { and, asc, count as countRows, desc, eq, gte, ilike, inArray, isNull, like, lte, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type Db } from "@skout/db";
+import { createLogger } from "@skout/observability";
 import { normalizeLinkedinId } from "./capture-identity.js";
 import { companyPeopleCounts } from "./research.service.js";
 
@@ -21,6 +22,8 @@ import { companyPeopleCounts } from "./research.service.js";
  * of at most 250 people. After each saved batch the extension reports where discovery stands,
  * so companies with result pages left stay listed until someone finishes them or removes them.
  */
+
+const log = createLogger("enrichment.capture-queue");
 
 const companyPublicId = z
   .string()
@@ -37,11 +40,13 @@ export type CaptureJobStatus = (typeof CAPTURE_JOB_STATUSES)[number];
 const jobStatus = z.enum(["queued", "running", "review", "paused", "completed", "failed", "skipped"]);
 
 /** What a member sees: the stored status, plus "interrupted" and "partial" read from it. */
-export const CAPTURE_JOB_STATES = [...CAPTURE_JOB_STATUSES, "interrupted", "partial"] as const;
+export const CAPTURE_JOB_STATES = [...CAPTURE_JOB_STATUSES, "interrupted", "partial", "retrying"] as const;
 export type CaptureJobState = (typeof CAPTURE_JOB_STATES)[number];
 
-/** A running or in-review job that has not reported for this long is shown as interrupted. */
+/** A running job that has not reported for this long is shown as interrupted (and recovered, see recoverStaleCaptureJobs). */
 export const CAPTURE_JOB_STALE_MS = 20 * 60 * 1000;
+/** A job waiting for a person to review a batch may wait much longer than a running one before it is called stuck. */
+export const CAPTURE_REVIEW_STALE_MS = 2 * 60 * 60 * 1000;
 
 /** One saved batch (counts) and/or a status change for a company's capture job. */
 export const captureQueueUpdateSchema = z
@@ -75,6 +80,8 @@ export const captureQueueSyncSchema = z
             companyName: z.string().trim().max(300).optional(),
             status: jobStatus,
             error: z.string().trim().max(500).optional(),
+            /** How many times the extension has retried this company after a recoverable failure. */
+            attempts: z.number().int().min(0).max(20).optional(),
           })
           .strict()
       )
@@ -98,11 +105,13 @@ type Row = typeof schema.enrichmentCaptureQueue.$inferSelect;
  * "partial": a job that saved people but then failed or was cancelled, or finished with records refused.
  */
 export function effectiveJobState(
-  row: Pick<Row, "status" | "updatedAt"> & Partial<Pick<Row, "peopleFound" | "peopleRejected">>,
+  row: Pick<Row, "status" | "updatedAt"> & Partial<Pick<Row, "peopleFound" | "peopleRejected" | "attempts">>,
   now = Date.now()
 ): CaptureJobState {
-  const stale = now - row.updatedAt.getTime() > CAPTURE_JOB_STALE_MS;
-  if (stale && (row.status === "running" || row.status === "review")) return "interrupted";
+  const age = now - row.updatedAt.getTime();
+  if ((row.status === "running" && age > CAPTURE_JOB_STALE_MS) || (row.status === "review" && age > CAPTURE_REVIEW_STALE_MS)) return "interrupted";
+  // Queued again after a recoverable failure: the job is being retried, not newly waiting.
+  if (row.status === "queued" && (row.attempts ?? 0) > 0) return "retrying";
   if ((row.status === "failed" || row.status === "cancelled") && (row.peopleFound ?? 0) > 0) return "partial";
   if (row.status === "completed" && (row.peopleRejected ?? 0) > 0) return "partial";
   return row.status as CaptureJobStatus;
@@ -112,14 +121,20 @@ export function effectiveJobState(
 function stateCondition(state: CaptureJobState): SQL {
   const t = schema.enrichmentCaptureQueue;
   const stale = sql`${t.updatedAt} < now() - interval '20 minutes'`;
+  const reviewStale = sql`${t.updatedAt} < now() - interval '2 hours'`;
   switch (state) {
     case "interrupted":
-      return sql`(${t.status} IN ('running', 'review') AND ${stale})`;
+      return sql`((${t.status} = 'running' AND ${stale}) OR (${t.status} = 'review' AND ${reviewStale}))`;
+    case "retrying":
+      return sql`(${t.status} = 'queued' AND ${t.attempts} > 0)`;
+    case "queued":
+      return sql`(${t.status} = 'queued' AND ${t.attempts} = 0)`;
     case "partial":
       return sql`((${t.status} IN ('failed', 'cancelled') AND ${t.peopleFound} > 0) OR (${t.status} = 'completed' AND ${t.peopleRejected} > 0))`;
     case "running":
+      return sql`(${t.status} = 'running' AND NOT ${stale})`;
     case "review":
-      return sql`(${t.status} = ${state} AND NOT ${stale})`;
+      return sql`(${t.status} = 'review' AND NOT ${reviewStale})`;
     case "failed":
     case "cancelled":
       return sql`(${t.status} = ${state} AND ${t.peopleFound} = 0)`;
@@ -217,7 +232,14 @@ export async function recordCaptureQueueBatch(
         ...(update.rejected !== undefined ? { peopleRejected: sql`${table.peopleRejected} + ${update.rejected}` } : {}),
         expectedPeople: sql`COALESCE(${update.expectedPeople ?? null}, ${table.expectedPeople})`,
         ...(complete !== undefined ? { complete } : {}),
-        ...(status ? { status, error: status === "failed" ? update.error || null : null } : {}),
+        // A job cancelled in the workspace stays cancelled when a late report arrives; only starting the
+        // company again (queued) is a new job. Its saved people are still counted above.
+        ...(status
+          ? {
+              status: sql`CASE WHEN ${table.status} = 'cancelled' AND ${status} <> 'queued' THEN ${table.status} ELSE ${status} END`,
+              error: sql`CASE WHEN ${table.status} = 'cancelled' AND ${status} <> 'queued' THEN ${table.error} ELSE ${status === "failed" ? update.error || null : null} END`,
+            }
+          : {}),
         // Queued for the extension (from the dashboard or the extension itself): the server worker leaves it alone.
         ...(status === "queued" ? { mode: "extension", nextRunAt: null } : {}),
         stopReason: update.stopReason !== undefined ? update.stopReason || null : table.stopReason,
@@ -226,6 +248,7 @@ export async function recordCaptureQueueBatch(
       },
     })
     .returning();
+  if (status === "failed") log.warn("capture job failed", { workspaceId: actor.workspaceId, companyPublicId: publicId, error: update.error ?? null, peopleFound: row!.peopleFound, pagesRead: row!.pagesRead });
   return captureQueueDto(row!);
 }
 
@@ -252,6 +275,7 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
           complete: item.status === "completed",
           status: item.status,
           error: item.status === "failed" ? item.error || null : null,
+          attempts: item.attempts ?? 0,
           mode: "extension",
           updatedBy: actor.userId,
           createdAt: now,
@@ -268,6 +292,8 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
             // A job that ends completed is finished; any other state leaves the saved counts alone.
             ...(item.status === "completed" ? { complete: true } : {}),
             error: item.status === "failed" ? item.error || null : null,
+            // The extension owns the retry count of its own jobs; a job that is no longer retrying goes back to none.
+            attempts: item.attempts ?? 0,
             updatedBy: actor.userId,
             updatedAt: now,
           },
@@ -277,6 +303,7 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
         })
         .returning({ id: table.companyPublicId });
       if (!written) cancelled.push(publicId);
+      else if (item.status === "failed") log.warn("capture job failed", { workspaceId: actor.workspaceId, companyPublicId: publicId, error: item.error ?? null });
     }
   });
   return { updated: items.length - cancelled.length, cancelled };
@@ -297,6 +324,36 @@ export async function cancelCaptureJob(db: Db, actor: { workspaceId: string; use
     )
     .returning();
   return row ? captureQueueDto(row) : null;
+}
+
+/**
+ * Stuck jobs. A job read in a browser that has stopped reporting (the browser closed, the extension
+ * restarted, the network dropped for good) would otherwise sit as "running" for ever. It is moved to
+ * "paused" with the reason, keeping its saved counts, so it can be resumed (the extension, or the workspace's
+ * Resume, queues it again) and is never counted as running. A job waiting for a person to review a batch is
+ * given much longer. Server-read (automatic) jobs have their own recovery in runAutoCapturePass.
+ */
+export async function recoverStaleCaptureJobs(db: Db, now = new Date()): Promise<number> {
+  const table = schema.enrichmentCaptureQueue;
+  const runningBefore = new Date(now.getTime() - CAPTURE_JOB_STALE_MS);
+  const reviewBefore = new Date(now.getTime() - CAPTURE_REVIEW_STALE_MS);
+  const recovered = await db
+    .update(table)
+    .set({
+      status: "paused",
+      nextRunAt: null,
+      stopReason: sql`'The extension stopped reporting while this job was ' || ${table.status} || '. Resume it to continue where it stopped.'`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(table.mode, "extension"),
+        or(and(eq(table.status, "running"), lte(table.updatedAt, runningBefore)), and(eq(table.status, "review"), lte(table.updatedAt, reviewBefore)))
+      )
+    )
+    .returning({ workspaceId: table.workspaceId, companyPublicId: table.companyPublicId });
+  for (const job of recovered) log.warn("stuck capture job paused", { workspaceId: job.workspaceId, companyPublicId: job.companyPublicId });
+  return recovered.length;
 }
 
 export interface CaptureQueueFilters {
@@ -367,7 +424,7 @@ export async function captureQueueStats(db: Db, workspaceId: string) {
   const [totals] = await db
     .select({
       total: sql<number>`count(*)::int`,
-      running: n(sql`${stateCondition("queued")} OR ${stateCondition("running")} OR ${stateCondition("review")}`),
+      running: n(sql`${stateCondition("queued")} OR ${stateCondition("retrying")} OR ${stateCondition("running")} OR ${stateCondition("review")}`),
       completed: n(sql`${t.status} = 'completed'`),
       failed: n(sql`${t.status} = 'failed' OR ${stateCondition("interrupted")}`),
       paused: n(sql`${t.status} = 'paused'`),

@@ -247,6 +247,29 @@ async function recordMisses(tx: Tx, workspaceId: string, companyId: string, seen
   return missed.length;
 }
 
+/**
+ * The numbers a scan can honestly report: what it captured and how that split into new, updated and
+ * unchanged roles (from what the workspace recorded), plus what the extension said it skipped (another
+ * company's roles), failed to read, and left for the next scan. `remaining` also counts the roles LinkedIn
+ * announced but the scan did not reach.
+ */
+export function scanCounts(row: Pick<ScanRow, "jobsFound" | "jobsNew" | "jobsUpdated" | "details">) {
+  const reported = ((row.details as { counts?: Record<string, unknown> } | null)?.counts ?? {}) as Record<string, number | boolean | undefined>;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const expected = typeof reported.expected === "number" ? reported.expected : null;
+  return {
+    captured: row.jobsFound,
+    new: row.jobsNew,
+    updated: row.jobsUpdated,
+    unchanged: Math.max(0, row.jobsFound - row.jobsNew - row.jobsUpdated),
+    expected,
+    skipped: num(reported.skipped),
+    failed: num(reported.failed),
+    remaining: Math.max(num(reported.remaining), expected == null ? 0 : Math.max(0, expected - row.jobsFound)),
+    resumed: reported.resumed === true,
+  };
+}
+
 export function scanDto(row: ScanRow, now = Date.now()) {
   const stale = row.status === "in_progress" && now - (row.startedAt ?? row.createdAt).getTime() > JOB_SCAN_STALE_MS;
   return {
@@ -261,6 +284,7 @@ export function scanDto(row: ScanRow, now = Date.now()) {
     jobsUpdated: row.jobsUpdated,
     verified: row.verified,
     details: row.details,
+    counts: scanCounts(row),
     error: row.error,
     requestedAt: row.requestedAt?.toISOString() ?? null,
     startedAt: row.startedAt?.toISOString() ?? null,
@@ -322,7 +346,7 @@ export async function recordJobScan(
       jobsNew: created,
       jobsUpdated: updated,
       verified: outcome.verified,
-      details: { passes: scan.passes, notes: scan.notes },
+      details: { passes: scan.passes, notes: scan.notes, ...(scan.counts ? { counts: scan.counts } : {}) },
       error: scan.error ?? null,
       userId: actor.userId,
       startedAt: scan.startedAt ? new Date(scan.startedAt) : now,

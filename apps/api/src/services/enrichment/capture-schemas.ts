@@ -264,6 +264,21 @@ export const jobScanSchema = z
       .max(5)
       .default([]),
     jobs: z.array(jobRoleSchema).max(500).default([]),
+    /** What the scan did, in numbers the workspace shows: captured, skipped (another company), failed and left to read. */
+    counts: z
+      .object({
+        found: z.number().int().min(0).max(100_000),
+        expected: z.number().int().min(0).max(100_000).optional(),
+        skipped: z.number().int().min(0).max(100_000).default(0),
+        failed: z.number().int().min(0).max(100_000).default(0),
+        remaining: z.number().int().min(0).max(100_000).default(0),
+        detailsRead: z.number().int().min(0).max(100_000).default(0),
+        pagesRead: z.number().int().min(0).max(1_000).default(0),
+        retries: z.number().int().min(0).max(1_000).default(0),
+        resumed: z.boolean().default(false),
+      })
+      .strict()
+      .optional(),
     notes: z.array(text(300)).max(30).default([]),
     error: text(500).optional(),
     startedAt: z.string().datetime().optional(),
@@ -323,6 +338,8 @@ export const companyIngestSchema = z
     domain: text(300).optional(),
     logoUrl: z.string().url().max(2_000).optional(),
     locationCountry: name.optional(),
+    /** Whether the country was on the page, or worked out from the headquarters. */
+    locationCountrySource: z.enum(["linkedin_page", "headquarters"]).optional(),
     phone: text(60).optional(),
     industry: name.optional(),
     tagline: text(1_000).optional(),
