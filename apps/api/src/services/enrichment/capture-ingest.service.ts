@@ -17,6 +17,7 @@ import { generateCompanyId, normalizeDomain } from "@skout/shared";
 import { recordPrivilegedAction } from "@skout/auth";
 import { buildEntitlementsService } from "../entitlements.service.js";
 import { recordJobScan } from "./company-jobs.service.js";
+import { resolveCompanyCountry } from "./company-country.js";
 import { proposeMerge } from "../identity-merge.service.js";
 import { readRetentionDays, recordObservedFacts, type CaptureEvidenceSource, type EvidenceState } from "./capture-evidence.js";
 import {
@@ -1392,8 +1393,11 @@ export async function ingestCompanyCapture(
           )
           .orderBy(desc(enrichmentSnapshots.capturedAt))
           .limit(1);
+        // The country the page gave, else the country of the headquarters (never a guess; see company-country.ts).
+        const country = resolveCompanyCountry({ captured: capture.locationCountry, capturedSource: capture.locationCountrySource, headquarter: capture.headquarter });
         const merged = mergeCompanyCapture((previous?.rawData ?? {}) as Json, {
           ...capture,
+          ...(country.country ? { locationCountry: country.country, locationCountrySource: country.source } : {}),
           domain,
           captureSource: "linkedin-company-page",
           capturedAt: capture.capturedAt ?? new Date().toISOString(),

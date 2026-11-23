@@ -14,6 +14,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
 import { jobRoleCounts } from "./company-jobs.service.js";
+import { resolveCompanyCountry } from "./company-country.js";
 import { cleanCompanyName, normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
@@ -527,6 +528,11 @@ export async function getCompany(db: Db, workspaceId: string, companyId: string)
       website: text(capture.website),
       size: text(capture.size),
       headquarter: text(capture.headquarter),
+      // The country the page gave, else the headquarters' country; null (never a guess) when neither tells.
+      ...(() => {
+        const resolved = resolveCompanyCountry({ captured: capture.locationCountry, capturedSource: capture.locationCountrySource, headquarter: capture.headquarter });
+        return { country: resolved.country, countrySource: resolved.source };
+      })(),
       foundedAt: text(capture.foundedAt),
       specialties: Array.isArray(capture.specialties) ? capture.specialties : [],
       followers: typeof capture.followers === "number" ? capture.followers : null,

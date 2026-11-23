@@ -4,6 +4,7 @@ import { createLogger, withSpan } from "@skout/observability";
 import type { Env } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
 import { runAutoCapturePass } from "../services/enrichment/capture-auto.service.js";
+import { recoverStaleCaptureJobs } from "../services/enrichment/capture-queue.service.js";
 import { DB_SHUTDOWN_TIMEOUT_SECONDS } from "../plugins/db.js";
 
 const log = createLogger("capture-auto.worker");
@@ -20,10 +21,9 @@ export async function startCaptureAutoWorker(config: Env): Promise<() => Promise
     log.warn("DATABASE_URL not set — automatic capture worker disabled");
     return async () => {};
   }
-  if (!config.UNIPILE_DSN || !config.UNIPILE_API_KEY) {
-    log.info("Unipile not configured — automatic capture worker disabled");
-    return async () => {};
-  }
+  // Without Unipile there are no automatic reads, but jobs read in a browser can still get stuck: recovery still runs.
+  const automatic = Boolean(config.UNIPILE_DSN && config.UNIPILE_API_KEY);
+  if (!automatic) log.info("Unipile not configured — automatic reads disabled; stuck extension jobs are still recovered");
   const { db, sql } = createDb(config.DATABASE_URL);
   let running = false;
   const pass = async () => {
@@ -31,8 +31,12 @@ export async function startCaptureAutoWorker(config: Env): Promise<() => Promise
     if (running) return;
     running = true;
     try {
-      const ran = await withSpan("capture-auto.pass", () => runAutoCapturePass(db, config));
-      if (ran) log.info("automatic capture pass", { jobs: ran });
+      const recovered = await withSpan("capture-queue.recover", () => recoverStaleCaptureJobs(db));
+      if (recovered) log.info("stuck capture jobs paused", { jobs: recovered });
+      if (automatic) {
+        const ran = await withSpan("capture-auto.pass", () => runAutoCapturePass(db, config));
+        if (ran) log.info("automatic capture pass", { jobs: ran });
+      }
     } catch (err) {
       log.error("automatic capture pass failed", err);
     } finally {
