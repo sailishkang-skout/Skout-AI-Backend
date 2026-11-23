@@ -25,26 +25,8 @@
       </p>
     </section>
 
-    <section class="card vision-pillar" aria-label="Intelligence">
-      <p class="vision-kicker">Intelligence</p>
-      <div class="vision-chips">
-        <span id="vision-policy-chip" class="vision-chip">Policy · Ask</span>
-        <span id="vision-freshness-chip" class="vision-chip">Context · Live</span>
-        <span id="vision-confidence-chip" class="vision-chip">Confidence · —</span>
-      </div>
-      <p id="vision-evidence-note" class="vision-desc">Evidence badges appear on enrich results.</p>
-    </section>
 
-    <section class="card vision-pillar" aria-label="System state">
-      <p class="vision-kicker">System state</p>
-      <p id="vision-system-state" class="vision-desc">Ready — select a list and profile.</p>
-    </section>
 
-    <section class="card vision-pillar" aria-label="Enterprise control">
-      <p class="vision-kicker">Enterprise control</p>
-      <p id="vision-side-effects" class="vision-desc">Side effects preview before enroll.</p>
-      <p id="vision-audit-note" class="vision-desc">Actions are auditable in Skout control plane.</p>
-    </section>
 
     <section class="card auth-card">
       <p id="auth-status" class="auth-status">Checking sign-in…</p>
@@ -122,6 +104,11 @@
           duplicates, and reads the details of up to 25 roles Skout does not have yet; a scan that could not finish is resumed, not repeated. Shown under Companies in Skout.
         </p>
         <button id="capture-jobs-scan" type="button" class="primary" disabled>Scan job roles</button>
+        <div id="capture-jobs-running" class="hidden" role="status" aria-live="polite">
+          <p id="capture-jobs-live" class="capture-jobs-counts"></p>
+          <button id="capture-jobs-stop" type="button">Stop (keep what was read)</button>
+          <button id="capture-jobs-quit" type="button" class="danger">Quit (discard this scan)</button>
+        </div>
         <p id="capture-jobs-reason" class="capture-reason hidden" role="status"></p>
         <button id="capture-jobs-restart" type="button" class="hidden">Start over (discard what was read)</button>
         <div id="capture-jobs-result" class="hidden" role="status" aria-live="polite">

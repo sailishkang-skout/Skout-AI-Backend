@@ -21,7 +21,7 @@ describe("the extension is readable (WCAG AA)", () => {
       ["text-2", "surface", 7], ["text-2", "surface-2", 4.5], ["muted", "surface", 7], ["muted", "surface-2", 4.5], ["muted", "bg", 4.5],
       ["link", "surface", 4.5], ["link", "bg", 4.5], ["on-brand", "brand", 4.5], ["on-brand", "brand-hover", 4.5],
       ["success", "surface", 4.5], ["warning", "surface", 4.5], ["danger-strong", "surface", 4.5], ["danger", "surface", 4.5],
-      ["success-text", "success-bg", 4.5], ["warning-text", "warning-bg", 4.5], ["danger-text", "danger-bg", 4.5], ["info-text", "info-bg", 4.5],
+      ["success-text", "success-bg", 4.5], ["warning-text", "warning-bg", 4.5], ["danger-text", "danger-bg", 4.5], ["danger-text", "danger-hover", 4.5], ["info-text", "info-bg", 4.5],
       ["warning", "warning-bg", 4.5], ["disabled-text", "disabled-bg", 4.5], ["text", "control-hover", 4.5],
     ];
     const failures = text.filter(([fg, bg, min]) => ratio(fg, bg) < min).map(([fg, bg, min]) => `${fg} on ${bg}: ${ratio(fg, bg).toFixed(2)} < ${min}`);
@@ -57,5 +57,12 @@ describe("the extension is readable (WCAG AA)", () => {
 
   it("shows the Skout logo in the side panel and the popup", () => {
     for (const file of ["sidepanel.html", "popup.html"]) expect(read(file)).toMatch(/<img class="brand-logo" src="icons\/icon48\.png"/);
+  });
+
+  it("has no Intelligence, System state or Enterprise control sections, and nothing still writes into them", () => {
+    const html = read("sidepanel.html");
+    for (const label of ["Intelligence", "System state", "Enterprise control"]) expect(html).not.toContain(label);
+    expect(html).not.toMatch(/id="vision-(policy|freshness|confidence|evidence|system|side-effects|audit)/);
+    expect(read("panel-app.js")).not.toMatch(/updateVision|visionSystemState|visionPolicyChip/);
   });
 });

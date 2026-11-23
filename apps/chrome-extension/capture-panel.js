@@ -6,6 +6,7 @@ export const HALT_KEY = "skoutCaptureHalt";
 export const RUN_QUEUE_KEY = "skoutCaptureRunQueue";
 export const JOB_SCAN_RESULT_KEY = "skoutJobScanResult";
 export const JOB_SCAN_PENDING_KEY = "skoutJobScanPending";
+export const JOB_SCAN_LIVE_KEY = "skoutJobScanLive";
 export const jobScanCheckpointKey = (companyId) => `skoutJobScanCheckpoint:${companyId}`;
 const checkpointKey = (companyId) => `company-people-capture:${companyId}`;
 /** Matches capture-background.js: a reader silent for this long is no longer running. */
@@ -181,6 +182,19 @@ export function companyProgressText(company) {
 
 /** One line for a company in a running queue. */
 export function runItemText(item) {
+  if (item?.workflow) {
+    const order = Object.keys(WORKFLOW_STEP_LABELS);
+    const number = Math.max(0, order.indexOf(item.step || "company")) + 1;
+    const label = WORKFLOW_STEP_LABELS[item.step || "company"];
+    switch (item.status) {
+      case "running": return `Step ${number} of ${order.length} · ${label} · working…`;
+      case "review": return `Step ${number} of ${order.length} · ${label} · review and save above`;
+      case "pending": return item.attempts ? `Trying again (attempt ${item.attempts + 1}) · ${label}` : `Step ${number} of ${order.length} · ${label} · waiting`;
+      case "done": return item.moreRemain ? "Finished with more people remaining · retry continues" : "Complete · verified in the workspace";
+      case "failed": return `Stopped at ${label}: ${item.error || "unknown error"}`;
+      case "skipped": return "Skipped";
+    }
+  }
   switch (item?.status) {
     case "running": return item.batches ? `Reading batch ${item.batches + 1}…` : "Reading people…";
     case "review": return "Review and save the batch above";
@@ -217,6 +231,14 @@ export function verificationLines(verification) {
   if (verification.missing?.length) lines.push(`Not found on the profile: ${verification.missing.join(", ")}. Fill any you know below.`);
   lines.push(...(verification.notes || []).filter((note) => !/^(Skills|Education|Experience): captured/.test(note)));
   return lines;
+}
+
+/** What to tell the user after a save: complete, or partial with what is missing. Never "saved" alone for a partial capture. */
+export function captureCompletenessText(completeness) {
+  if (!completeness || completeness.level === "unverified") return "";
+  if (completeness.level === "complete") return " Complete: every section was found and checked.";
+  const parts = [...(completeness.incomplete || []).map((name) => `${name} is incomplete`), ...(completeness.missing?.length ? [`not found: ${completeness.missing.join(", ")}`] : [])];
+  return ` PARTIAL capture${parts.length ? ` (${parts.join("; ")})` : ""}. The data found is saved; open the page again and recapture to complete it.`;
 }
 
 /** How far a job scan can be trusted, in words (before and after the workspace has judged it). */
@@ -258,10 +280,39 @@ export function jobScanCountsText(scan) {
   return parts.join(" · ");
 }
 
+/** The running scan in one line: the company, what it is doing, and what it has found, skipped and failed so far. */
+export function jobScanLiveText(live) {
+  if (!live) return "";
+  const parts = [`${live.found || 0}${live.expected ? ` of about ${live.expected}` : ""} found`];
+  if (live.skipped) parts.push(`${live.skipped} skipped`);
+  if (live.failed) parts.push(`${live.failed} failed`);
+  return `${live.name || live.companyId}: ${live.text || "scanning"} · ${parts.join(" · ")}`;
+}
+
+/** The workflow steps of a queued company, each with its own status and what it produced. */
+const STEP_STATUS_WORDS = { pending: "waiting", running: "in progress", done: "done", partial: "partial", failed: "failed", skipped: "skipped" };
+export const WORKFLOW_STEP_LABELS = { company: "Company profile", jobs: "Job roles", people: "Employees", verify: "Verification" };
+export function workflowSteps(item) {
+  if (!item?.workflow) return [];
+  return Object.keys(WORKFLOW_STEP_LABELS).map((key) => {
+    const detail = item.stepDetail?.[key];
+    const current = item.step === key && ["running", "review", "pending"].includes(item.status);
+    const status = detail?.status || (current ? "running" : "pending");
+    const counts = [];
+    if (key === "jobs" && detail?.found != null) counts.push(`${detail.found} found`, ...(detail.updated ? [`${detail.updated} updated`] : []));
+    if (key === "people" && detail?.captured != null) counts.push(`${detail.captured} captured`, ...(detail.duplicates ? [`${detail.duplicates} duplicates`] : []), ...(detail.refused ? [`${detail.refused} refused`] : []));
+    if (key === "verify" && detail?.status === "done") counts.push(`${detail.found ?? 0} roles · ${detail.captured ?? 0} people in the workspace`);
+    if (detail?.failed) counts.push(`${detail.failed} failed`);
+    const text = [counts.join(" · "), detail?.error, detail?.note].filter(Boolean).join(" — ");
+    return { key, label: WORKFLOW_STEP_LABELS[key], status, current, text };
+  });
+}
+
 /** The Scan job roles button: whether it can be pressed, what it says, and (when it cannot) why. */
-export function jobScanButtonState({ tab, progress, halt, saving, checkpoint, now = Date.now() } = {}) {
+export function jobScanButtonState({ tab, progress, halt, saving, checkpoint, active, now = Date.now() } = {}) {
   const companyId = tab?.kind === "company" ? companyIdForUrl(tab.url) : undefined;
   const label = checkpoint ? "Resume job scan" : "Scan job roles";
+  if (active) return { companyId, disabled: true, label, reason: `A job scan for ${active.name || active.companyId} is running. Stop it or wait for it to finish.` };
   if (!companyId) return { companyId, disabled: true, label, reason: "Open a company page on LinkedIn to scan its job roles." };
   if (isProgressActive(progress, now)) return { companyId, disabled: true, label, reason: "Another capture or scan is running. Wait for it to finish, or stop it." };
   if (halt) return { companyId, disabled: true, label, reason: "Capture is paused because LinkedIn showed a warning. Review it above to allow capture again." };
@@ -384,7 +435,7 @@ export function initCapturePanel() {
   const runResumeBtn = $("capture-run-resume");
   const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "", skipJobs: false, jobScan: null, jobScanPending: false, requestedJobScans: [], jobCheckpoint: null };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "", skipJobs: false, jobScan: null, jobScanPending: false, requestedJobScans: [], jobCheckpoint: null, jobLive: null, jobActive: null };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -535,6 +586,21 @@ export function initCapturePanel() {
           Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: item.name, title: item.name }),
           Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: runItemText(item) }),
         );
+        const steps = workflowSteps(item);
+        if (steps.length) {
+          const list = Object.assign(document.createElement("ol"), { className: "capture-steps", ariaLabel: `${item.name} workflow steps` });
+          for (const step of steps) {
+            const entry = Object.assign(document.createElement("li"), { className: "capture-step" });
+            entry.dataset.status = step.status;
+            if (step.current) entry.setAttribute("aria-current", "step");
+            entry.append(
+              Object.assign(document.createElement("span"), { className: "capture-step-label", textContent: `${step.label}: ${STEP_STATUS_WORDS[step.status] || step.status}` }),
+              ...(step.text ? [Object.assign(document.createElement("span"), { className: "capture-step-text", textContent: step.text })] : []),
+            );
+            list.append(entry);
+          }
+          row.append(list);
+        }
         if (item.status === "failed" || item.status === "skipped") {
           const retry = Object.assign(document.createElement("button"), { type: "button", className: "capture-run-retry", textContent: "Retry" });
           retry.addEventListener("click", async () => {
@@ -917,7 +983,8 @@ export function initCapturePanel() {
         setContinue(null);
       }
       const dropped = response.rejectedFields?.length ? ` ${response.rejectedFields.length} non-profile items were left out.` : "";
-      setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
+      const partial = response.completeness?.level === "partial";
+      setResult(`Saved${partial ? " (partial)" : ""}. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${captureCompletenessText(response.completeness)}${dropped}${next}`, partial ? "capture-error" : "capture-success");
     } else {
       const runState = response.run ? ` Capture run status: ${response.run.status}.` : "";
       // A save that could not be confirmed is not a failure: the batch is kept and Save is safe to repeat.
@@ -940,13 +1007,22 @@ export function initCapturePanel() {
   const jobsReasonEl = $("capture-jobs-reason");
   const jobsCountsEl = $("capture-jobs-counts");
   const jobsRestartBtn = $("capture-jobs-restart");
+  const jobsRunningEl = $("capture-jobs-running");
+  const jobsLiveEl = $("capture-jobs-live");
+  const jobsStopBtn = $("capture-jobs-stop");
+  const jobsQuitBtn = $("capture-jobs-quit");
   const jobsRequestedEl = $("capture-jobs-requested");
   const jobsRequestedListEl = $("capture-jobs-requested-list");
 
   const companyNameFromTab = () => (state.tab?.title || "").replace(/^\(\d+\)\s*/, "").replace(/\s*\|\s*LinkedIn.*$/i, "").trim();
 
   function renderJobs() {
-    const button = jobScanButtonState({ tab: state.tab, progress: state.progress, halt: state.halt, saving: state.saving, checkpoint: state.jobCheckpoint });
+    const button = jobScanButtonState({ tab: state.tab, progress: state.progress, halt: state.halt, saving: state.saving, checkpoint: state.jobCheckpoint, active: state.jobActive });
+    show(jobsRunningEl, Boolean(state.jobActive));
+    jobsLiveEl.textContent = state.jobActive ? jobScanLiveText(state.jobLive) || `${state.jobActive.name}: starting…` : "";
+    jobsStopBtn.disabled = Boolean(state.jobActive?.stopping);
+    jobsQuitBtn.disabled = state.jobActive?.stopping === "quit";
+    jobsStopBtn.textContent = state.jobActive?.stopping === "stop" ? "Stopping…" : "Stop (keep what was read)";
     jobsBtn.disabled = button.disabled;
     jobsBtn.textContent = button.label;
     jobsReasonEl.textContent = button.reason;
@@ -994,6 +1070,9 @@ export function initCapturePanel() {
     const stored = await chrome.storage.local.get([JOB_SCAN_RESULT_KEY, JOB_SCAN_PENDING_KEY]);
     state.jobScan = stored[JOB_SCAN_RESULT_KEY] || state.jobScan;
     state.jobScanPending = Boolean(stored[JOB_SCAN_PENDING_KEY]);
+    const activeScan = await send("capture-jobs-active");
+    state.jobActive = activeScan.ok ? activeScan.active : null;
+    state.jobLive = state.jobActive ? (await chrome.storage.local.get(JOB_SCAN_LIVE_KEY))[JOB_SCAN_LIVE_KEY] || null : null;
     const openCompany = state.tab?.kind === "company" ? companyIdForUrl(state.tab.url) : undefined;
     state.jobCheckpoint = openCompany ? (await chrome.storage.local.get(jobScanCheckpointKey(openCompany)))[jobScanCheckpointKey(openCompany)] || null : null;
     const requested = await send("capture-job-scans-requested");
@@ -1004,6 +1083,19 @@ export function initCapturePanel() {
   jobsBtn.addEventListener("click", () => {
     const companyId = companyIdForUrl(state.tab?.url);
     if (companyId) void scanJobs(companyId, companyNameFromTab());
+  });
+  jobsStopBtn.addEventListener("click", async () => {
+    jobsStopBtn.disabled = true;
+    const response = await send("capture-jobs-stop");
+    if (!response.ok) setResult(response.error, "capture-error");
+    await refreshJobScans();
+  });
+  jobsQuitBtn.addEventListener("click", async () => {
+    if (!window.confirm("Quit the job scan? What it has read so far is discarded and nothing is saved.")) return;
+    jobsQuitBtn.disabled = true;
+    const response = await send("capture-jobs-quit");
+    if (!response.ok) setResult(response.error, "capture-error");
+    await refreshJobScans();
   });
   jobsRestartBtn.addEventListener("click", () => {
     const companyId = companyIdForUrl(state.tab?.url);
@@ -1021,6 +1113,7 @@ export function initCapturePanel() {
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    if (changes[JOB_SCAN_LIVE_KEY]) { state.jobLive = changes[JOB_SCAN_LIVE_KEY].newValue || null; renderJobs(); }
     if (changes[JOB_SCAN_RESULT_KEY] || changes[JOB_SCAN_PENDING_KEY] || Object.keys(changes).some((key) => key.startsWith("skoutJobScanCheckpoint:"))) void refreshJobScans();
     if (changes[PROGRESS_KEY]) renderJobs();
     if (changes[PROGRESS_KEY]) {

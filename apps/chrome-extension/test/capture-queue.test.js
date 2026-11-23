@@ -178,7 +178,7 @@ describe("company capture queue", () => {
   it("never lets a LinkedIn tab drive the queue", () => {
     const linkedinTab = { tab: { id: 7 }, frameId: 0, url: companyUrl };
     expect(handleCaptureMessage({ type: "capture-continue", companyId: "example" }, linkedinTab)).toBeUndefined();
-    expect(handleCaptureMessage({ type: "capture-queue-start", companies: [] }, linkedinTab)).toBeUndefined();
+    expect(handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [] }, linkedinTab)).toBeUndefined();
   });
 
   it("reports only bounded counts to Skout", () => {
@@ -290,7 +290,7 @@ describe("company queue run", () => {
 
   it("reads one company at a time and moves on only after each batch is saved, discarded or fails", async () => {
     const { reviewFrom, created, opened } = browser();
-    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: picked() }, sidePanel)).ok).toBe(true);
+    expect((await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked() }, sidePanel)).ok).toBe(true);
     await tick();
     expect(await statuses()).toEqual({ alpha: "running", beta: "pending", gamma: "pending" });
 
@@ -323,7 +323,7 @@ describe("company queue run", () => {
 
   it("does not open the next company while a batch is waiting for review", async () => {
     const { reviewFrom } = browser();
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     await tick();
     await reviewFrom("alpha");
     await __test.advanceRunQueue();
@@ -332,7 +332,7 @@ describe("company queue run", () => {
 
   it("pauses and resumes from the same company", async () => {
     const { opened } = browser();
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     await tick();
     await handleCaptureMessage({ type: "capture-queue-stop" }, sidePanel);
     expect(await statuses()).toEqual({ alpha: "pending", beta: "pending" });
@@ -345,7 +345,7 @@ describe("company queue run", () => {
 
   it("stops with the reason, keeping every company waiting, when the daily limit is reached", async () => {
     browser({ status: { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 0 } } });
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     await tick();
     const queue = await __test.getRunQueue();
     expect(queue).toMatchObject({ active: false });
@@ -355,14 +355,14 @@ describe("company queue run", () => {
 
   it("stops while capture is switched off for the workspace", async () => {
     browser({ status: { enabled: false, disabledReason: "Paused by admin" } });
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha"]) }, sidePanel);
     await tick();
     expect((await __test.getRunQueue()).note).toMatch(/Paused by admin/);
   });
 
   it("marks a company that cannot start as failed and carries on", async () => {
     browser({ startReply: { ok: false, error: "Open a LinkedIn company page." } });
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     await tick(); await tick(); await tick();
     const queue = await __test.getRunQueue();
     expect(queue.items.map((item) => [item.status, item.error])).toEqual([["failed", "Open a LinkedIn company page."], ["failed", "Open a LinkedIn company page."]]);
@@ -371,11 +371,11 @@ describe("company queue run", () => {
 
   it("validates the selection, and adds companies to a queue that is already running", async () => {
     browser();
-    expect(await handleCaptureMessage({ type: "capture-queue-start", companies: [] }, sidePanel)).toEqual({ ok: false, error: "Select at least one company." });
-    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: [{ companyPublicId: "../x" }, { companyPublicId: "a b" }] }, sidePanel)).ok).toBe(false);
-    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "alpha"]) }, sidePanel)).count).toBe(1);
+    expect(await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [] }, sidePanel)).toEqual({ ok: false, error: "Select at least one company." });
+    expect((await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [{ companyPublicId: "../x" }, { companyPublicId: "a b" }] }, sidePanel)).ok).toBe(false);
+    expect((await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "alpha"]) }, sidePanel)).count).toBe(1);
     await tick();
-    const added = await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    const added = await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     expect(added).toMatchObject({ ok: true, count: 1, added: true });
     expect(await statuses()).toEqual({ alpha: "running", beta: "pending" });
     expect((await handleCaptureMessage({ type: "capture-queue-clear" }, sidePanel)).error).toMatch(/Pause/);
@@ -383,10 +383,10 @@ describe("company queue run", () => {
 
   it("keeps the companies still waiting when a paused queue gets a new one", async () => {
     browser();
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
     await tick();
     await handleCaptureMessage({ type: "capture-queue-stop" }, sidePanel);
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["gamma"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["gamma"]) }, sidePanel);
     await tick();
     expect(await statuses()).toEqual({ alpha: "running", beta: "pending", gamma: "pending" });
     expect((await __test.getRunQueue()).active).toBe(true);
@@ -394,7 +394,7 @@ describe("company queue run", () => {
 
   it("clears a finished queue", async () => {
     const { store } = browser();
-    await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha"]) }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha"]) }, sidePanel);
     await tick();
     await handleCaptureMessage({ type: "capture-queue-stop" }, sidePanel);
     expect((await handleCaptureMessage({ type: "capture-queue-clear" }, sidePanel)).ok).toBe(true);
@@ -420,7 +420,7 @@ describe("company queue run", () => {
 
     it("reads batch after batch of one company, in order, until it is finished", async () => {
       const env = browser();
-      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
+      await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
       await tick();
       expect((await reviewAndSave(env, "alpha", { complete: false })).ok).toBe(true);
       await tick(); await tick();
@@ -435,7 +435,7 @@ describe("company queue run", () => {
 
     it("moves on after one batch when 'keep reading' is off", async () => {
       const env = browser();
-      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]) }, sidePanel);
+      await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]) }, sidePanel);
       await tick();
       await reviewAndSave(env, "alpha", { complete: false });
       await tick(); await tick();
@@ -467,7 +467,7 @@ describe("company queue run", () => {
 
     it("stops a company whose batch saved no new people", async () => {
       const env = browser();
-      await handleCaptureMessage({ type: "capture-queue-start", companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
+      await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: picked(["alpha", "beta"]), untilComplete: true }, sidePanel);
       await tick();
       seed(env.store, "alpha", { complete: false });
       await handleCaptureMessage({ type: "SKOUT_CAPTURE_REVIEW", kind: "company", sourceUrl: "https://www.linkedin.com/company/alpha/", data: { publicId: "alpha", name: "Alpha", peopleProfiles: [{ publicId: "a1", sourceUrl: "https://www.linkedin.com/in/a1/", fullName: "A One" }] } }, { tab: { id: 50 } });
@@ -521,7 +521,7 @@ describe("syncing with the workspace dashboard", () => {
 
   it("reports every queue change, including a failure's reason", async () => {
     const { posts } = harness();
-    await handleCaptureMessage({ type: "capture-queue-start", companies: [{ companyPublicId: "alpha", name: "Alpha" }, { companyPublicId: "beta", name: "Beta" }] }, sidePanel);
+    await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [{ companyPublicId: "alpha", name: "Alpha" }, { companyPublicId: "beta", name: "Beta" }] }, sidePanel);
     await tick(); await tick();
     expect(posts.at(-1)).toEqual([
       { companyPublicId: "alpha", companyName: "Alpha", status: "running" },
@@ -541,7 +541,7 @@ describe("syncing with the workspace dashboard", () => {
       if (path.endsWith("/capture/queue/sync")) throw new Error("offline");
       return { enabled: true, caps: { dailyLeadLimit: 1000 }, usage: { remainingToday: 1000 } };
     };
-    expect((await handleCaptureMessage({ type: "capture-queue-start", companies: [{ companyPublicId: "alpha", name: "Alpha" }] }, sidePanel)).ok).toBe(true);
+    expect((await handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [{ companyPublicId: "alpha", name: "Alpha" }] }, sidePanel)).ok).toBe(true);
     await tick(); await tick();
     expect(store[RUN_QUEUE_KEY].items[0].status).toBe("running");
   });
