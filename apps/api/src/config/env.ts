@@ -90,9 +90,10 @@ const envSchema = z
     /** Clerk session JWT `iss` (Frontend API URL) — AUTH-ADI-03 / AUTH-BE-03 issuer allowlist. */
     CLERK_JWT_ISSUER: z.string().url().optional(),
     /** SAML configuration for in-house SSO implementation (AUTH-BE-24) */
-    SAML_ISSUER: z.string().default("https://app.skout.com"),
-    SAML_AUDIENCE: z.string().default("https://api.skout.com"),
-    API_URL: z.string().default("https://api.skout.com"),
+    SAML_ISSUER: z.string().default("https://www.skoutai.io/app"),
+    SAML_AUDIENCE: z.string().default("https://www.skoutai.io/app"),
+    /** Public API origin for SAML callbacks; falls back to API_PUBLIC_URL. */
+    API_URL: z.string().optional(),
     /**
      * Auth runtime mode (AUTH-BE-06). When unset, derived from AUTH_STUB + CLERK_SECRET_KEY
      * for backward compatibility until AUTH-ADI-08 sets this in ECS.
@@ -530,6 +531,9 @@ const envSchema = z
         ...data,
         DATABASE_URL: `postgresql://${data.DATABASE_USER}:${encodeURIComponent(data.DATABASE_PASSWORD)}@${data.DATABASE_HOST}:${port}/${data.DATABASE_NAME}`,
       };
+    }
+    if (!next.API_URL && next.API_PUBLIC_URL) {
+      next = { ...next, API_URL: next.API_PUBLIC_URL };
     }
     if (!next.FRONTEND_URL && next.CORS_ORIGIN[0]) {
       next = { ...next, FRONTEND_URL: next.CORS_ORIGIN[0] };

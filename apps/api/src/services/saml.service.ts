@@ -90,11 +90,11 @@ export async function validateSamlAssertion(
 
   // Configure SAML service
   const samlConfig: SamlConfig = {
-      issuer: config.SAML_ISSUER || "https://app.skout.com",
+      issuer: config.SAML_ISSUER || "https://www.skoutai.io/app",
       entryPoint: idpSsoDescriptor?.SingleSignOnService?.[0]?.$.Location,
       idpCert: cert,
-      audience: config.SAML_AUDIENCE || "https://app.skout.com",
-      callbackUrl: `${config.API_URL || "https://app.skout.com"}/api/v1/saml/acs`,
+      audience: config.SAML_AUDIENCE || "https://www.skoutai.io/app",
+      callbackUrl: `${config.API_URL || "https://www.skoutai.io"}/api/v1/saml/acs`,
       validateInResponseTo: ValidateInResponseTo.always,
       wantAssertionsSigned: true,
     };
@@ -212,8 +212,8 @@ export async function registerSamlRoutes(app: FastifyInstance) {
   // SAML metadata endpoint - exposes our SP metadata to IdPs
   app.get("/api/v1/saml/metadata", async (request, reply) => {
     const config = app.config as Env;
-    const issuer = config.SAML_ISSUER || "https://app.skout.com";
-    const acsUrl = `${config.API_URL || "https://api.skout.com"}/api/v1/saml/acs`;
+    const issuer = config.SAML_ISSUER || "https://www.skoutai.io/app";
+    const acsUrl = `${config.API_URL || "https://www.skoutai.io"}/api/v1/saml/acs`;
     
     // Simple SP metadata XML
     const metadata = `<?xml version="1.0"?>

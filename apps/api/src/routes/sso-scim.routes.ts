@@ -205,9 +205,9 @@ export function mapScimGroupsToRole(groups: string[] | undefined, fallback: stri
 /** What an admin pastes into their identity provider: the same values our SAML metadata advertises. */
 function serviceProvider(app: FastifyInstance) {
   const cfg = app.config as { API_URL?: string; SAML_ISSUER?: string };
-  const api = (cfg.API_URL || "https://api.skout.com").replace(/\/$/, "");
+  const api = (cfg.API_URL || "https://www.skoutai.io").replace(/\/$/, "");
   return {
-    entityId: cfg.SAML_ISSUER || "https://app.skout.com",
+    entityId: cfg.SAML_ISSUER || "https://www.skoutai.io/app",
     acsUrl: `${api}/api/v1/saml/acs`,
     metadataUrl: `${api}/api/v1/saml/metadata`,
     scimBaseUrl: `${api}/api/v1/scim/v2`,

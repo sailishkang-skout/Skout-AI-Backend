@@ -62,7 +62,7 @@ describe("HubSpotConnector implementation", () => {
   it("builds authorization URL", () => {
     const url = hubspotConnector.auth.buildAuthorizeUrl({
       clientId: "client-123",
-      redirectUri: "https://app.skout.com/callback",
+      redirectUri: "https://www.skoutai.io/app/callback",
       state: "state-abc",
     });
     expect(url).toContain("https://app.hubspot.com/oauth/authorize");
