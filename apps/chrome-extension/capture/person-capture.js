@@ -67,6 +67,9 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     else if (!response?.ok) reject(new Error(response?.error || 'Profile page could not be read.'));
     else resolve(response);
   }));
+  /** A profile is drawn when its name and some of its body are on the page. */
+  const profileDrawn = () => Boolean(document.querySelector('main h1, h1')?.textContent?.trim()) && (document.querySelector('main')?.innerText || '').length > 150;
+  const waitForProfile = onWait => window.SkoutCaptureExtract.waitForPageReady({ ready: profileDrawn, onWait });
   let running = false;
   async function start() {
     if (running) return;
@@ -74,6 +77,9 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     const id = publicIdFromUrl('person'), root = `https://www.linkedin.com/in/${id}/`;
     const ui = globalThis.SkoutCaptureUi.progress('person');
     ui.onStop(() => { message({type:'CANCEL_PERSON_READ'}).catch(() => {}); });
+    // Wait for the open profile to finish drawing before reading it (it may have been opened a moment ago).
+    const loaded = await waitForProfile(() => ui.set('Waiting for the profile to finish loading…'));
+    if (loaded.unavailable) { ui.done(loaded.reason, true); running = false; return; }
     // Queue the core detail pages explicitly because the profile preview may
     // show only a subset. They belong to the same profile and are read only
     // after the user starts a capture.
@@ -86,6 +92,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       ...links(id),
     ])].slice(0, 16), seen = new Set(), errors = [], warnings = [];
     let data = extractPerson(), read = 0;
+    const loadWarnings = loaded.timedOut ? ['The open profile had not finished loading, so its details were read again from a fresh copy of the page.'] : [];
     try {
       while (queue.length && !ui.stopped) {
         if (publicIdFromUrl('person') !== id) { errors.push('The original tab moved to another profile.'); break; }
@@ -129,7 +136,7 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
       }
       data.publicId = id; data.sourceUrl = root;
       const notes = [`${ui.stopped ? 'Stopped. ' : ''}Read ${read} profile pages. Only content already rendered on each page was captured.`,
-        ...errors.map(error => `Could not read ${error}`), ...new Set(warnings)];
+        ...errors.map(error => `Could not read ${error}`), ...new Set([...loadWarnings, ...warnings])];
       await globalThis.SkoutCaptureUi.review('person', data, notes);
       ui.done(`Read ${read} profile pages. Review before saving.`, !read && errors.length > 0);
     } catch (error) { ui.done(error.message, true); }
@@ -319,5 +326,5 @@ globalThis.SkoutPersonCapture = globalThis.SkoutPersonCapture || (() => {
     if (request.type === 'PERSON_READER_READY') { respond({ok:true,url:pageUrl(location.href,request.personId)}); return; }
     if (request.type === 'COLLECT_PERSON_PAGE') { collect(request.personId,request.url,request.deep === true).then(respond).catch(error => respond({ok:false,error:error.message})); return true; }
   });
-  return {start,merge,pageUrl,links};
+  return {start,merge,pageUrl,links,waitForProfile,profileDrawn};
 })();

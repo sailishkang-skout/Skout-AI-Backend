@@ -162,6 +162,13 @@ globalThis.SkoutCompanyCapture = globalThis.SkoutCompanyCapture || (() => {
     const seen = new Set();
     const errors = [];
     const warnings = [];
+    status.textContent = 'Waiting for the company page to finish loading…';
+    const loaded = await window.SkoutCaptureExtract.waitForPageReady({
+      ready: () => Boolean(document.querySelector('main h1, h1')?.textContent?.trim()) && (document.querySelector('main')?.innerText || '').length > 150,
+      onWait: () => { status.textContent = 'Waiting for the company page to finish loading…'; },
+    });
+    if (loaded.unavailable) { ui.done(loaded.reason, true); running = false; return; }
+    if (loaded.timedOut) warnings.push('The open company page had not finished loading, so its details were read again from a fresh copy of the page.');
     status.textContent = options.includePeople ? 'Waiting for LinkedIn People results…' : 'Reading company details…';
     let data = await initialCompanyData(options);
     let about;

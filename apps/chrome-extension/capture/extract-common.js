@@ -212,6 +212,33 @@ window.SkoutCaptureExtract = (function () {
     return undefined;
   }
 
+  const UNAVAILABLE = /this page doesn.?t exist|page not found|this linkedin page isn.?t available|profile is not available|this profile is unavailable|content isn.?t available|no longer available/i;
+
+  /** A reason when LinkedIn is showing a "not found" or "not available" page instead of the profile or company. */
+  function pageUnavailable(root = document) {
+    const node = root.querySelector('main') || root.body;
+    const text = (node?.innerText ?? node?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 1500);
+    return UNAVAILABLE.test(text) && text.length < 1200 ? 'LinkedIn says this page is not available (it may have been removed, or you may not have access).' : undefined;
+  }
+
+  /**
+   * Waits for LinkedIn to finish drawing the page before anything is read from it: a page opened a moment
+   * ago, or reached by LinkedIn's own in-page navigation, can show only a skeleton. Resolves ok as soon as
+   * `ready()` is true; not ok with a reason when LinkedIn shows a not-available page; or with timedOut when
+   * the page never finished (the caller decides whether to go on and say so).
+   */
+  async function waitForPageReady({ ready, timeoutMs = 12000, intervalMs = 400, onWait } = {}) {
+    const started = Date.now();
+    for (;;) {
+      if (ready()) return { ok: true };
+      const unavailable = pageUnavailable();
+      if (unavailable) return { ok: false, reason: unavailable, unavailable: true };
+      if (Date.now() - started >= timeoutMs) return { ok: false, timedOut: true, reason: 'The page had not finished loading.' };
+      onWait?.();
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
   /** The country a place names outright ("Dublin, Ireland", "Toronto, ON, Canada"): its last part is a country, nothing inferred. */
   function explicitCountry(value) {
     if (!value || typeof value !== 'string' || value.length > 300) return undefined;
@@ -241,5 +268,5 @@ window.SkoutCaptureExtract = (function () {
     return inferred ? { country: inferred, source: 'headquarters' } : { country: undefined, source: undefined };
   }
 
-  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace, explicitCountry, countryFromCode, resolveCompanyCountry };
+  return { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace, explicitCountry, countryFromCode, resolveCompanyCountry, pageUnavailable, waitForPageReady };
 })();
