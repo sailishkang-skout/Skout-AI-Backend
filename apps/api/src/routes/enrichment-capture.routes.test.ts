@@ -10,6 +10,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { runAutoCapturePass, startAutoCapture } from "../services/enrichment/capture-auto.service.js";
+import { recoverStaleCaptureJobs } from "../services/enrichment/capture-queue.service.js";
 import { schema } from "@skout/db";
 import { and, eq, isNull, like } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -943,5 +944,168 @@ describe("ENR-02 capture verification is stored and shown", () => {
     expect(res.statusCode).toBe(201);
     const detail = (await get(`/enrichment/people/${res.json().person.prospectId}`)).json().person;
     expect(detail.verification).toMatchObject({ status: "partial", missing: ["Phone"], sections: { skills: { found: 12, expected: 27, state: "incomplete" } } });
+  });
+});
+
+describe("ENR-02 company country", () => {
+  const ingest = (publicId: string, extra: Record<string, unknown>) =>
+    post("/enrichment/ingest/company", { publicId, sourceUrl: `https://www.linkedin.com/company/${publicId}/`, name: publicId, ...extra });
+  const detailOf = async (res: { json(): { company: { id: string } } }) => (await get(`/enrichment/companies/${res.json().company.id}`)).json().company.capture;
+
+  it("fills the country from the headquarters when the page gave none, and says so", async () => {
+    const capture = await detailOf(await ingest("country-hq-co", { headquarter: "Menlo Park, CA" }));
+    expect(capture).toMatchObject({ headquarter: "Menlo Park, CA", country: "United States", countrySource: "headquarters" });
+  });
+
+  it("keeps the country the page gave, with its source", async () => {
+    const capture = await detailOf(await ingest("country-page-co", { headquarter: "Dublin", locationCountry: "Ireland", locationCountrySource: "linkedin_page" }));
+    expect(capture).toMatchObject({ country: "Ireland", countrySource: "linkedin_page" });
+  });
+
+  it("leaves the country empty for an ambiguous headquarters instead of guessing", async () => {
+    const capture = await detailOf(await ingest("country-ambiguous-co", { headquarter: "Cambridge" }));
+    expect(capture).toMatchObject({ country: null, countrySource: null });
+  });
+
+  it("rejects a made-up country source", async () => {
+    expect((await ingest("country-bad-co", { locationCountry: "Ireland", locationCountrySource: "guess" })).statusCode).toBe(422);
+  });
+});
+
+describe("ENR-02 capture queue lifecycle", () => {
+  const sync = (items: unknown, headers = owner) =>
+    app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/sync", headers, payload: { items } as object });
+  const put = (id: string, payload: unknown, headers = owner) =>
+    app.inject({ method: "PUT", url: `/api/v1/enrichment/capture/queue/${id}`, headers, payload: payload as object });
+  const post = (url: string, headers = owner) => app.inject({ method: "POST", url: `/api/v1/enrichment/capture/queue/${url}`, headers });
+  const job = async (id: string) =>
+    ((await get("/enrichment/capture/queue")).json().items as Array<Record<string, unknown>>).find((item) => item.companyPublicId === id);
+  const age = (id: string, minutes: number) =>
+    app.db!
+      .update(schema.enrichmentCaptureQueue)
+      .set({ updatedAt: new Date(Date.now() - minutes * 60_000) })
+      .where(and(eq(schema.enrichmentCaptureQueue.workspaceId, WORKSPACE), eq(schema.enrichmentCaptureQueue.companyPublicId, id)));
+
+  it("walks a job through queued, running, review, a saved batch and completion, keeping the counts", async () => {
+    await sync([{ companyPublicId: "life-walk", companyName: "Life Walk", status: "queued" }]);
+    expect(await job("life-walk")).toMatchObject({ state: "queued", peopleFound: 0 });
+    await sync([{ companyPublicId: "life-walk", status: "running" }]);
+    expect(await job("life-walk")).toMatchObject({ state: "running" });
+    await sync([{ companyPublicId: "life-walk", status: "review" }]);
+    expect(await job("life-walk")).toMatchObject({ state: "review" });
+    await put("life-walk", { pagesRead: 10, peopleFound: 250, expectedPeople: 400, created: 240, merged: 10 });
+    expect(await job("life-walk")).toMatchObject({ state: "paused", peopleFound: 250, remainingPeople: 150, batches: 1, peopleCreated: 240, peopleMerged: 10 });
+    await put("life-walk", { pagesRead: 16, peopleFound: 400, created: 150, complete: true });
+    expect(await job("life-walk")).toMatchObject({ state: "completed", complete: true, peopleFound: 400, peopleCreated: 390, batches: 2 });
+    // The counts never go backwards if a slow earlier report arrives after a later one.
+    await put("life-walk", { pagesRead: 2, peopleFound: 20 });
+    expect(Number((await job("life-walk"))!.peopleFound)).toBeGreaterThanOrEqual(20);
+  });
+
+  it("does not let a late report from the extension bring a cancelled job back", async () => {
+    await sync([{ companyPublicId: "life-cancel", status: "running" }]);
+    await put("life-cancel", { pagesRead: 3, peopleFound: 60, created: 60 });
+    expect((await post("life-cancel/cancel")).statusCode).toBe(200);
+    // The batch the extension was still saving arrives after the cancel: its people are counted, the job stays cancelled.
+    expect((await put("life-cancel", { pagesRead: 6, peopleFound: 120, created: 60 })).statusCode).toBe(200);
+    expect((await put("life-cancel", { status: "running" })).statusCode).toBe(200);
+    expect(await job("life-cancel")).toMatchObject({ status: "cancelled", state: "partial", peopleFound: 120, peopleCreated: 120 });
+    // Starting the company again is a new job.
+    await put("life-cancel", { status: "queued" });
+    expect(await job("life-cancel")).toMatchObject({ status: "queued", state: "queued" });
+  });
+
+  it("shows a job the extension is retrying as retrying, and as running again once it reads", async () => {
+    await sync([{ companyPublicId: "life-retry", status: "queued", attempts: 1 }]);
+    expect(await job("life-retry")).toMatchObject({ state: "retrying", attempts: 1 });
+    expect(((await get("/enrichment/capture/queue?state=retrying")).json().items as Array<{ companyPublicId: string }>).map((item) => item.companyPublicId)).toContain("life-retry");
+    expect(((await get("/enrichment/capture/queue?state=queued")).json().items as Array<{ companyPublicId: string }>).map((item) => item.companyPublicId)).not.toContain("life-retry");
+    const retryingRunning = (await get("/enrichment/capture/queue")).json().stats.running;
+    await sync([{ companyPublicId: "life-retry", status: "running", attempts: 1 }]);
+    expect(await job("life-retry")).toMatchObject({ state: "running" });
+    expect((await get("/enrichment/capture/queue")).json().stats.running).toBe(retryingRunning);
+  });
+
+  it("retries a failed job from the workspace: queued again, error cleared, counts kept", async () => {
+    await sync([{ companyPublicId: "life-fail", status: "running" }]);
+    await put("life-fail", { pagesRead: 4, peopleFound: 80, created: 80 });
+    await sync([{ companyPublicId: "life-fail", status: "failed", error: "LinkedIn rate limit exceeded" }]);
+    expect(await job("life-fail")).toMatchObject({ status: "failed", state: "partial", error: "LinkedIn rate limit exceeded" });
+    const retried = await post("life-fail/resume");
+    expect(retried.statusCode).toBe(200);
+    expect(await job("life-fail")).toMatchObject({ status: "queued", error: null, peopleFound: 80 });
+    // A second retry while it is waiting is harmless and does not create a second job.
+    expect((await post("life-fail/resume")).statusCode).toBe(200);
+    const all = (await get("/enrichment/capture/queue")).json().items as Array<{ companyPublicId: string }>;
+    expect(all.filter((item) => item.companyPublicId === "life-fail")).toHaveLength(1);
+  });
+
+  it("does not restart a job that is actively reading, but does restart one that went silent", async () => {
+    await sync([{ companyPublicId: "life-active", status: "running" }]);
+    expect((await post("life-active/resume")).statusCode).toBe(409);
+    await age("life-active", 30);
+    expect(await job("life-active")).toMatchObject({ state: "interrupted" });
+    expect((await post("life-active/resume")).statusCode).toBe(200);
+    expect(await job("life-active")).toMatchObject({ status: "queued" });
+  });
+
+  it("finds stuck jobs and pauses them with the reason, leaving healthy jobs alone", async () => {
+    await sync([
+      { companyPublicId: "stuck-running", status: "running" },
+      { companyPublicId: "healthy-running", status: "running" },
+      { companyPublicId: "stuck-review", status: "review" },
+      { companyPublicId: "waiting-review", status: "review" },
+      { companyPublicId: "queued-old", status: "queued" },
+    ]);
+    await put("stuck-running", { pagesRead: 2, peopleFound: 30, created: 30 });
+    await sync([{ companyPublicId: "stuck-running", status: "running" }]);
+    await age("stuck-running", 45);
+    await age("stuck-review", 3 * 60);
+    await age("waiting-review", 45);
+    await age("queued-old", 600);
+    expect(await recoverStaleCaptureJobs(app.db!)).toBeGreaterThanOrEqual(2);
+    expect(await job("stuck-running")).toMatchObject({ status: "paused", state: "paused", peopleFound: 30 });
+    expect(String((await job("stuck-running"))!.stopReason)).toMatch(/stopped reporting while this job was running/);
+    expect(await job("stuck-review")).toMatchObject({ status: "paused" });
+    expect(await job("healthy-running")).toMatchObject({ status: "running" });
+    expect(await job("waiting-review")).toMatchObject({ status: "review" });
+    expect(await job("queued-old")).toMatchObject({ status: "queued" });
+    // Running it again finds nothing more, and a recovered job can be resumed.
+    expect(await recoverStaleCaptureJobs(app.db!)).toBe(0);
+    expect((await post("stuck-running/resume")).statusCode).toBe(200);
+    expect(await job("stuck-running")).toMatchObject({ status: "queued" });
+  });
+
+  it("keeps one job per company however the extension and the workspace ask", async () => {
+    await sync([{ companyPublicId: "dup-co", status: "queued" }, { companyPublicId: "DUP-CO", status: "queued" }, { companyPublicId: "dup-co", status: "queued" }]);
+    await put("dup-co", { status: "queued" });
+    await put("Dup-Co", { companyName: "Dup Co" });
+    const rows = ((await get("/enrichment/capture/queue?q=dup-co")).json().items as Array<{ companyPublicId: string }>).filter((item) => item.companyPublicId.toLowerCase() === "dup-co");
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe("ENR-02 job scan counts", () => {
+  it("returns captured, new, updated, unchanged, skipped, failed and remaining counts", async () => {
+    const company = await post("/enrichment/ingest/company", { publicId: "count-co", sourceUrl: "https://www.linkedin.com/company/count-co/", name: "Count Co" });
+    const jobs = Array.from({ length: 4 }, (_, i) => ({ title: `Counted ${i}`, jobId: `90010${i}`, location: "Austin, TX" }));
+    const sent = await post("/enrichment/companies/count-co/jobs/scan", {
+      clientScanId: "count-scan-0001",
+      status: "completed",
+      passes: [{ pass: 1, found: 4, complete: true }, { pass: 2, found: 4, complete: false }],
+      jobs,
+      counts: { found: 4, expected: 10, skipped: 2, failed: 1, remaining: 1, resumed: true },
+    });
+    expect(sent.statusCode).toBe(201);
+    expect(sent.json().scan.counts).toEqual({ captured: 4, new: 4, updated: 0, unchanged: 0, expected: 10, skipped: 2, failed: 1, remaining: 6, resumed: true });
+    expect(sent.json().scan.status).toBe("partial");
+    const listed = (await get(`/enrichment/companies/${company.json().company.id}/jobs`)).json();
+    expect(listed.lastScan.counts).toMatchObject({ captured: 4, skipped: 2, remaining: 6 });
+  });
+
+  it("rejects counts it cannot trust", async () => {
+    const body = { clientScanId: "count-scan-bad1", status: "completed", passes: [], jobs: [] };
+    expect((await post("/enrichment/companies/count-co/jobs/scan", { ...body, counts: { found: -1 } })).statusCode).toBe(422);
+    expect((await post("/enrichment/companies/count-co/jobs/scan", { ...body, counts: { found: 1, invented: 5 } })).statusCode).toBe(422);
   });
 });
