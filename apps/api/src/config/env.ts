@@ -546,6 +546,9 @@ const envSchema = z
     // PAPI-013: what each data-provider call costs Skout, in USD millionths, keyed "provider:operation",
     // e.g. {"wiza:search":{"perCall":0,"perUnit":20000}}. Unset entries record cost_micros = null.
     PROVIDER_UNIT_COSTS_JSON: z.string().optional(),
+    // PAPI-030: the workspace Skout's CustomerOps team works in; its "api_price" admin config holds the
+    // global default public API prices. Unset = code defaults (public API PRD §8) are the global level.
+    COPS_PLATFORM_WORKSPACE_ID: z.string().uuid().optional(),
   })
   .superRefine((data, ctx) => {
     // PAPI-002: never run the public API without a real pepper. Base64 of 32 bytes is 44 characters.

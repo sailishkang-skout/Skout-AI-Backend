@@ -25,6 +25,8 @@ export const COPS_CONFIG_KINDS = [
   "sla_policy",
   // The next actions people pick from when they create a task or a deal (Bible p.24, p.43).
   "next_action_catalog",
+  // PAPI-030: global default prices for the public API, per operation (public API PRD §8, D4).
+  "api_price",
 ] as const;
 export type CopsConfigKind = (typeof COPS_CONFIG_KINDS)[number];
 
@@ -34,6 +36,23 @@ export type RetentionCategory = (typeof RETENTION_CATEGORIES)[number];
 
 export const COPS_MODULES = ["crm", "commercial", "provisioning", "onboarding", "tickets", "admin"] as const;
 export type CopsModule = (typeof COPS_MODULES)[number];
+
+/** Public API billable operations, each with a configurable price in credits (public API PRD §8). */
+export const API_PRICE_OPERATIONS = [
+  "search.index_page",
+  "search.vendor_result",
+  "people.lookup",
+  "companies.lookup",
+  "companies.jobs",
+  "contacts.email_find",
+  "contacts.phone_find",
+  "emails.verify",
+  "scores.score",
+] as const;
+export type ApiPriceOperation = (typeof API_PRICE_OPERATIONS)[number];
+
+/** A price in whole credits (the ledger stores integers). */
+export const apiPriceValueSchema = z.number().int().min(0).max(100_000);
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
@@ -157,6 +176,8 @@ export const COPS_CONFIG_SCHEMAS = {
   renewal_policy: renewalPolicySchema,
   sla_policy: slaPolicySchema,
   next_action_catalog: nextActionCatalogSchema,
+  /** Key "default": operations not listed keep the code default. */
+  api_price: z.object({ prices: z.record(z.enum(API_PRICE_OPERATIONS), apiPriceValueSchema) }).strict(),
 } as const satisfies Record<CopsConfigKind, z.ZodTypeAny>;
 
 /**
