@@ -219,10 +219,12 @@ describe.skipIf(!hasDatabase)("access service (early access)", () => {
     await expect(rejectAccessRequest(db, ctx(), u.requestId, {})).rejects.toBeInstanceOf(AccessError);
   });
 
-  it("loadWorkspaceAccess on a workspace with no feature rows returns all true and status active", async () => {
+  it("loadWorkspaceAccess on a workspace with no feature rows returns every general feature on (opt-in ones off) and status active", async () => {
     const access = await loadWorkspaceAccess(db, operator.workspaceId);
     expect(access.status).toBe("active");
-    expect(Object.values(access.features).every(Boolean)).toBe(true);
+    const { workbooks_v2, ...general } = access.features;
+    expect(Object.values(general).every(Boolean)).toBe(true);
+    expect(workbooks_v2).toBe(false);
   });
 
   it("the bootstrap admin's workspace is active", async () => {
