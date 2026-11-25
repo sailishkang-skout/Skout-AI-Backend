@@ -522,6 +522,40 @@ const envSchema = z
     CRM_OUTBOUND_WRITE_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
     /** COPS-09: how often the poll worker looks for CRM connections whose poll interval has passed. */
     CRM_SYNC_POLL_SWEEP_INTERVAL_MINUTES: z.coerce.number().int().positive().max(59).default(5),
+
+    // --- Public API (PAPI-002, PRD public-api §7.6/§9). Off until the plugin ships. ---
+    /** Global switch for /api/public/v1. "true" also requires API_KEY_PEPPER. */
+    PUBLIC_API_ENABLED: z.enum(["true", "false"]).default("false"),
+    /** HMAC pepper for public API keys (KEY-4): 32+ random bytes, e.g. `openssl rand -base64 32`. Secret store only. */
+    API_KEY_PEPPER: z.string().optional(),
+    PUBLIC_API_BASE_URL: z.string().url().default("https://www.skoutai.io/api/public/v1"),
+    /** RL-2: per-key burst (per second) and sustained (per minute) limits; batch endpoints per minute. */
+    PUBLIC_API_RATE_PER_SECOND: z.coerce.number().int().positive().default(10),
+    PUBLIC_API_RATE_PER_MINUTE: z.coerce.number().int().positive().default(600),
+    PUBLIC_API_BATCH_RATE_PER_MINUTE: z.coerce.number().int().positive().default(10),
+    /** RL-3: failed authentications per IP per minute on /api/public/*, then a block of this many minutes. */
+    PUBLIC_API_FAILED_AUTH_PER_MINUTE: z.coerce.number().int().positive().default(20),
+    PUBLIC_API_FAILED_AUTH_BLOCK_MINUTES: z.coerce.number().int().positive().default(15),
+    /** RL-5 / RL-6: per-key daily quotas (verifications, search results). */
+    PUBLIC_API_VERIFY_DAILY_QUOTA: z.coerce.number().int().positive().default(5000),
+    PUBLIC_API_SEARCH_DAILY_QUOTA: z.coerce.number().int().positive().default(10000),
+    /** KEY-10: active keys per workspace. */
+    PUBLIC_API_MAX_ACTIVE_KEYS: z.coerce.number().int().positive().default(10),
+    /** CRED-8: low-balance alert threshold in credits. */
+    PUBLIC_API_LOW_BALANCE_THRESHOLD: z.coerce.number().int().nonnegative().default(100),
+  })
+  .superRefine((data, ctx) => {
+    // PAPI-002: never run the public API without a real pepper. Base64 of 32 bytes is 44 characters.
+    if (data.PUBLIC_API_ENABLED === "true") {
+      const pepper = data.API_KEY_PEPPER?.trim() ?? "";
+      if (pepper.length < 43 || /^(replace-me|changeme)$/i.test(pepper)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["API_KEY_PEPPER"],
+          message: "PUBLIC_API_ENABLED=true needs API_KEY_PEPPER with 32+ random bytes (e.g. `openssl rand -base64 32`)",
+        });
+      }
+    }
   })
   .transform((data) => {
     let next = data;
