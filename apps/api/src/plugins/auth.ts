@@ -28,6 +28,8 @@ import {
 } from "../utils/http.js";
 import type { Env } from "../config/env.js";
 import { KEY_PREFIX as API_KEY_PREFIX, resolveApiKey, scopeAllows } from "../services/cops-api-credentials.service.js";
+import { registerPublicApiAuth } from "./public-api-auth.js";
+import { isPublicApiPath } from "../routes/public-api.routes.js";
 
 /** Constant-time string compare so secret checks don't leak timing info. */
 function timingSafeEqualStrings(a: string, b: string): boolean {
@@ -65,7 +67,6 @@ function isHealthRoute(url: string): boolean {
     url === "/api/v1/health" ||
     url === "/api/v1/slo" ||
     url === "/api/v1/metrics" ||
-    url === "/api/public/v1/health" ||
     url.startsWith("/health")
   );
 }
@@ -247,6 +248,9 @@ export { computeAuthorizedParties, normalizeOrigin };
 export const authPlugin = fp(async (app) => {
   const config = app.config;
 
+  // PAPI-024: public API keys first — refused outside /api/public, the only credential inside it.
+  registerPublicApiAuth(app);
+
   const authRuntime = authRuntimeFlags({ ...config, appRole: "api" });
 
   if (authRuntime.AUTH_MODE === "custom") {
@@ -262,6 +266,8 @@ export const authPlugin = fp(async (app) => {
     app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
       // CORS preflight (and any OPTIONS) must never require auth.
       if (request.method === "OPTIONS") return;
+      // The public API authenticates only with its own keys (registerPublicApiAuth), never as a member.
+      if (isPublicApiPath(request.url)) return;
       if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) return;
       if (applyEmailIntelIdentity(request, config)) {
         return;
@@ -314,6 +320,10 @@ export const authPlugin = fp(async (app) => {
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // CORS preflight (and any OPTIONS) must never require auth.
     if (request.method === "OPTIONS") {
+      return;
+    }
+    // The public API authenticates only with its own keys (registerPublicApiAuth), never as a member.
+    if (isPublicApiPath(request.url)) {
       return;
     }
     if (isHealthRoute(request.url) || isPublicRoute(request.url, request.method)) {

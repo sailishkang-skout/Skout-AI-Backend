@@ -11,6 +11,12 @@ import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
 import { dbPlugin } from "./plugins/db.js";
 import { publicKeyCachePlugin } from "./plugins/public-key-cache.js";
+
+declare module "fastify" {
+  interface FastifyInstance {
+    routeTable(): { url: string; methods: string[] }[];
+  }
+}
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
@@ -223,6 +229,8 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     for (const m of methods) existing.add(m.toUpperCase());
     routeMethods.set(route.url, existing);
   });
+  /** Every registered route and its methods (used by the PAPI-024 route-table test). */
+  app.decorate("routeTable", () => [...routeMethods].map(([url, methods]) => ({ url, methods: [...methods] })));
 
   function matchKnownPath(pathname: string): Set<string> | undefined {
     if (routeMethods.has(pathname)) return routeMethods.get(pathname);
