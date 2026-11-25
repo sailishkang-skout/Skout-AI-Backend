@@ -106,7 +106,7 @@ export function renderTransactionalLayout(opts: {
 </html>`;
 }
 
-function ctaButton(href: string, label: string): string {
+export function ctaButton(href: string, label: string): string {
   return `<a href="${escapeHtml(href)}" style="display:inline-block;padding:12px 22px;background:#09090b;color:#fafafa;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">${escapeHtml(label)}</a>`;
 }
 
