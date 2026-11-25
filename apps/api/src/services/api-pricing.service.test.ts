@@ -33,7 +33,7 @@ maybe("price resolver (PAPI-030, Postgres)", () => {
   let staffId: string;
   let now = Date.now();
   const clock = () => now;
-  const cfg = () => ({ platformWorkspaceId: platformWs, searchCreditCost: 1 });
+  const cfg = () => ({ INTERNAL_WORKSPACE_ID: platformWs, searchCreditCost: 1 });
   const ctx = () => ({ workspaceId: platformWs, userId: staffId, requestId: `req_${randomUUID()}` });
 
   beforeAll(async () => {
@@ -122,9 +122,26 @@ maybe("price resolver (PAPI-030, Postgres)", () => {
       .select()
       .from(schema.auditLogs)
       .where(and(eq(schema.auditLogs.workspaceId, platformWs), eq(schema.auditLogs.action, "admin_config.saved")));
-    const last = global.at(-1)!;
-    expect(last.afterState).toMatchObject({ kind: "api_price", key: "default", value: { prices: { "contacts.phone_find": 9 } } });
-    expect(last.beforeState).toMatchObject({ value: { prices: { "contacts.phone_find": 8 } } });
+    const change = global.find((a) => (a.afterState as { value?: { prices?: Record<string, number> } }).value?.prices?.["contacts.phone_find"] === 9);
+    expect(change, JSON.stringify(global.map((a) => a.afterState))).toBeTruthy();
+    expect(change!.afterState).toMatchObject({ kind: "api_price", key: "default" });
+    expect(change!.beforeState).toMatchObject({ value: { prices: { "contacts.phone_find": 8 } } });
+  });
+
+  it("without INTERNAL_WORKSPACE_ID, uses the workspace of the Ops access holders (COPS-15)", async () => {
+    const [opsRole] = await db.select({ id: schema.roles.id }).from(schema.roles).where(and(eq(schema.roles.key, "ops_access"))).limit(1);
+    expect(opsRole, "the ops_access system role is seeded by the RBAC backfill").toBeTruthy();
+    const [member] = await db.select().from(schema.workspaceMembers).where(eq(schema.workspaceMembers.workspaceId, platformWs)).limit(1);
+    if (!member) await db.insert(schema.workspaceMembers).values({ workspaceId: platformWs, userId: staffId, role: "owner" });
+    // Make this the earliest holder so the fallback picks it whatever else is in the database.
+    await db.insert(schema.workspaceMemberRoles).values({ workspaceId: platformWs, userId: staffId, roleId: opsRole!.id, grantedAt: new Date("2000-01-01T00:00:00Z") });
+    try {
+      const svc = new ApiPricingService(db, { INTERNAL_WORKSPACE_ID: undefined, searchCreditCost: 1 }, clock);
+      expect(await svc.priceFor(customerWs, "contacts.phone_find")).toMatchObject({ source: "global" });
+      await expect(svc.setGlobalPrices({ ...ctx(), workspaceId: customerWs }, { "people.lookup": 1 }, "x")).rejects.toMatchObject({ statusCode: 403 });
+    } finally {
+      await db.delete(schema.workspaceMemberRoles).where(and(eq(schema.workspaceMemberRoles.workspaceId, platformWs), eq(schema.workspaceMemberRoles.userId, staffId)));
+    }
   });
 
   it("rejects bad input and global changes from any other workspace", async () => {
@@ -136,7 +153,6 @@ maybe("price resolver (PAPI-030, Postgres)", () => {
     await expect(svc.setWorkspacePrice(actor, customerWs, "people.lookup", 1, " ")).rejects.toMatchObject({ statusCode: 422 });
     await expect(svc.setGlobalPrices({ ...ctx(), workspaceId: customerWs }, { "people.lookup": 1 }, "x")).rejects.toMatchObject({ statusCode: 403 });
     await expect(svc.setGlobalPrices(ctx(), { "people.lookup": -2 }, "x")).rejects.toThrow();
-    await expect(new ApiPricingService(db, { platformWorkspaceId: undefined, searchCreditCost: 1 }).setGlobalPrices(ctx(), {}, "x")).rejects.toMatchObject({ statusCode: 503 });
     // A malformed stored override is ignored, never charged.
     await db.insert(schema.entitlements).values({ workspaceId: customerWs, key: "api.price.companies.lookup", value: "free", source: "test" });
     expect((await new ApiPricingService(db, cfg(), clock).priceFor(customerWs, "companies.lookup")).source).not.toBe("workspace");

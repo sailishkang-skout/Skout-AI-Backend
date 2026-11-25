@@ -3,6 +3,7 @@ import { schema, type Db } from "@skout/db";
 import { API_PRICE_OPERATIONS, apiPriceValueSchema, type ApiPriceOperation } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import { getConfig, saveConfig, type AdminConfigContext } from "./cops-admin-config.service.js";
+import { internalWorkspaceId, isInternalWorkspace } from "./ops-access.service.js";
 import { SCORE_CREDIT_COST } from "./enrichment/service.js";
 
 const { entitlements, auditLogs } = schema;
@@ -11,8 +12,8 @@ const { entitlements, auditLogs } = schema;
  * Public API prices (PAPI-030, public API PRD CRED-11, D4, §8). Each operation's price is read in
  * this order:
  *   1. the workspace override, entitlement `api.price.<operation>`
- *   2. the global default in CustomerOps admin config (kind `api_price`, key `default`, saved in the
- *      COPS_PLATFORM_WORKSPACE_ID workspace)
+ *   2. the global default in CustomerOps admin config (kind `api_price`, key `default`), saved in the
+ *      internal Skout workspace (COPS-15: INTERNAL_WORKSPACE_ID, else the Ops access holders' workspace)
  *   3. the code default below
  * Prices are cached for at most 60 seconds, so a change reaches new requests within a minute with no
  * deploy; changes made through this service also drop the cache at once on this instance.
@@ -30,8 +31,8 @@ export const API_PRICE_CONFIG_KIND = "api_price" as const;
 export const API_PRICE_CONFIG_KEY = "default";
 
 export interface PricingConfig {
-  /** COPS_PLATFORM_WORKSPACE_ID; without it the code defaults are the global level. */
-  platformWorkspaceId: string | undefined;
+  /** INTERNAL_WORKSPACE_ID (COPS-15); when unset the Ops access holders' workspace is used. */
+  INTERNAL_WORKSPACE_ID: string | undefined;
   /** SEARCH_CREDIT_COST, today's in-app search price (PRD §8.1: search.index_page starts at it). */
   searchCreditCost: number;
 }
@@ -134,8 +135,9 @@ export class ApiPricingService {
   private async globalPrices(): Promise<Partial<Record<ApiPriceOperation, number>>> {
     if (this.globalCache && this.fresh(this.globalCache.at)) return this.globalCache.prices;
     const prices: Partial<Record<ApiPriceOperation, number>> = {};
-    if (this.cfg.platformWorkspaceId) {
-      const saved = await getConfig(this.db, this.cfg.platformWorkspaceId, API_PRICE_CONFIG_KIND, API_PRICE_CONFIG_KEY);
+    const internal = await internalWorkspaceId(this.db, this.cfg);
+    if (internal) {
+      const saved = await getConfig(this.db, internal, API_PRICE_CONFIG_KIND, API_PRICE_CONFIG_KEY);
       const stored = (saved?.value as { prices?: Record<string, unknown> } | undefined)?.prices ?? {};
       for (const [op, value] of Object.entries(stored)) {
         const v = asPrice(value);
@@ -204,9 +206,8 @@ export class ApiPricingService {
    * the old and new values). Operations left out keep the code default.
    */
   async setGlobalPrices(ctx: AdminConfigContext, prices: Record<string, number>, reason: string): Promise<void> {
-    if (!this.cfg.platformWorkspaceId) throw new HttpError("COPS_PLATFORM_WORKSPACE_ID is not set, so global prices can't be saved", 503);
-    if (ctx.workspaceId !== this.cfg.platformWorkspaceId) {
-      throw new HttpError("Global API prices can only be changed from the CustomerOps platform workspace", 403);
+    if (!(await isInternalWorkspace(this.db, this.cfg, ctx.workspaceId))) {
+      throw new HttpError("Global API prices can only be changed from the internal Skout (CustomerOps) workspace", 403);
     }
     await saveConfig(this.db, ctx, API_PRICE_CONFIG_KIND, API_PRICE_CONFIG_KEY, { value: { prices }, reason });
     this.invalidate();

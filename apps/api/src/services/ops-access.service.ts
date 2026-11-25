@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { schema, type Db } from "@skout/db";
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getMemberPermissions } from "@skout/auth";
 import { copsErrorBody, resolveCorrelationId } from "@skout/shared";
 import type { Env } from "../config/env.js";
@@ -48,6 +48,22 @@ export async function isInternalWorkspace(db: Db, config: Pick<Env, "INTERNAL_WO
     .where(and(eq(schema.workspaceMemberRoles.workspaceId, workspaceId), isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)))
     .limit(1);
   return !!holder;
+}
+
+/**
+ * The internal Skout workspace's id: INTERNAL_WORKSPACE_ID when set, otherwise the workspace of the
+ * earliest Ops access holder (same chain of trust as isInternalWorkspace). Null when there is none yet.
+ */
+export async function internalWorkspaceId(db: Db, config: Pick<Env, "INTERNAL_WORKSPACE_ID">): Promise<string | null> {
+  if (config.INTERNAL_WORKSPACE_ID) return config.INTERNAL_WORKSPACE_ID;
+  const [holder] = await db
+    .select({ workspaceId: schema.workspaceMemberRoles.workspaceId })
+    .from(schema.workspaceMemberRoles)
+    .innerJoin(schema.roles, eq(schema.roles.id, schema.workspaceMemberRoles.roleId))
+    .where(and(isNull(schema.roles.workspaceId), eq(schema.roles.key, OPS_ACCESS_ROLE_KEY)))
+    .orderBy(asc(schema.workspaceMemberRoles.grantedAt))
+    .limit(1);
+  return holder?.workspaceId ?? null;
 }
 
 /** True when anyone, in any workspace, holds Ops access (the chain of trust has a start). */
