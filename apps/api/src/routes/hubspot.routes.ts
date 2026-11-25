@@ -3,6 +3,7 @@ import { createCrmService } from "../services/crm.service.js";
 import { syncHubSpotNativeOrThrow } from "../services/crm-hubspot-native-sync.service.js";
 import { getCrmSyncStatus } from "../services/crm-sync-state.service.js";
 import { HttpError, errorResponse, requireWorkspaceId } from "../utils/http.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 export async function hubspotRoutes(app: FastifyInstance) {
   const svc = () => createCrmService(app.db, app.config);
@@ -30,9 +31,9 @@ export async function hubspotRoutes(app: FastifyInstance) {
       state?: string;
       error?: string;
     };
-    const frontend = app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000";
+    const frontend = productAppUrl(app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000");
     // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
-    const failUrl = `${frontend.replace(/\/$/, "")}/app/settings/crm?hubspot=error`;
+    const failUrl = `${frontend}/settings/crm?hubspot=error`;
 
     if (error || !code || !state) {
       return reply.redirect(failUrl);

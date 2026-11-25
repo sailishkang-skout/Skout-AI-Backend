@@ -6,6 +6,7 @@ import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
 import { HttpError } from "../utils/http.js";
 import { isCrmGrantExpiredError } from "./crm-auth-lifecycle.service.js";
 import { notifyCrmAdmins } from "./crm-alerts.service.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 type Db = ReturnType<typeof createDb>["db"];
 const { inboxes } = schema;
@@ -208,11 +209,11 @@ export async function handleGoogleCallback(
 
   await storeOAuthInbox(db, config, workspaceId, userInfo.email, userInfo.name ?? null, "google", tokens);
 
-  const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+  const frontend = productAppUrl(config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000");
   return {
     workspaceId,
     // Next.js basePath is "/app" — omitting it 404'd this redirect.
-    redirectUrl: `${frontend}/app/deliverability?connected=google`,
+    redirectUrl: `${frontend}/deliverability?connected=google`,
   };
 }
 
@@ -268,11 +269,11 @@ export async function handleMicrosoftCallback(
 
   await storeOAuthInbox(db, config, workspaceId, email, userInfo.displayName ?? null, "microsoft", tokens);
 
-  const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+  const frontend = productAppUrl(config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000");
   return {
     workspaceId,
     // Next.js basePath is "/app" — omitting it 404'd this redirect.
-    redirectUrl: `${frontend}/app/deliverability?connected=microsoft`,
+    redirectUrl: `${frontend}/deliverability?connected=microsoft`,
   };
 }
 

@@ -14,6 +14,7 @@ import { checkLinkedinConnectionStatus } from "./linkedin-connection.service.js"
 import { LinkedinAccountService } from "./linkedin-account.service.js";
 import { resolveProspectFields, type ResolvedProspect } from "./prospect-resolver.service.js";
 import { generateRegionalBrief } from "./regional-intel.service.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -93,7 +94,7 @@ export interface LinkedinVoiceHandoffResult {
 }
 
 function frontendBase(config: Env): string {
-  return (config.FRONTEND_URL ?? config.CORS_ORIGIN?.[0] ?? "http://localhost:3000").replace(/\/$/, "");
+  return productAppUrl(config.FRONTEND_URL ?? config.CORS_ORIGIN?.[0] ?? "http://localhost:3000");
 }
 
 function manualSendNote(): string {
@@ -356,7 +357,7 @@ function toHandoffResult(
     prospectName: row.prospectName,
     linkedinUrl: row.linkedinUrl,
     expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
-    mobileUrl: `${frontendBase(config)}/app/linkedin/voice/h/${row.handoffToken}`,
+    mobileUrl: `${frontendBase(config)}/linkedin/voice/h/${row.handoffToken}`,
     note: manualSendNote(),
   };
 }

@@ -30,6 +30,7 @@ import {
 } from "./hubspot-credentials.store.js";
 import { buildEnrichmentService, type ProspectSnapshot } from "./enrichment/index.js";
 import { normalizeDomain, generateCompanyId, generateProspectId } from "@skout/shared";
+import { productAppUrl } from "../utils/app-url.js";
 
 const { crmConnections, asyncJobs, listMembers, lists, crmProspectMappings } = schema;
 
@@ -225,7 +226,7 @@ export class CrmService {
 
     await saveHubSpotTokens(this.db, this.credentialsStore, parsed.workspaceId, tokens, portalId);
     // Next.js basePath is "/app" — omitting it 404'd this redirect.
-    return `${this.frontendUrl.replace(/\/$/, "")}/app/settings/crm?hubspot=connected`;
+    return `${productAppUrl(this.frontendUrl)}/settings/crm?hubspot=connected`;
   }
 
   async disconnectHubSpot(workspaceId: string): Promise<void> {
