@@ -6,6 +6,7 @@ import { createDb, schema } from "@skout/db";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { ipAllowed, registerPublicApiAuth } from "./public-api-auth.js";
+import { createMemoryFailedAuthLimiter, createRedisFailedAuthLimiter } from "../lib/failed-auth-limiter.js";
 import { createPublicApiKey, generatePublicApiKey, revokePublicApiKey } from "../services/public-api-keys.service.js";
 import { generateApiKey } from "../services/cops-api-credentials.service.js";
 
@@ -182,5 +183,106 @@ maybe("public prefix authentication (PAPI-024)", () => {
 
   it("lets the health check through without a key", async () => {
     expect((await call({}, "/api/public/v1/health")).statusCode).toBe(200);
+  });
+});
+
+maybe("failed-authentication limit per IP (PAPI-025, RL-3)", () => {
+  const { db, sql } = createDb(url as string);
+  let now = Date.now();
+  const limiter = createMemoryFailedAuthLimiter({ perMinute: 20, blockMinutes: 15 }, () => now);
+  let app: FastifyInstance;
+  let ws: string;
+  let userId: string;
+  let validKey: string;
+  const ATTACKER = "198.51.100.66";
+  const OTHER = "198.51.100.77";
+  const call = (ip: string, authorization?: string, path = "/api/public/v1/echo") =>
+    app.inject({ method: "GET", url: path, remoteAddress: ip, headers: authorization ? { authorization } : {} });
+
+  beforeAll(async () => {
+    ws = randomUUID();
+    await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-025", slug: `papi025-${ws}` });
+    const [u] = await db.insert(schema.users).values({ email: `papi025-${ws.slice(0, 8)}@test.com` }).returning();
+    userId = u!.id;
+    await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
+    await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });
+    validKey = (await createPublicApiKey(db, { pepper: PEPPER, maxActiveKeys: 10 }, { workspaceId: ws, userId }, { name: "k", type: "live", scopes: ["search:read"] })).key;
+
+    app = Fastify();
+    app.decorate("config", { API_KEY_PEPPER: PEPPER, PUBLIC_API_MAX_ACTIVE_KEYS: 10 } as never);
+    app.decorate("db", db);
+    app.decorate("publicKeyCache", null);
+    registerPublicApiAuth(app, { limiter });
+    app.get("/api/public/v1/echo", async (req) => ({ workspace: req.workspaceId }));
+    app.get("/", async () => "website");
+    app.get("/api/v1/me", async () => ({ ok: true }));
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await db.delete(schema.workspaces).where(eq(schema.workspaces.id, ws));
+    await db.delete(schema.users).where(eq(schema.users.id, userId));
+    await sql.end();
+  });
+
+  it("blocks the 21st bad key from one IP with 429, keeps other IPs working, and leaves the website alone", async () => {
+    for (let i = 1; i <= 20; i++) {
+      const res = await call(ATTACKER, `Bearer ${generatePublicApiKey("live", PEPPER).key}`);
+      expect(res.statusCode, `attempt ${i}`).toBe(401);
+    }
+    const blocked = await call(ATTACKER, `Bearer ${generatePublicApiKey("live", PEPPER).key}`);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json().error.code).toBe("rate_limited");
+    expect(Number(blocked.headers["retry-after"])).toBe(900);
+    // Even a valid key from the blocked IP waits out the block.
+    expect((await call(ATTACKER, `Bearer ${validKey}`)).statusCode).toBe(429);
+    // A valid key from another IP still works.
+    expect((await call(OTHER, `Bearer ${validKey}`)).statusCode).toBe(200);
+    // The blocked IP can still load the website and the app.
+    expect((await call(ATTACKER, undefined, "/")).statusCode).toBe(200);
+    expect((await call(ATTACKER, undefined, "/api/v1/me")).statusCode).toBe(200);
+  });
+
+  it("lifts the block after 15 minutes, and successful calls never count", async () => {
+    now += 14 * 60_000;
+    expect((await call(ATTACKER, `Bearer ${validKey}`)).statusCode).toBe(429);
+    now += 61_000;
+    expect((await call(ATTACKER, `Bearer ${validKey}`)).statusCode).toBe(200);
+    for (let i = 0; i < 50; i++) expect((await call(OTHER, `Bearer ${validKey}`)).statusCode).toBe(200);
+  });
+
+  it("forgets failures older than a minute", async () => {
+    const ip = "198.51.100.88";
+    for (let i = 0; i < 19; i++) await call(ip, "Bearer nope");
+    now += 61_000;
+    for (let i = 0; i < 19; i++) expect((await call(ip, "Bearer nope")).statusCode).toBe(401);
+    expect((await call(ip, `Bearer ${validKey}`)).statusCode).toBe(200);
+  });
+});
+
+describe("Redis failed-auth limiter (shared across instances)", async () => {
+  const { Redis } = await import("ioredis");
+  const redisUrl = process.env.PAPI_TEST_REDIS_URL ?? "redis://127.0.0.1:6379";
+  const probe = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 0, connectTimeout: 500, retryStrategy: () => null });
+  probe.on("error", () => undefined);
+  const up = await probe.connect().then(() => true, () => false);
+  const run = up ? it : it.skip;
+
+  afterAll(async () => {
+    probe.disconnect();
+  });
+
+  run("two instances share one counter: 20 failures across them block the IP on both", async () => {
+    const ip = `192.0.2.${Math.floor(Math.random() * 200) + 1}-${randomUUID().slice(0, 4)}`;
+    const a = createRedisFailedAuthLimiter(probe, { perMinute: 20, blockMinutes: 15 });
+    const b = createRedisFailedAuthLimiter(probe, { perMinute: 20, blockMinutes: 15 });
+    for (let i = 0; i < 10; i++) await a.recordFailure(ip);
+    for (let i = 0; i < 9; i++) await b.recordFailure(ip);
+    expect(await a.blockedFor(ip)).toBe(0);
+    await b.recordFailure(ip);
+    expect(await a.blockedFor(ip)).toBeGreaterThan(890);
+    expect(await b.blockedFor(ip)).toBeGreaterThan(890);
+    await probe.del(`papi:authblock:${ip}`);
   });
 });

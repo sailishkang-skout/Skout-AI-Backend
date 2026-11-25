@@ -6,6 +6,8 @@ import { isPublicApiPath, PUBLIC_API_PREFIX } from "../routes/public-api.routes.
 import { publicApiError, type PublicApiErrorCode } from "../public-api/errors.js";
 import { verifyPublicApiKey, type ApiKeyType } from "../services/public-api-keys.service.js";
 import { subscriptionAccessBlock } from "../services/cops-subscription-access.js";
+import { getRedis, isRedisAvailable } from "../lib/redis.js";
+import { createMemoryFailedAuthLimiter, createRedisFailedAuthLimiter, type FailedAuthLimiter } from "../lib/failed-auth-limiter.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -64,6 +66,24 @@ function fail(reply: FastifyReply, request: FastifyRequest, code: PublicApiError
   return reply.code(status).header("cache-control", "no-store").send(body);
 }
 
+export interface PublicApiAuthOptions {
+  /** Failed-auth limiter (PAPI-025); by default Redis when reachable, else per-process memory. */
+  limiter?: FailedAuthLimiter;
+}
+
+function defaultLimiter(app: FastifyInstance): () => Promise<FailedAuthLimiter> {
+  let made: Promise<FailedAuthLimiter> | null = null;
+  const limits = {
+    perMinute: app.config.PUBLIC_API_FAILED_AUTH_PER_MINUTE ?? 20,
+    blockMinutes: app.config.PUBLIC_API_FAILED_AUTH_BLOCK_MINUTES ?? 15,
+  };
+  return () =>
+    (made ??= (async () => {
+      const redis = app.config.REDIS_URL && (await isRedisAvailable(app.config)) ? getRedis(app.config) : null;
+      return redis ? createRedisFailedAuthLimiter(redis, limits) : createMemoryFailedAuthLimiter(limits);
+    })());
+}
+
 /**
  * PAPI-024 (public API PRD §9.1, §9.2, KEY-11, ADD-5). An onRequest hook, registered in the auth plugin:
  * - A public key (sk_live_/sk_test_) anywhere outside /api/public is refused with 401, on every
@@ -73,10 +93,12 @@ function fail(reply: FastifyReply, request: FastifyRequest, code: PublicApiError
  * - The key must verify (cached, PAPI-023), and then: the client IP must be in its allowlist, the
  *   workspace must have the add-on and not be suspended, and the member who created it must still
  *   belong to the workspace.
- * The workspace comes only from the key (§9.2).
+ * The workspace comes only from the key (§9.2). Failed authentications are counted per IP and an IP
+ * over the limit gets 429 on the public path for the block period (PAPI-025).
  */
-export function registerPublicApiAuth(app: FastifyInstance): void {
+export function registerPublicApiAuth(app: FastifyInstance, opts: PublicApiAuthOptions = {}): void {
   const lastUsedWritten = new Map<string, number>();
+  const getLimiter = opts.limiter ? async () => opts.limiter! : defaultLimiter(app);
 
   // onRequest: before body parsing and schema validation, so no route can answer first.
   app.addHook("onRequest", async (request, reply) => {
@@ -99,16 +121,31 @@ export function registerPublicApiAuth(app: FastifyInstance): void {
     const pathname = request.url.split("?")[0]!;
     if (UNAUTHENTICATED_PUBLIC_PATHS.has(pathname)) return;
 
+    // PAPI-025 (RL-3): an IP that failed authentication too often is blocked on this path only.
+    const limiter = await getLimiter();
+    const blockedFor = await limiter.blockedFor(request.ip).catch(() => 0);
+    if (blockedFor > 0) {
+      reply.header("retry-after", String(blockedFor));
+      return fail(reply, request, "rate_limited", "Too many failed authentication attempts from this IP address. Try again later.");
+    }
+    /** Refuses the request and, for a failed authentication (401), counts it against the IP. */
+    const deny = async (code: PublicApiErrorCode, message: string) => {
+      if (publicApiError(code, message, "").status === 401) {
+        await limiter.recordFailure(request.ip).catch((err: unknown) => app.log.warn({ err }, "could not record failed authentication"));
+      }
+      return fail(reply, request, code, message);
+    };
+
     const query = request.url.includes("?") ? request.url.slice(request.url.indexOf("?")) : "";
     if (PUBLIC_KEY_PATTERN.test(decodeURIComponent(query))) {
-      return fail(reply, request, "authentication_failed", "Send the API key in the Authorization header, never in the URL. Revoke this key.");
+      return deny("authentication_failed", "Send the API key in the Authorization header, never in the URL. Revoke this key.");
     }
     if (!token || !looksLikePublicKey(token)) {
-      return fail(reply, request, "authentication_failed", "Send a public API key as: Authorization: Bearer sk_live_...");
+      return deny("authentication_failed", "Send a public API key as: Authorization: Bearer sk_live_...");
     }
     const db = app.db;
-    if (!db) return fail(reply, request, "internal_error", "The API is not available.");
-    if (!app.config.API_KEY_PEPPER) return fail(reply, request, "internal_error", "The API is not available.");
+    if (!db) return deny("internal_error", "The API is not available.");
+    if (!app.config.API_KEY_PEPPER) return deny("internal_error", "The API is not available.");
 
     const cache = app.publicKeyCache;
     const verified = await verifyPublicApiKey(db, {
@@ -122,12 +159,12 @@ export function registerPublicApiAuth(app: FastifyInstance): void {
         key_revoked: "This API key has been revoked.",
         key_expired: "This API key has expired. Rotate or create a new one.",
       } as const;
-      return fail(reply, request, verified.error, messages[verified.error]);
+      return deny(verified.error, messages[verified.error]);
     }
     const key = verified.key;
 
     if (!ipAllowed(request.ip, key.ipAllowlist)) {
-      return fail(reply, request, "ip_not_allowed", "Requests from this IP address are not allowed for this key.");
+      return deny("ip_not_allowed", "Requests from this IP address are not allowed for this key.");
     }
 
     const addonEnabled =
@@ -141,10 +178,10 @@ export function registerPublicApiAuth(app: FastifyInstance): void {
             .limit(1)
         )[0]?.on
       );
-    if (!addonEnabled) return fail(reply, request, "addon_disabled", "The API add-on is not enabled for this workspace.");
+    if (!addonEnabled) return deny("addon_disabled", "The API add-on is not enabled for this workspace.");
 
     if (await subscriptionAccessBlock(db, key.workspaceId)) {
-      return fail(reply, request, "workspace_suspended", "This workspace is suspended. Settle its subscription to use the API.");
+      return deny("workspace_suspended", "This workspace is suspended. Settle its subscription to use the API.");
     }
 
     // KEY-11: the key stops working when the member who created it leaves the workspace.
@@ -155,7 +192,7 @@ export function registerPublicApiAuth(app: FastifyInstance): void {
           .where(and(eq(schema.workspaceMembers.workspaceId, key.workspaceId), eq(schema.workspaceMembers.userId, key.createdBy)))
           .limit(1)
       : [];
-    if (!member) return fail(reply, request, "key_revoked", "This API key stopped working because its creator left the workspace.");
+    if (!member) return deny("key_revoked", "This API key stopped working because its creator left the workspace.");
 
     request.publicApiKey = {
       id: key.id,
