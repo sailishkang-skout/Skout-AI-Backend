@@ -1,5 +1,8 @@
 -- PAPI-012 (public API PRD §10): request log (monthly partitions, 90-day retention), idempotency
 -- (24-hour retention), async jobs, terms acceptances and per-workspace API settings.
+-- migration-safety: additive. The only DROP TABLE is inside api_request_log_drop_partitions_before(),
+-- which is not run here; the maintenance job calls it later to drop api_request_log month partitions
+-- older than 90 days (PRD §10 retention). It never touches any other table.
 
 CREATE TABLE IF NOT EXISTS "api_request_log" (
   "id" uuid DEFAULT gen_random_uuid() NOT NULL,
