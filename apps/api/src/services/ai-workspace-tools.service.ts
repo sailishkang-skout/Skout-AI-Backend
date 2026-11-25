@@ -935,12 +935,15 @@ export function createWorkspaceToolRunner(
         filters.seniority = seniorityRaw as z.infer<typeof seniorityEnum>;
       }
 
-      const result = await search.searchProspects({
-        query: query || undefined,
-        filters: Object.keys(filters).length ? filters : undefined,
-        page: 1,
-        pageSize: 10,
-      });
+      const result = await search.searchProspects(
+        {
+          query: query || undefined,
+          filters: Object.keys(filters).length ? filters : undefined,
+          page: 1,
+          pageSize: 10,
+        },
+        { workspaceId }
+      );
 
       return {
         freePreview: true,

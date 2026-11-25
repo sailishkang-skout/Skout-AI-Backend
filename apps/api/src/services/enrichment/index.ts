@@ -22,6 +22,8 @@ import type { EnrichmentStore } from "./types.js";
 import type { ProspectSnapshot as ActivateSnapshot } from "./service.js";
 import { applyEnrichmentAutoFill } from "../enrichment-autofill.service.js";
 import { withEmailIntel } from "./email-intel-providers.js";
+import type { AttemptLog } from "@skout/pal";
+import { createProviderCostRecorder, providerCallsFromAttempts } from "../provider-cost.service.js";
 
 export * from "./types.js";
 export { EnrichmentService, SCORE_CREDIT_COST } from "./service.js";
@@ -162,6 +164,14 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
             snapshot as ActivateSnapshot & { prospectId: string; companyId: string },
             config
           )
-      : undefined
+      : undefined,
+    db ? recordEnrichmentProviderCalls(db, config) : undefined
   );
+}
+
+/** PAPI-013: one provider_cost_events row per real provider call in the enrichment waterfall. */
+function recordEnrichmentProviderCalls(db: Db, config: Env) {
+  const record = createProviderCostRecorder(db, config.PROVIDER_UNIT_COSTS_JSON);
+  return (workspaceId: string, attempts: AttemptLog[]) =>
+    record(providerCallsFromAttempts(attempts), { source: "enrichment", workspaceId });
 }

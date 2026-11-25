@@ -543,6 +543,9 @@ const envSchema = z
     PUBLIC_API_MAX_ACTIVE_KEYS: z.coerce.number().int().positive().default(10),
     /** CRED-8: low-balance alert threshold in credits. */
     PUBLIC_API_LOW_BALANCE_THRESHOLD: z.coerce.number().int().nonnegative().default(100),
+    // PAPI-013: what each data-provider call costs Skout, in USD millionths, keyed "provider:operation",
+    // e.g. {"wiza:search":{"perCall":0,"perUnit":20000}}. Unset entries record cost_micros = null.
+    PROVIDER_UNIT_COSTS_JSON: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // PAPI-002: never run the public API without a real pepper. Base64 of 32 bytes is 44 characters.

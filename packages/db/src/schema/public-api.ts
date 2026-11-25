@@ -190,3 +190,39 @@ export const workspaceApiSettings = pgTable("workspace_api_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
 });
+
+/**
+ * One row per external data-provider call, including failed and empty ones (PAPI-013, CRED-6), so
+ * finance can compute margin per endpoint. Written for enrichment waterfall attempts and for the
+ * vendor calls search makes. `cost_micros` (USD millionths) is null when no unit cost is configured;
+ * calls made on a workspace's own provider key (`credential_source = 'workspace'`) cost Skout nothing.
+ */
+export const providerCostEvents = pgTable(
+  "provider_cost_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
+    /** Public API request id when the call was made for an API request. */
+    requestId: text("request_id"),
+    /** What triggered the call: enrichment | search. */
+    source: text("source").notNull(),
+    provider: text("provider").notNull(),
+    operation: text("operation").notNull(),
+    /** ok | miss | error */
+    outcome: text("outcome").notNull(),
+    /** platform | workspace */
+    credentialSource: text("credential_source").notNull().default("platform"),
+    /** Billable units the provider counts, e.g. results returned; 1 for a single lookup. */
+    units: integer("units").notNull().default(0),
+    costMicros: integer("cost_micros"),
+    latencyMs: integer("latency_ms"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("provider_cost_events_created_idx").on(t.createdAt),
+    index("provider_cost_events_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    index("provider_cost_events_provider_created_idx").on(t.provider, t.operation, t.createdAt),
+  ]
+);

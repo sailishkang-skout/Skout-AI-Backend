@@ -74,7 +74,8 @@ export class EnrichmentEngine {
     const run = async <T>(
       provider: string,
       operation: string,
-      fn: () => Promise<T | null>
+      fn: () => Promise<T | null>,
+      credentialSource: CredentialSource = "platform"
     ): Promise<T | null> => {
       const started = Date.now();
       order += 1;
@@ -86,6 +87,7 @@ export class EnrichmentEngine {
           operation,
           status: value == null ? "miss" : "ok",
           latencyMs: Date.now() - started,
+          credentialSource,
         });
         return value;
       } catch (err) {
@@ -96,6 +98,7 @@ export class EnrichmentEngine {
           status: "error",
           latencyMs: Date.now() - started,
           detail: err instanceof Error ? err.message : String(err),
+          credentialSource,
         });
         return null;
       }
@@ -124,8 +127,11 @@ export class EnrichmentEngine {
     // 1. Firmographics
     if (fields.includes("company") && !companyFromCache) {
       for (const p of this.providers.firmographics) {
-        const company = await run(p.name, "fetchCompany", () =>
-          p.fetchCompany(input.companyDomain, input.companyName)
+        const company = await run(
+          p.name,
+          "fetchCompany",
+          () => p.fetchCompany(input.companyDomain, input.companyName),
+          providerBillingSource(p)
         );
         if (company) {
           const source = providerBillingSource(p);
@@ -169,8 +175,11 @@ export class EnrichmentEngine {
       let bestFound: { email: string; confidence: number; provider: string; source: CredentialSource } | null =
         null;
       for (const p of this.providers.emailFinders) {
-        const found = await run(p.name, "findEmail", () =>
-          p.findEmail(input.fullName!, input.companyDomain, emailContext)
+        const found = await run(
+          p.name,
+          "findEmail",
+          () => p.findEmail(input.fullName!, input.companyDomain, emailContext),
+          providerBillingSource(p)
         );
         if (found) {
           const source = providerBillingSource(p);
@@ -211,7 +220,7 @@ export class EnrichmentEngine {
     // 3. Validation — verified-only rule: mark email primary only if it passes
     if (email && fields.includes("validation")) {
       for (const p of this.providers.emailVerifiers) {
-        const verdict = await run(p.name, "verify", () => p.verify(email!));
+        const verdict = await run(p.name, "verify", () => p.verify(email!), providerBillingSource(p));
         if (verdict) {
           const source = providerBillingSource(p);
           billProvider(p);
@@ -297,8 +306,11 @@ export class EnrichmentEngine {
         });
       } else {
         for (const p of this.providers.phone) {
-          const phone = await run(p.name, "fetchPhone", () =>
-            p.fetchPhone(input.fullName!, input.companyDomain, input.linkedinUrl, email)
+          const phone = await run(
+            p.name,
+            "fetchPhone",
+            () => p.fetchPhone(input.fullName!, input.companyDomain, input.linkedinUrl, email),
+            providerBillingSource(p)
           );
           if (phone) {
             const source = providerBillingSource(p);

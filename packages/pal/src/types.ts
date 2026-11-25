@@ -53,6 +53,8 @@ export interface AttemptLog {
   status: AttemptStatus;
   latencyMs: number;
   detail?: string;
+  /** Whose provider key made the call; set on real provider calls (PAPI-013 cost tracking). */
+  credentialSource?: CredentialSource;
 }
 
 export interface EnrichmentOutcome {

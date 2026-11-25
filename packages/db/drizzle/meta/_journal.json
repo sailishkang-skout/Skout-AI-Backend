@@ -1184,6 +1184,13 @@
       "when": 1798387800000,
       "tag": "0166_public_api_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1798387900000,
+      "tag": "0167_provider_cost_events",
+      "breakpoints": true
     }
   ]
 }

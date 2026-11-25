@@ -23,7 +23,12 @@ import {
   searchVendors,
   toProspectDocument,
   wizaDeepMax,
+  type VendorCallRecorder,
 } from "./vendor-search.service.js";
+import { createProviderCostRecorder, type ProviderCall, type ProviderCostContext } from "./provider-cost.service.js";
+
+/** Who a search runs for, so the vendor calls it triggers can be costed (PAPI-013). */
+export type SearchCostContext = Omit<ProviderCostContext, "source">;
 import { 
   listSignalsForEntities, 
   computeSignalStackScore, 
@@ -299,7 +304,11 @@ export class SearchService {
     return doc ? mapDocToDetail(doc, await this.computeStackScoreForDoc(doc)) : null;
   }
 
-  async searchProspects(body: SearchProspectsRequest): Promise<SearchProspectsResponse> {
+  /**
+   * @param ctx who the search runs for; vendor calls it triggers are recorded against this
+   *   workspace (and API key / request, for public API calls) in provider_cost_events (PAPI-013).
+   */
+  async searchProspects(body: SearchProspectsRequest, ctx: SearchCostContext = {}): Promise<SearchProspectsResponse> {
     const page = body.page ?? 1;
     const pageSize = body.pageSize ?? 25;
     const cfg = osConfig(this.env);
@@ -307,7 +316,14 @@ export class SearchService {
     // Real data: when any vendor key is configured, serve real people only — from our own
     // index first (free), topping up from Wiza/ContactOut/Datagma when the index is thin.
     if (enabledVendors(this.env).length > 0) {
-      return this.vendorBackedSearch(body, page, pageSize, cfg);
+      const calls: ProviderCall[] = [];
+      try {
+        return await this.vendorBackedSearch(body, page, pageSize, cfg, (call) => calls.push(call));
+      } finally {
+        if (calls.length > 0) {
+          await createProviderCostRecorder(this.db, this.env.PROVIDER_UNIT_COSTS_JSON)(calls, { source: "search", ...ctx });
+        }
+      }
     }
 
     if (cfg) {
@@ -396,7 +412,8 @@ export class SearchService {
     body: SearchProspectsRequest,
     page: number,
     pageSize: number,
-    cfg: OpenSearchConfig | null
+    cfg: OpenSearchConfig | null,
+    onCall?: VendorCallRecorder
   ): Promise<SearchProspectsResponse> {
     const filters = toFilters(body);
     // Real people only: vendor results and LinkedIn captures from every workspace.
@@ -416,7 +433,7 @@ export class SearchService {
       return { results: stored.hits.map((h) => mapDocToSummary(h)), total: stored.total, page, pageSize, cached: false, source: "opensearch" };
     }
 
-    const outcome = await searchVendors(this.env, filters, pageSize, page);
+    const outcome = await searchVendors(this.env, filters, pageSize, page, onCall);
     if (outcome.attempted.length > 0 && outcome.failed.length === outcome.attempted.length && stored.hits.length === 0) {
       // Provider names and errors are logged by searchVendors; the user only needs to know to retry.
       throw new HttpError("vendor_search_unavailable", 502, "Prospect data is temporarily unavailable. Please try again.");
@@ -430,7 +447,7 @@ export class SearchService {
       const claim = deepClaimKey(filters);
       if (await claimDeepFetch(this.env, claim)) {
         try {
-          people = mergePeople([...people, ...(await fetchWizaDeepList(this.env, filters, deepMax))]);
+          people = mergePeople([...people, ...(await fetchWizaDeepList(this.env, filters, deepMax, { onCall }))]);
         } catch (err) {
           log.error("deeper results fetch failed", err, { page });
           await releaseDeepFetch(this.env, claim);

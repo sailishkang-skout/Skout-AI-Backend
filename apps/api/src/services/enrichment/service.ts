@@ -1,4 +1,4 @@
-import { EnrichmentEngine, type EnrichField } from "@skout/pal";
+import { EnrichmentEngine, type AttemptLog, type EnrichField } from "@skout/pal";
 import { generateCompanyId, generateProspectId } from "@skout/shared";
 import { createLogger, captureException } from "@skout/observability";
 import { scoreProspectIcp, type IcpConfig, type ScoreInput, type ScoreResult } from "../intelligence-layer.service.js";
@@ -92,7 +92,9 @@ export class EnrichmentService {
     private readonly openrouterApiKey?: string,
     /** R13.3 — best-effort CRM auto-fill hook, called per-prospect after `activate` upserts its
      * snapshot. Failures here must never fail activation — see call site. */
-    private readonly afterActivate?: (workspaceId: string, snapshot: ProspectSnapshot) => Promise<void>
+    private readonly afterActivate?: (workspaceId: string, snapshot: ProspectSnapshot) => Promise<void>,
+    /** PAPI-013 — records every provider call the waterfall made (failed and empty ones too). Never throws. */
+    private readonly recordProviderCalls?: (workspaceId: string, attempts: AttemptLog[]) => Promise<void>
   ) {}
 
   private async prepareWorkspace(workspaceId: string): Promise<void> {
@@ -359,6 +361,8 @@ export class EnrichmentService {
             }
           : undefined,
       });
+
+      await this.recordProviderCalls?.(workspaceId, outcome.attempts);
 
       if (outcome.creditsUsed > 0) {
         await this.store.deductCredits(workspaceId, outcome.creditsUsed, "enrichment", job.id);
