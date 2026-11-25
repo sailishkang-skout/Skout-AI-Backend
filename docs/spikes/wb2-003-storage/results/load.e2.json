@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "e2",
+    "label": "E2 bigint ids + workbook_id",
+    "partition": "none",
+    "partitions": 1,
+    "idType": "bigint",
+    "workbookIdOnCells": true,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 496,
+    "cellsMs": 24483,
+    "vacuumAnalyzeMs": 578
+  },
+  "cellsPerSecond": 81688,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 280.9,
+    "indexMB": 80,
+    "totalMB": 360.9,
+    "partitions": 1
+  },
+  "bytesPerCell": 189,
+  "isolationLoadMs": 1243
+}

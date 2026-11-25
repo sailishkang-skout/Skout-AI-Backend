@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "d",
+    "label": "D  list(workbook_id), one per workbook",
+    "partition": "list_workbook",
+    "partitions": 1,
+    "idType": "uuid",
+    "workbookIdOnCells": true,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 657,
+    "cellsMs": 20715,
+    "vacuumAnalyzeMs": 504
+  },
+  "cellsPerSecond": 96547,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 297.2,
+    "indexMB": 175.3,
+    "totalMB": 472.5,
+    "partitions": 3
+  },
+  "bytesPerCell": 248,
+  "isolationLoadMs": 1089
+}

@@ -1,0 +1,10 @@
+{
+  "variant": "d",
+  "tag": "big0",
+  "rowsRemoved": 50000,
+  "cellsRemoved": 1000000,
+  "method": "DETACH + DROP the workbook's partition, then DELETE the workbook (rows cascade)",
+  "purgeMs": 822,
+  "walMB": 9.6,
+  "deadTuplesAfter": 0
+}

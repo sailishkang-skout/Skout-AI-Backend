@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "c",
+    "label": "C  hash(row_id) x16",
+    "partition": "hash_row",
+    "partitions": 16,
+    "idType": "uuid",
+    "workbookIdOnCells": false,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 613,
+    "cellsMs": 22281,
+    "vacuumAnalyzeMs": 1768
+  },
+  "cellsPerSecond": 89762,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 265.3,
+    "indexMB": 124.6,
+    "totalMB": 389.9,
+    "partitions": 16
+  },
+  "bytesPerCell": 204,
+  "isolationLoadMs": 1365
+}

@@ -1,0 +1,368 @@
+{
+  "variant": "b",
+  "label": "B  hash(workbook_id) x16",
+  "indexes": [
+    "workbook_cells_col_state_row_idx"
+  ],
+  "rows": 100000,
+  "results": [
+    {
+      "name": "window_random",
+      "targetMs": 300,
+      "concurrency": 1,
+      "summary": {
+        "n": 300,
+        "min": 7.172290999999859,
+        "p50": 12.219665999999961,
+        "p95": 26.53937499999938,
+        "p99": 35.83445900000015,
+        "max": 84.3726250000002,
+        "mean": 14.621544983333315
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369239,
+      "stoppedEarly": false
+    },
+    {
+      "name": "window_first",
+      "targetMs": 300,
+      "concurrency": 1,
+      "summary": {
+        "n": 60,
+        "min": 7.2363750000004075,
+        "p50": 8.898833000000195,
+        "p95": 15.270292000000154,
+        "p99": 20.045250000000124,
+        "max": 20.045250000000124,
+        "mean": 9.630115316666645
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1360668,
+      "stoppedEarly": false
+    },
+    {
+      "name": "window_middle",
+      "targetMs": 300,
+      "concurrency": 1,
+      "summary": {
+        "n": 60,
+        "min": 7.965957999999773,
+        "p50": 9.739041000000725,
+        "p95": 16.126500000000306,
+        "p99": 23.25041599999986,
+        "max": 23.25041599999986,
+        "mean": 10.691076366666705
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369377,
+      "stoppedEarly": false
+    },
+    {
+      "name": "window_last",
+      "targetMs": 300,
+      "concurrency": 1,
+      "summary": {
+        "n": 60,
+        "min": 7.848999999999251,
+        "p50": 8.876957999999831,
+        "p95": 15.258084000000053,
+        "p99": 21.6743749999996,
+        "max": 21.6743749999996,
+        "mean": 10.581377733333253
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1373243,
+      "stoppedEarly": false
+    },
+    {
+      "name": "window_8_concurrent_clients",
+      "targetMs": 300,
+      "concurrency": 8,
+      "summary": {
+        "n": 800,
+        "min": 16.280749999999898,
+        "p50": 68.77804199999991,
+        "p95": 119.57099999999991,
+        "p99": 158.57229200000074,
+        "max": 268.03362500000003,
+        "mean": 72.77449579124992
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1372493,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_company_asc_top",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 118.53304200000093,
+        "p50": 150.5922500000015,
+        "p95": 276.1645830000016,
+        "p99": 538.4226660000004,
+        "max": 538.4226660000004,
+        "mean": 191.1237062500003
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1368250,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_company_asc_deep_offset",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 137.9229579999992,
+        "p50": 283.50575000000026,
+        "p95": 393.9834579999988,
+        "p99": 427.71045799999774,
+        "max": 427.71045799999774,
+        "mean": 292.5234144000002
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1378849,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_lead_score_desc_top",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 107.1192919999994,
+        "p50": 140.7940000000017,
+        "p95": 231.52904200000194,
+        "p99": 268.41170799999963,
+        "max": 268.41170799999963,
+        "mean": 158.12752920000003
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369378,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_ai_summary_asc_deep_offset",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 217.04641700000138,
+        "p50": 326.94416600000113,
+        "p95": 430.8996249999982,
+        "p99": 433.4689169999983,
+        "max": 433.4689169999983,
+        "mean": 325.4785687499998
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1380435,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_company_prefix_key_top",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 112.67654200000106,
+        "p50": 131.87783299999865,
+        "p95": 161.5042919999978,
+        "p99": 184.3304999999964,
+        "max": 184.3304999999964,
+        "mean": 133.80874179999955
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1368250,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_state_error_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 25.682749999999942,
+        "p50": 38.82995900000242,
+        "p95": 117.7223340000055,
+        "p99": 118.81208299999707,
+        "max": 118.81208299999707,
+        "mean": 51.121681299999906
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1365403,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_state_error_count",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 17.14354199999798,
+        "p50": 18.77154100000189,
+        "p95": 45.722249999998894,
+        "p99": 77.01275000000169,
+        "max": 77.01275000000169,
+        "mean": 27.407252099998733
+      },
+      "sampleRows": 1,
+      "sampleBytes": 12,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_value_equals_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 98.98283300000185,
+        "p50": 144.23770800000057,
+        "p95": 252.08829100000003,
+        "p99": 266.3645830000023,
+        "max": 266.3645830000023,
+        "mean": 164.18210390000095
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1367006,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_value_equals_count",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 59.27395799999795,
+        "p50": 92.66137499999604,
+        "p95": 122.6627909999952,
+        "p99": 124.60858300000109,
+        "max": 124.60858300000109,
+        "mean": 94.25968745000027
+      },
+      "sampleRows": 1,
+      "sampleBytes": 13,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_text_contains_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 85.0548340000023,
+        "p50": 112.89183399999456,
+        "p95": 171.56462499999907,
+        "p99": 201.5063749999972,
+        "max": 201.5063749999972,
+        "mean": 119.85206464999938
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1372159,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_text_contains_count",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 57.388958000003186,
+        "p50": 92.2062919999953,
+        "p95": 103.51258300000336,
+        "p99": 109.26687500000116,
+        "max": 109.26687500000116,
+        "mean": 90.7571583500001
+      },
+      "sampleRows": 1,
+      "sampleBytes": 13,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_numeric_gt_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 39.81683299999713,
+        "p50": 64.43008299999929,
+        "p95": 241.22645800000464,
+        "p99": 300.6399590000001,
+        "max": 300.6399590000001,
+        "mean": 109.19392280000139
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1371709,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_numeric_gt_count",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 52.08725000000413,
+        "p50": 81.32204199999978,
+        "p95": 96.267875000005,
+        "p99": 96.4050419999985,
+        "max": 96.4050419999985,
+        "mean": 79.46027489999942
+      },
+      "sampleRows": 1,
+      "sampleBytes": 13,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_is_empty_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 22.932709000000614,
+        "p50": 37.82166600000346,
+        "p95": 48.658917000000656,
+        "p99": 49.031708000002254,
+        "max": 49.031708000002254,
+        "mean": 37.43093330000047
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369714,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_is_empty_count",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 55.37320900000486,
+        "p50": 86.25645900000382,
+        "p95": 120.29204200000095,
+        "p99": 136.0619579999984,
+        "max": 136.0619579999984,
+        "mean": 88.05574380000071
+      },
+      "sampleRows": 1,
+      "sampleBytes": 13,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_found_email_sorted_by_company",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 233.63045899999997,
+        "p50": 351.58183299999655,
+        "p95": 714.4530000000013,
+        "p99": 1639.8517500000016,
+        "max": 1639.8517500000016,
+        "mean": 448.62239374999956
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1375367,
+      "stoppedEarly": false
+    }
+  ],
+  "coldStart": "container restarted, no warm-up queries"
+}

@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "e",
+    "label": "E  unpartitioned, bigint ids",
+    "partition": "none",
+    "partitions": 1,
+    "idType": "bigint",
+    "workbookIdOnCells": false,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 394,
+    "cellsMs": 18257,
+    "vacuumAnalyzeMs": 485
+  },
+  "cellsPerSecond": 109545,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 249.6,
+    "indexMB": 80,
+    "totalMB": 329.5,
+    "partitions": 1
+  },
+  "bytesPerCell": 173,
+  "isolationLoadMs": 1250
+}

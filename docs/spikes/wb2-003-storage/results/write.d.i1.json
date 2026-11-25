@@ -1,0 +1,117 @@
+{
+  "variant": "d",
+  "label": "i1",
+  "indexes": [
+    "workbook_cells_col_state_row_idx"
+  ],
+  "options": {
+    "workers": 10,
+    "rowsPerRun": 50000,
+    "readers": 4
+  },
+  "elapsedSec": 117.88,
+  "cellsUpdated": 500000,
+  "cellsPerSecond": 4242,
+  "perChunk": {
+    "claimMs": {
+      "n": 5000,
+      "min": 6.851792000001296,
+      "p50": 70.90325000000303,
+      "p95": 205.61579200000415,
+      "p99": 438.91608299999643,
+      "max": 2101.937874999996,
+      "mean": 89.62481851559996
+    },
+    "completeMs": {
+      "n": 5000,
+      "min": 6.6712920000009035,
+      "p50": 72.55674999999974,
+      "p95": 223.56933299999946,
+      "p99": 492.2464159999945,
+      "max": 1478.4750839999979,
+      "mean": 90.93727991340006
+    },
+    "totalMs": {
+      "n": 5000,
+      "min": 26.518167000001995,
+      "p50": 127.30591700000514,
+      "p95": 420.2713340000046,
+      "p99": 773.9986250000075,
+      "max": 3375.404999999999,
+      "mean": 180.59829876299992
+    }
+  },
+  "dbMsPerRowP95": 4.203,
+  "readersDuringWrites": {
+    "n": 4692,
+    "min": 11.296915999999783,
+    "p50": 76.50749999999971,
+    "p95": 263.15750000000116,
+    "p99": 602.7806249999994,
+    "max": 2040.382709000005,
+    "mean": 100.51099381457782
+  },
+  "userEditsDuringWrites": {
+    "n": 704,
+    "min": 6.156582999999955,
+    "p50": 55.03679199999988,
+    "p95": 197.77362500000163,
+    "p99": 448.8507089999912,
+    "max": 1978.5006670000002,
+    "mean": 78.8224821875002
+  },
+  "hotUpdateRatio": 0,
+  "walMB": 826.9,
+  "sizeGrowth": {
+    "heapMB": 96.4,
+    "indexMB": 82.9
+  },
+  "deadTuplesAfter": 288202,
+  "deadlocks": 0,
+  "integrity": {
+    "targetCellMismatches": 0,
+    "mismatchByColumn": {
+      "7": 0,
+      "8": 0,
+      "9": 0,
+      "10": 0,
+      "11": 0,
+      "12": 0,
+      "13": 0,
+      "14": 0,
+      "17": 0,
+      "18": 0
+    },
+    "stuckInRunning": 0,
+    "duplicatePrimaryKeys": 0,
+    "totalCellsBefore": 2040000,
+    "totalCellsAfter": 2040000,
+    "untouchedCellsUnchanged": true,
+    "untouchedCellsChecked": 900000,
+    "targetCellsBeyondRangeUnchanged": true,
+    "userEditsApplied": "702/702",
+    "claimShortfalls": 3131
+  },
+  "contention": {
+    "description": "10 runs x 1,000 shared rows x 5 passes, different columns",
+    "totalMs": {
+      "n": 500,
+      "min": 4.79229199999827,
+      "p50": 36.23487500002375,
+      "p95": 195.3550830000022,
+      "p99": 389.8074579999957,
+      "max": 416.7685829999973,
+      "mean": 59.091848805999966
+    },
+    "elapsedSec": 3.36,
+    "lockWaitSamples": 0,
+    "deadlocks": 0,
+    "claimShortfalls": 0
+  },
+  "casRace": {
+    "trials": 300,
+    "exactlyOneWinner": 300,
+    "bothClaimed": 0,
+    "neitherClaimed": 0
+  }
+}

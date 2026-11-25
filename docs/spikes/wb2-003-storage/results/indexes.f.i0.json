@@ -1,0 +1,9 @@
+{
+  "variant": "f",
+  "set": "i0",
+  "builds": [],
+  "vacuumAnalyzeMs": 346,
+  "heapMB": 352.6,
+  "indexTotalMB": 115.1,
+  "totalMB": 467.7
+}

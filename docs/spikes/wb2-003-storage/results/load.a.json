@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "a",
+    "label": "A  unpartitioned, PRD literal",
+    "partition": "none",
+    "partitions": 1,
+    "idType": "uuid",
+    "workbookIdOnCells": false,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 527,
+    "cellsMs": 20966,
+    "vacuumAnalyzeMs": 431
+  },
+  "cellsPerSecond": 95392,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 265.2,
+    "indexMB": 123.8,
+    "totalMB": 389,
+    "partitions": 1
+  },
+  "bytesPerCell": 204,
+  "isolationLoadMs": 1351
+}

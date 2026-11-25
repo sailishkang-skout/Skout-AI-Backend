@@ -1,0 +1,164 @@
+{
+  "variant": "a2",
+  "label": "A2 unpartitioned + workbook_id",
+  "indexes": [
+    "workbook_cells_col_state_row_idx"
+  ],
+  "rows": 100000,
+  "results": [
+    {
+      "name": "window_random",
+      "targetMs": 300,
+      "concurrency": 1,
+      "summary": {
+        "n": 300,
+        "min": 6.691625000000386,
+        "p50": 15.292332999999871,
+        "p95": 26.059999999999945,
+        "p99": 34.59191699999974,
+        "max": 82.67599999999993,
+        "mean": 16.191926529999957
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369239,
+      "stoppedEarly": false
+    },
+    {
+      "name": "window_8_concurrent_clients",
+      "targetMs": 300,
+      "concurrency": 8,
+      "summary": {
+        "n": 800,
+        "min": 9.623208999999406,
+        "p50": 60.474874999999884,
+        "p95": 104.31237500000043,
+        "p99": 136.63500000000022,
+        "max": 278.45095799999945,
+        "mean": 63.637885892499924
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1363752,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_company_asc_top",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 98.34187500000007,
+        "p50": 105.45049999999901,
+        "p95": 205.4132920000011,
+        "p99": 311.00033299999996,
+        "max": 311.00033299999996,
+        "mean": 127.19656034999971
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1368250,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_company_asc_deep_offset",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 156.11795800000255,
+        "p50": 208.1254590000026,
+        "p95": 442.0566250000011,
+        "p99": 464.6701670000002,
+        "max": 464.6701670000002,
+        "mean": 234.9645542500005
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1373239,
+      "stoppedEarly": false
+    },
+    {
+      "name": "sort_lead_score_desc_top",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 92.4464999999982,
+        "p50": 101.05533300000025,
+        "p95": 122.24937500000306,
+        "p99": 136.4788329999974,
+        "max": 136.4788329999974,
+        "mean": 104.22208534999973
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1369378,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_state_error_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 23.211999999999534,
+        "p50": 32.65704199999891,
+        "p95": 76.84779100000014,
+        "p99": 143.70362499999828,
+        "max": 143.70362499999828,
+        "mean": 42.28626880000011
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1372307,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_value_equals_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 103.03495800000019,
+        "p50": 114.76979199999914,
+        "p95": 164.76029199999903,
+        "p99": 266.68695800000205,
+        "max": 266.68695800000205,
+        "mean": 133.29252700000035
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1362539,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_text_contains_window",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 97.81458300000304,
+        "p50": 104.90345900000102,
+        "p95": 130.86875000000146,
+        "p99": 132.2759589999987,
+        "max": 132.2759589999987,
+        "mean": 108.60581050000073
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1368789,
+      "stoppedEarly": false
+    },
+    {
+      "name": "filter_found_email_sorted_by_company",
+      "targetMs": 1500,
+      "concurrency": 1,
+      "summary": {
+        "n": 20,
+        "min": 287.0442920000023,
+        "p50": 318.7719590000015,
+        "p95": 433.1551659999968,
+        "p99": 790.6426670000001,
+        "max": 790.6426670000001,
+        "mean": 368.2985915999998
+      },
+      "sampleRows": 4000,
+      "sampleBytes": 1379411,
+      "stoppedEarly": false
+    }
+  ],
+  "coldStart": "container restarted, no warm-up queries"
+}

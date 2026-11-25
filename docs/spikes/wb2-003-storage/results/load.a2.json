@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "a2",
+    "label": "A2 unpartitioned + workbook_id",
+    "partition": "none",
+    "partitions": 1,
+    "idType": "uuid",
+    "workbookIdOnCells": true,
+    "fillfactor": 100
+  },
+  "timings": {
+    "rowsMs": 643,
+    "cellsMs": 22353,
+    "vacuumAnalyzeMs": 484
+  },
+  "cellsPerSecond": 89474,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 297.2,
+    "indexMB": 123.8,
+    "totalMB": 421,
+    "partitions": 1
+  },
+  "bytesPerCell": 221,
+  "isolationLoadMs": 1361
+}

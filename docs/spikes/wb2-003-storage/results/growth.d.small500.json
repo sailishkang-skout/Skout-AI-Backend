@@ -1,0 +1,21 @@
+{
+  "variant": "d",
+  "options": {
+    "big": 0,
+    "bigRows": 50000,
+    "small": 500,
+    "smallRows": 200
+  },
+  "workbooks": 511,
+  "totalCells": 13040000,
+  "bigLoads": [],
+  "smallWorkbooksLoadMsEach": 67,
+  "totalLoadSec": 33.5,
+  "vacuumAnalyzeSec": 11.7,
+  "sizes": {
+    "heapMB": 1901.2,
+    "indexMB": 2063.9,
+    "totalMB": 3965.1,
+    "partitions": 542
+  }
+}
