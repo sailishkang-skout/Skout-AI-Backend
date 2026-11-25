@@ -118,6 +118,15 @@ maybe("public API credits: reserve, commit, release (PAPI-031)", () => {
     await expect(reserve(db, { workspaceId: empty.ws, apiKeyId: empty.keyId, requestId: "r", max: 1 })).rejects.toBeInstanceOf(InsufficientApiCreditsError);
   });
 
+  it("stops in-app spending from taking credits held for an API call, so the API commit still succeeds", async () => {
+    const { ws, keyId } = await walletWith(10);
+    const hold = await reserve(db, { workspaceId: ws, apiKeyId: keyId, requestId: "req_shared", max: 8 });
+    // The app spends from the same wallet while the API call is in flight.
+    await expect(postCreditTransaction(db, { workspaceId: ws, amount: -5, kind: "consume", action: "search" })).rejects.toMatchObject({ code: "INSUFFICIENT_CREDITS" });
+    await postCreditTransaction(db, { workspaceId: ws, amount: -2, kind: "consume", action: "search" });
+    expect(await commit(db, hold.holdId, 8, "contacts.phone_find")).toMatchObject({ charged: 8, balance: 0 });
+  });
+
   it("doesn't count expired holds against the balance", async () => {
     const { ws, keyId } = await walletWith(10);
     const old = new Date(Date.now() - 20 * 60_000);

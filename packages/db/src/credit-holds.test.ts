@@ -87,6 +87,32 @@ maybe("PAPI-011 credit holds and ledger api_key_id", () => {
     await expect(sql`delete from credit_transactions where id = ${transaction.id}`).rejects.toThrow(/append-only/);
   });
 
+  it("keeps credits held for API requests from being spent elsewhere, except by the commit of that hold", async () => {
+    const { ws, keyId } = await workspaceWithKey();
+    await postCreditTransaction(db, { workspaceId: ws, amount: 10, kind: "grant", action: "provision" });
+    const [h] = await hold(ws, keyId, { amount: 8 });
+    // In-app spend: only 2 of the 10 credits are free.
+    await expect(postCreditTransaction(db, { workspaceId: ws, amount: -3, kind: "consume", action: "search" })).rejects.toMatchObject({
+      code: "INSUFFICIENT_CREDITS",
+      details: { balance: 10, held: 8, requested: 3 },
+    });
+    await postCreditTransaction(db, { workspaceId: ws, amount: -2, kind: "consume", action: "search" });
+    // The API commit of that hold may use its own credits.
+    const settled = await postCreditTransaction(db, { workspaceId: ws, amount: -8, kind: "consume", action: "api.x", settlesHoldId: h!.id });
+    expect(settled.balance).toBe(0);
+  });
+
+  it("ignores expired holds, and never blocks grants or adjustments", async () => {
+    const { ws, keyId } = await workspaceWithKey();
+    await postCreditTransaction(db, { workspaceId: ws, amount: 5, kind: "grant", action: "provision" });
+    await sql`insert into credit_holds (workspace_id, api_key_id, request_id, amount, expires_at, created_at)
+              values (${ws}, ${keyId}, ${randomUUID()}, 5, now() - interval '1 minute', now() - interval '16 minutes')`;
+    await postCreditTransaction(db, { workspaceId: ws, amount: -5, kind: "consume", action: "search" });
+    await hold(ws, keyId, { amount: 5 });
+    await postCreditTransaction(db, { workspaceId: ws, amount: 3, kind: "grant", action: "provision" });
+    await postCreditTransaction(db, { workspaceId: ws, amount: -1, kind: "adjustment", action: "admin_fix", reason: "test", actor: { type: "system", id: null } });
+  });
+
   it("refuses to delete a key that spent credits on its own, but the workspace still deletes cleanly", async () => {
     const { ws, keyId } = await workspaceWithKey();
     await postCreditTransaction(db, { workspaceId: ws, amount: 10, kind: "grant", action: "provision" });

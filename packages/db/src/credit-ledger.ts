@@ -1,6 +1,6 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, ne, sql } from "drizzle-orm";
 import type { Db } from "./client.js";
-import { creditBalances, creditReconciliationRuns, creditTransactions } from "./schema/credits.js";
+import { creditBalances, creditHolds, creditReconciliationRuns, creditTransactions } from "./schema/credits.js";
 
 /**
  * COPS-04 credit ledger: the single path that changes a wallet balance (Bible p.36, 40).
@@ -49,6 +49,12 @@ export interface PostCreditInput {
   compensatesId?: string | null;
   /** Manual adjustments and consumes refuse a negative balance unless this is set. */
   allowNegativeBalance?: boolean;
+  /**
+   * The public API credit hold this consume settles (PAPI-031). A consume may not spend credits held
+   * for in-flight API requests (the shared wallet's balance check subtracts active holds); the hold
+   * being settled is the one exception, because those are its own credits.
+   */
+  settlesHoldId?: string | null;
 }
 
 export type CreditTransactionRow = typeof creditTransactions.$inferSelect;
@@ -118,6 +124,24 @@ export async function postCreditTransaction(db: Db, input: PostCreditInput): Pro
     const next = balance + input.amount;
     if (next < 0 && !input.allowNegativeBalance) {
       throw new CreditLedgerError("INSUFFICIENT_CREDITS", "not enough credits", { balance, requested: -input.amount });
+    }
+    if (input.kind === "consume" && !input.allowNegativeBalance) {
+      // Credits held for in-flight public API requests are not spendable (PAPI-031, shared wallet).
+      const [held] = await tx
+        .select({ total: sql<number>`coalesce(sum(${creditHolds.amount}), 0)::int` })
+        .from(creditHolds)
+        .where(
+          and(
+            eq(creditHolds.workspaceId, input.workspaceId),
+            eq(creditHolds.status, "held"),
+            gt(creditHolds.expiresAt, new Date()),
+            ...(input.settlesHoldId ? [ne(creditHolds.id, input.settlesHoldId)] : [])
+          )
+        );
+      const heldTotal = held?.total ?? 0;
+      if (next - heldTotal < 0) {
+        throw new CreditLedgerError("INSUFFICIENT_CREDITS", "not enough credits", { balance, held: heldTotal, requested: -input.amount });
+      }
     }
 
     const [transaction] = await tx

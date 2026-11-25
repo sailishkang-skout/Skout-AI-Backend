@@ -73,7 +73,8 @@ export class DbStore implements EnrichmentStore {
       return balance;
     } catch (error) {
       if (error instanceof CreditLedgerError && error.code === "INSUFFICIENT_CREDITS") {
-        throw new InsufficientCreditsError(amount, Number(error.details.balance ?? 0));
+        // Credits held for in-flight public API requests aren't spendable, so they aren't "available" either.
+        throw new InsufficientCreditsError(amount, Math.max(0, Number(error.details.balance ?? 0) - Number(error.details.held ?? 0)));
       }
       throw error;
     }

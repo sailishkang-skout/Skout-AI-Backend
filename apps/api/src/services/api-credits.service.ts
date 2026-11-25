@@ -154,11 +154,13 @@ export async function commit(db: Db, holdId: string | null, actual: number, oper
         referenceId: hold.requestId,
         idempotencyKey: apiChargeIdempotencyKey(hold.workspaceId, hold.requestId),
         actor: { type: "integration", id: hold.apiKeyId },
+        settlesHoldId: hold.id,
       });
       balance = posted.balance;
     } catch (err) {
       if (err instanceof CreditLedgerError && err.code === "INSUFFICIENT_CREDITS") {
-        // Only possible if in-app spending used the held credits meanwhile; the request is not charged.
+        // The ledger keeps held credits from being spent elsewhere, so this means the hold expired
+        // (and its credits were spent) before the commit; the request is not charged.
         throw new InsufficientApiCreditsError(0, actual);
       }
       throw err;
