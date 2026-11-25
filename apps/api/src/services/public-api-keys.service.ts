@@ -4,6 +4,7 @@ import { schema, type Db } from "@skout/db";
 import { digestsEqual, hmacSha256Hex, newKeyPrefix, newKeySecret } from "../lib/api-key-crypto.js";
 import { HttpError } from "../utils/http.js";
 import { liveKeyBlock } from "./public-api-addon.service.js";
+import { notifyPublicKeyChange, type CachedKey } from "../lib/public-key-cache.js";
 
 const { apiKeys, workspaceApiSettings, auditLogs } = schema;
 
@@ -42,6 +43,8 @@ export interface KeyServiceConfig {
   pepper: string | undefined;
   /** Default active-key limit (PUBLIC_API_MAX_ACTIVE_KEYS); CustomerOps can override per workspace. */
   maxActiveKeys: number;
+  /** Cached prefix lookup (PAPI-023); without it every verify reads the database. */
+  lookup?: (prefix: string) => Promise<CachedKey | null>;
 }
 
 export interface KeyActor {
@@ -126,7 +129,9 @@ export function keyView(row: typeof apiKeys.$inferSelect, now = new Date()): Api
 // --- Verification ------------------------------------------------------------
 
 export type VerifyFailure = "authentication_failed" | "key_revoked" | "key_expired";
-export type VerifyResult = { ok: true; key: typeof apiKeys.$inferSelect } | { ok: false; error: VerifyFailure };
+export type VerifyResult =
+  | { ok: true; key: typeof apiKeys.$inferSelect; /** Known when the lookup came through the key cache. */ addonEnabled?: boolean }
+  | { ok: false; error: VerifyFailure };
 
 /** A fixed digest compared against when the prefix is unknown, so both failures take the same time. */
 const DUMMY_DIGEST = "0".repeat(64);
@@ -140,14 +145,22 @@ const DUMMY_DIGEST = "0".repeat(64);
 export async function verifyPublicApiKey(db: Db, cfg: KeyServiceConfig, token: string, now = new Date()): Promise<VerifyResult> {
   const pepper = requirePepper(cfg);
   const parsed = parsePublicApiKey(token);
-  const [row] = parsed ? await db.select().from(apiKeys).where(eq(apiKeys.prefix, parsed.prefix)).limit(1) : [];
+  let row: typeof apiKeys.$inferSelect | undefined;
+  let addonEnabled: boolean | undefined;
+  if (parsed && cfg.lookup) {
+    const cached = await cfg.lookup(parsed.prefix);
+    row = cached?.key;
+    addonEnabled = cached?.addonEnabled;
+  } else if (parsed) {
+    [row] = await db.select().from(apiKeys).where(eq(apiKeys.prefix, parsed.prefix)).limit(1);
+  }
   const digest = hmacSha256Hex(token, pepper);
   const matches = digestsEqual(digest, row?.keyHmac ?? DUMMY_DIGEST);
   if (!row || !parsed || !matches || row.type !== parsed.type) return { ok: false, error: "authentication_failed" };
   const status = keyStatus(row, now);
   if (status === "revoked") return { ok: false, error: "key_revoked" };
   if (status === "expired") return { ok: false, error: "key_expired" };
-  return { ok: true, key: row };
+  return addonEnabled === undefined ? { ok: true, key: row } : { ok: true, key: row, addonEnabled };
 }
 
 // --- Create / list / rotate / revoke -----------------------------------------
@@ -359,7 +372,7 @@ export async function rotatePublicApiKey(
   if (!existing) throw new HttpError("Key not found", 404);
   await assertCanCreate(db, actor.workspaceId, existing.type as ApiKeyType);
 
-  return db.transaction(async (txRaw) => {
+  const rotated = await db.transaction(async (txRaw) => {
     const tx = txRaw as unknown as Db;
     await lockWorkspaceKeys(tx, actor.workspaceId);
     const old = await loadKeyForUpdate(tx, actor.workspaceId, keyId);
@@ -405,19 +418,25 @@ export async function rotatePublicApiKey(
         grace_until: graceHours === 0 ? null : graceEnd.toISOString(),
       }
     );
-    return { old: keyView(updated!, now), replacement: { ...keyView(replacement!, now), key } };
+    return { old: keyView(updated!, now), replacement: { ...keyView(replacement!, now), key }, oldPrefix: old.prefix };
   });
+  // KEY-9: the old key's grace period (or revocation) must reach every instance's cache.
+  await notifyPublicKeyChange({ prefixes: [rotated.oldPrefix] });
+  return { old: rotated.old, replacement: rotated.replacement };
 }
 
 export async function revokePublicApiKey(db: Db, actor: KeyActor, keyId: string, reason: string, now = new Date()): Promise<ApiKeyView> {
   const why = reason?.trim();
   if (!why) throw new HttpError("Give a reason for revoking the key", 422);
-  return db.transaction(async (txRaw) => {
+  const revoked = await db.transaction(async (txRaw) => {
     const tx = txRaw as unknown as Db;
     const row = await loadKeyForUpdate(tx, actor.workspaceId, keyId);
-    if (row.revokedAt) return keyView(row, now);
+    if (row.revokedAt) return { view: keyView(row, now), prefix: row.prefix };
     const [updated] = await tx.update(apiKeys).set({ revokedAt: now, revokeReason: why }).where(eq(apiKeys.id, row.id)).returning();
     await auditKey(tx, actor, row.id, "api_key.revoked", { masked_key: maskKey(row.type, row.prefix), status: keyStatus(row, now) }, { status: "revoked" }, why);
-    return keyView(updated!, now);
+    return { view: keyView(updated!, now), prefix: row.prefix };
   });
+  // KEY-9: revocation reaches every instance within seconds, not after the cache TTL.
+  await notifyPublicKeyChange({ prefixes: [revoked.prefix] });
+  return revoked.view;
 }

@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { HttpError } from "../utils/http.js";
 import { subscriptionAccessBlock, SUBSCRIPTION_ENTITLEMENT_KEY } from "./cops-subscription-access.js";
+import { notifyPublicKeyChange } from "../lib/public-key-cache.js";
 
 const { workspaceApiSettings, apiTermsAcceptances, entitlements, workspaces, creditTransactions, auditLogs } = schema;
 
@@ -152,6 +153,7 @@ export async function enableAddon(db: Db, input: EnableAddonInput): Promise<Addo
       afterState: { addon_enabled: true, terms_version: API_TERMS_VERSION },
     });
   });
+  await notifyPublicKeyChange({ workspaceId: input.workspaceId });
   return getAddonStatus(db, input.workspaceId);
 }
 
@@ -191,6 +193,8 @@ export async function disableAddon(db: Db, input: DisableAddonInput): Promise<vo
       reason,
     });
   });
+  // ADD-5 / KEY-9: every cached key of the workspace is dropped on every instance.
+  await notifyPublicKeyChange({ workspaceId: input.workspaceId });
 }
 
 async function setAccessEntitlement(db: Db, workspaceId: string, enabled: boolean, source: string): Promise<void> {

@@ -4,6 +4,7 @@ import { createLogger } from "@skout/observability";
 import { ctaButton, escapeHtml, renderTransactionalLayout, type MailOptions } from "./mail.service.js";
 import type { WebhookEventType } from "./webhook.service.js";
 import { maskKey } from "./public-api-keys.service.js";
+import { notifyPublicKeyChange } from "../lib/public-key-cache.js";
 
 const log = createLogger("public-api-key-expiry");
 const { apiKeys, workspaceMembers, users, auditLogs } = schema;
@@ -82,6 +83,7 @@ export async function runKeyExpiryReminders(db: Db, deps: KeyExpiryDeps, now: Da
           entityId: key.id,
           afterState: { masked_key: payload.masked_key, expires_at: payload.expires_at },
         });
+        await notifyPublicKeyChange({ prefixes: [key.prefix] });
         await deps.dispatchWebhook("api_key.expired", key.workspaceId, payload);
       } else {
         for (const to of recipients) {

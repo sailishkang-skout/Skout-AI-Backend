@@ -10,6 +10,7 @@ import type { Env } from "./config/env.js";
 import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
 import { dbPlugin } from "./plugins/db.js";
+import { publicKeyCachePlugin } from "./plugins/public-key-cache.js";
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
@@ -183,6 +184,7 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   await app.register(configPlugin, config);
   app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
+  await app.register(publicKeyCachePlugin);
   await app.register(authPlugin);
   // COPS-08: a suspended or closed subscription closes product use; billing and sign-in stay open.
   registerSubscriptionSuspensionGate(app);
