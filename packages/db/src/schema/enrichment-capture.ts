@@ -202,6 +202,10 @@ export const enrichmentCaptureQueue = pgTable(
     peopleCreated: integer("people_created").notNull().default(0),
     peopleMerged: integer("people_merged").notNull().default(0),
     peopleRejected: integer("people_rejected").notNull().default(0),
+    /** The workflow step the extension is on: company | jobs | people | verify. Null for people-only jobs. */
+    step: text("step"),
+    /** What each step produced: { company, jobs, people, verify } with a status and counts. Reported by the extension. */
+    stepDetail: jsonb("step_detail"),
     updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -1109,3 +1109,64 @@ describe("ENR-02 job scan counts", () => {
     expect((await post("/enrichment/companies/count-co/jobs/scan", { ...body, counts: { found: 1, invented: 5 } })).statusCode).toBe(422);
   });
 });
+
+describe("ENR-02 company workflow steps", () => {
+  const sync = (items: unknown, headers = owner) =>
+    app.inject({ method: "POST", url: "/api/v1/enrichment/capture/queue/sync", headers, payload: { items } as object });
+  const job = async (id: string) =>
+    ((await get("/enrichment/capture/queue")).json().items as Array<Record<string, unknown>>).find((item) => item.companyPublicId === id);
+  const done = (extra: Record<string, unknown> = {}) => ({ status: "done", ...extra });
+
+  it("stores the step a company job is on and what each step produced, and returns them", async () => {
+    await sync([{ companyPublicId: "wf-steps", companyName: "WF Steps", status: "running", step: "jobs", stepDetail: { company: done(), jobs: { status: "running" } } }]);
+    expect(await job("wf-steps")).toMatchObject({ step: "jobs", stepDetail: { company: { status: "done" }, jobs: { status: "running" } } });
+    // A report that names no step (a people-only report) leaves the workflow's steps alone.
+    await sync([{ companyPublicId: "wf-steps", status: "running" }]);
+    expect(await job("wf-steps")).toMatchObject({ step: "jobs", stepDetail: { company: { status: "done" } } });
+    await sync([{ companyPublicId: "wf-steps", status: "running", step: "people", stepDetail: { company: done(), jobs: done({ found: 12, captured: 12 }), people: { status: "running" } } }]);
+    expect(await job("wf-steps")).toMatchObject({ step: "people", stepDetail: { jobs: { status: "done", found: 12 } } });
+  });
+
+  it("is completed only when every step finished; a failed or partial step makes it partial", async () => {
+    await sync([{ companyPublicId: "wf-clean", status: "completed", step: "verify", stepDetail: { company: done(), jobs: done({ found: 3 }), people: done({ captured: 40 }), verify: done() } }]);
+    expect(await job("wf-clean")).toMatchObject({ status: "completed", state: "completed" });
+    await sync([{ companyPublicId: "wf-jobs-failed", status: "completed", step: "verify", stepDetail: { company: done(), jobs: { status: "failed", error: "LinkedIn jobs page did not load" }, people: done({ captured: 40 }), verify: done() } }]);
+    expect(await job("wf-jobs-failed")).toMatchObject({ status: "completed", state: "partial", stepDetail: { jobs: { status: "failed" } } });
+    await sync([{ companyPublicId: "wf-people-partial", status: "completed", step: "verify", stepDetail: { company: done(), jobs: done(), people: { status: "partial", captured: 250, note: "More people remain" }, verify: done() } }]);
+    expect(await job("wf-people-partial")).toMatchObject({ state: "partial" });
+    const partial = ((await get("/enrichment/capture/queue?state=partial")).json().items as Array<{ companyPublicId: string }>).map((item) => item.companyPublicId);
+    expect(partial).toEqual(expect.arrayContaining(["wf-jobs-failed", "wf-people-partial"]));
+    expect(partial).not.toContain("wf-clean");
+    const completed = ((await get("/enrichment/capture/queue?state=completed")).json().items as Array<{ companyPublicId: string }>).map((item) => item.companyPublicId);
+    expect(completed).toContain("wf-clean");
+    expect(completed).not.toContain("wf-jobs-failed");
+  });
+
+  it("rejects a step or detail it does not know", async () => {
+    expect((await sync([{ companyPublicId: "wf-bad", status: "running", step: "teleport" }])).statusCode).toBe(422);
+    expect((await sync([{ companyPublicId: "wf-bad", status: "running", stepDetail: { jobs: { status: "great" } } }])).statusCode).toBe(422);
+    expect((await sync([{ companyPublicId: "wf-bad", status: "running", stepDetail: { magic: { status: "done" } } }])).statusCode).toBe(422);
+  });
+
+  it("verifies what the workspace actually holds, not what the extension reported", async () => {
+    const verify = (id: string, headers = owner) => app.inject({ method: "GET", url: `/api/v1/enrichment/capture/queue/${id}/verify`, headers });
+    expect((await verify("wf-verify-none")).json()).toMatchObject({ companyCaptured: false, jobs: 0, people: 0 });
+    await post("/enrichment/ingest/company", { publicId: "wf-verify-co", sourceUrl: "https://www.linkedin.com/company/wf-verify-co/", name: "WF Verify Co" });
+    expect((await verify("wf-verify-co")).json()).toMatchObject({ companyCaptured: true, jobs: 0, lastJobScan: null, people: 0 });
+    await post("/enrichment/companies/wf-verify-co/jobs/scan", {
+      clientScanId: "wf-verify-scan-1",
+      status: "completed",
+      passes: [{ pass: 1, found: 2, complete: true }, { pass: 2, found: 2, complete: true }],
+      jobs: [{ title: "Engineer", jobId: "810001" }, { title: "Designer", jobId: "810002" }],
+    });
+    await post("/enrichment/ingest/company", {
+      publicId: "wf-verify-co",
+      sourceUrl: "https://www.linkedin.com/company/wf-verify-co/",
+      name: "WF Verify Co",
+      peopleProfiles: [{ publicId: "wf-person-1", sourceUrl: "https://www.linkedin.com/in/wf-person-1/", fullName: "WF Person One" }],
+    });
+    expect((await verify("wf-verify-co")).json()).toMatchObject({ companyCaptured: true, jobs: 2, lastJobScan: "completed_verified", people: 1 });
+    // Another workspace sees nothing of it.
+    expect((await verify("wf-verify-co", outsider)).json()).toMatchObject({ companyCaptured: false, jobs: 0, people: 0 });
+  });
+});

@@ -16,6 +16,7 @@ import { schema, type Db } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { normalizeLinkedinId } from "./capture-identity.js";
 import { companyPeopleCounts } from "./research.service.js";
+import { companyIdForPublicId } from "./company-jobs.service.js";
 
 /**
  * LinkedIn Enrichment → Capture queue. A company's people discovery is read in reviewed batches
@@ -47,6 +48,33 @@ export type CaptureJobState = (typeof CAPTURE_JOB_STATES)[number];
 export const CAPTURE_JOB_STALE_MS = 20 * 60 * 1000;
 /** A job waiting for a person to review a batch may wait much longer than a running one before it is called stuck. */
 export const CAPTURE_REVIEW_STALE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * A company job runs four steps in order: the company page, its job roles, its people, then a check
+ * that what was reported is what the workspace holds. The extension reports each step as it happens.
+ */
+export const CAPTURE_WORKFLOW_STEPS = ["company", "jobs", "people", "verify"] as const;
+export type CaptureWorkflowStep = (typeof CAPTURE_WORKFLOW_STEPS)[number];
+
+const stepResult = z
+  .object({
+    status: z.enum(["pending", "running", "done", "partial", "failed", "skipped"]),
+    /** Roles or people the step read / saved, duplicates matched to saved records, records refused. */
+    found: count.optional(),
+    captured: count.optional(),
+    updated: count.optional(),
+    duplicates: count.optional(),
+    refused: count.optional(),
+    failed: count.optional(),
+    error: z.string().trim().max(500).optional(),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+export const stepDetailSchema = z
+  .object({ company: stepResult, jobs: stepResult, people: stepResult, verify: stepResult })
+  .partial()
+  .strict();
+export type StepDetail = z.infer<typeof stepDetailSchema>;
 
 /** One saved batch (counts) and/or a status change for a company's capture job. */
 export const captureQueueUpdateSchema = z
@@ -82,6 +110,9 @@ export const captureQueueSyncSchema = z
             error: z.string().trim().max(500).optional(),
             /** How many times the extension has retried this company after a recoverable failure. */
             attempts: z.number().int().min(0).max(20).optional(),
+            /** The workflow step the extension is on, and what each step produced so far. */
+            step: z.enum(CAPTURE_WORKFLOW_STEPS).optional(),
+            stepDetail: stepDetailSchema.optional(),
           })
           .strict()
       )
@@ -105,7 +136,7 @@ type Row = typeof schema.enrichmentCaptureQueue.$inferSelect;
  * "partial": a job that saved people but then failed or was cancelled, or finished with records refused.
  */
 export function effectiveJobState(
-  row: Pick<Row, "status" | "updatedAt"> & Partial<Pick<Row, "peopleFound" | "peopleRejected" | "attempts">>,
+  row: Pick<Row, "status" | "updatedAt"> & Partial<Pick<Row, "peopleFound" | "peopleRejected" | "attempts" | "stepDetail">>,
   now = Date.now()
 ): CaptureJobState {
   const age = now - row.updatedAt.getTime();
@@ -114,7 +145,15 @@ export function effectiveJobState(
   if (row.status === "queued" && (row.attempts ?? 0) > 0) return "retrying";
   if ((row.status === "failed" || row.status === "cancelled") && (row.peopleFound ?? 0) > 0) return "partial";
   if (row.status === "completed" && (row.peopleRejected ?? 0) > 0) return "partial";
+  // A workflow that finished with a step that failed or came back partial is not a clean completion.
+  if (row.status === "completed" && hasUnfinishedStep(row.stepDetail)) return "partial";
   return row.status as CaptureJobStatus;
+}
+
+/** Whether any reported step ended failed or partial (a finished job with one is "partial", not "completed"). */
+export function hasUnfinishedStep(detail: unknown): boolean {
+  if (!detail || typeof detail !== "object") return false;
+  return Object.values(detail as Record<string, { status?: string }>).some((step) => step?.status === "failed" || step?.status === "partial");
 }
 
 /** SQL for one member-facing state, matching effectiveJobState. */
@@ -122,6 +161,7 @@ function stateCondition(state: CaptureJobState): SQL {
   const t = schema.enrichmentCaptureQueue;
   const stale = sql`${t.updatedAt} < now() - interval '20 minutes'`;
   const reviewStale = sql`${t.updatedAt} < now() - interval '2 hours'`;
+  const unfinishedStep = sql`coalesce(jsonb_path_exists(${t.stepDetail}, '$.* ? (@.status == "failed" || @.status == "partial")'), false)`;
   switch (state) {
     case "interrupted":
       return sql`((${t.status} = 'running' AND ${stale}) OR (${t.status} = 'review' AND ${reviewStale}))`;
@@ -130,7 +170,7 @@ function stateCondition(state: CaptureJobState): SQL {
     case "queued":
       return sql`(${t.status} = 'queued' AND ${t.attempts} = 0)`;
     case "partial":
-      return sql`((${t.status} IN ('failed', 'cancelled') AND ${t.peopleFound} > 0) OR (${t.status} = 'completed' AND ${t.peopleRejected} > 0))`;
+      return sql`((${t.status} IN ('failed', 'cancelled') AND ${t.peopleFound} > 0) OR (${t.status} = 'completed' AND (${t.peopleRejected} > 0 OR ${unfinishedStep})))`;
     case "running":
       return sql`(${t.status} = 'running' AND NOT ${stale})`;
     case "review":
@@ -139,7 +179,7 @@ function stateCondition(state: CaptureJobState): SQL {
     case "cancelled":
       return sql`(${t.status} = ${state} AND ${t.peopleFound} = 0)`;
     case "completed":
-      return sql`(${t.status} = 'completed' AND ${t.peopleRejected} = 0)`;
+      return sql`(${t.status} = 'completed' AND ${t.peopleRejected} = 0 AND NOT ${unfinishedStep})`;
     default:
       return sql`${t.status} = ${state}`;
   }
@@ -168,6 +208,9 @@ export function captureQueueDto(row: Row, now = Date.now(), startedBy: string | 
     mode: row.mode,
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
     attempts: row.attempts,
+    /** Company workflow: the step the extension is on and what each step produced (null for people-only jobs). */
+    step: (row.step as CaptureWorkflowStep | null) ?? null,
+    stepDetail: (row.stepDetail as StepDetail | null) ?? null,
     /** Name (or email) of the member who started or last moved the job. */
     startedBy,
     stopReason: row.stopReason,
@@ -276,6 +319,8 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
           status: item.status,
           error: item.status === "failed" ? item.error || null : null,
           attempts: item.attempts ?? 0,
+          step: item.step ?? null,
+          stepDetail: item.stepDetail ?? null,
           mode: "extension",
           updatedBy: actor.userId,
           createdAt: now,
@@ -294,6 +339,9 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
             error: item.status === "failed" ? item.error || null : null,
             // The extension owns the retry count of its own jobs; a job that is no longer retrying goes back to none.
             attempts: item.attempts ?? 0,
+            // A people-only report leaves the workflow's steps alone; a workflow report replaces them.
+            ...(item.step !== undefined ? { step: item.step } : {}),
+            ...(item.stepDetail !== undefined ? { stepDetail: item.stepDetail } : {}),
             updatedBy: actor.userId,
             updatedAt: now,
           },
@@ -307,6 +355,33 @@ export async function syncCaptureQueue(db: Db, actor: { workspaceId: string; use
     }
   });
   return { updated: items.length - cancelled.length, cancelled };
+}
+
+/**
+ * What the workspace actually holds for a company, so a workflow is finished on what was saved and not on
+ * what the extension said it saved: whether the company was captured, how many open job roles, how many
+ * people (verified employees and discovery candidates) and the last job scan's outcome.
+ */
+export async function verifyCaptureWorkflow(db: Db, workspaceId: string, rawPublicId: string) {
+  const publicId = normalizeLinkedinId(rawPublicId);
+  const companyId = await companyIdForPublicId(db, workspaceId, publicId);
+  if (!companyId) return { companyCaptured: false, jobs: 0, lastJobScan: null as string | null, people: 0, verifiedEmployees: 0, candidates: 0 };
+  const roles = schema.companyJobRoles;
+  const scans = schema.companyJobScans;
+  const [[jobs], [lastScan], counts] = await Promise.all([
+    db.select({ n: countRows() }).from(roles).where(and(eq(roles.workspaceId, workspaceId), eq(roles.companyId, companyId), eq(roles.status, "open"))),
+    db.select({ status: scans.status }).from(scans).where(and(eq(scans.workspaceId, workspaceId), eq(scans.companyId, companyId))).orderBy(desc(scans.createdAt)).limit(1),
+    companyPeopleCounts(db, workspaceId, [companyId]),
+  ]);
+  const people = counts.get(companyId);
+  return {
+    companyCaptured: true,
+    jobs: Number(jobs?.n ?? 0),
+    lastJobScan: lastScan?.status ?? null,
+    people: (people?.verified ?? 0) + (people?.candidates ?? 0),
+    verifiedEmployees: people?.verified ?? 0,
+    candidates: people?.candidates ?? 0,
+  };
 }
 
 /** Cancels a job that has not finished. The extension drops it on its next report; the worker never reads it. */
