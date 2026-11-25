@@ -35,6 +35,7 @@ growth) # 12M cells: F (two index sets) x3 passes, warm and after restart
   for pass in 1 2 3; do
     for set in i0 i1; do
       [ "$pass" -gt 1 ] && [ "$set" = i1 ] && continue   # i1 once; the chosen i0 three times
+      [ -f "$RESULTS/purge.f.fin-$set-$pass.json" ] && { echo "=== final growth f $set pass $pass: already done, skipping"; continue; }  # resume after an interruption
       echo "=== final growth f $set pass $pass"
       $RUN load --variant f --rows 100000 --exclusive | grep -E '"cellsPerSecond"'; $RUN indexes --variant f --set "$set" >/dev/null
       $RUN growth --variant f --big 10 --big-rows 50000 --label "fin-$set-$pass" | grep -E '"(totalCells|totalLoadSec|totalMB)"'

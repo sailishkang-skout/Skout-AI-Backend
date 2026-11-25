@@ -1,6 +1,6 @@
 # WB2-003: storage decision for Workbooks V2
 
-Status: spike complete for the acceptance criteria; three gaps are listed in [Limitations](#10-limitations-and-open-items). Reproduction steps: [README.md](./README.md). Reference DDL for WB2-010: [recommended-schema.sql](./recommended-schema.sql). Raw results: [results/](./results).
+Status: spike complete for the acceptance criteria. What was not modelled is listed in [Limitations](#10-limitations-and-open-items). Reproduction steps: [README.md](./README.md). Reference DDL for WB2-010: [recommended-schema.sql](./recommended-schema.sql). Raw results: [results/](./results).
 
 ## 1. Decision
 
@@ -15,9 +15,9 @@ Use this for the WB2-010 migrations (variant **F** in the spike):
 | Cell heap | **fillfactor 80** on each cell partition, **no secondary index** on `workbook_cells` | Leaves room for HOT updates: 94% HOT, 40% less WAL (147 vs 243 MB) and 6 MB of heap growth instead of 33 MB per 200,000-cell write run (§5). |
 | Row/column indexes | `workbook_rows (workbook_id, position)` (PRD), `workbook_columns (workbook_id, position)` | Window reads are 1,200 buffer hits and 2.4 ms (§7). |
 | Never | An index on raw `value` | A btree entry over 2,704 bytes is refused; reproduced in §3.3. AI text can exceed it. |
-| Optional later | `(column_id, state, row_id)` | State filters ~3x faster at 2M cells (69 → 22 ms), but writes −14%, HOT 94% → 0%, WAL +65%. Not needed to meet any target. Add it when a product need appears. |
+| Optional later | `(column_id, state, row_id)` | State filters ~3x faster, measured at both sizes (2M cells: 69 → 22 ms; 12M cells: 40 ms against 110–247 ms), but writes −14%, HOT 94% → 0%, WAL +65%. Not needed to meet any target. Add it when a product need appears. |
 
-**PRD targets: all pass** for the selected design at 12M cells (6x the 100k x 20 workbook), warm and after a restart (§6).
+**PRD targets: all pass** for the selected design at 12M cells (6x the 100k x 20 workbook), warm and after a restart, judged on the worst of three passes (§6).
 
 ## 2. Environment and method
 
@@ -56,7 +56,7 @@ Initial pass, 2M cells, warm, one run each (uncontrolled: only differences large
 | **A2** unpartitioned + workbook_id | 22,353 | 89,474 | 297 | 124 | 421 | 221 |
 | **B** hash(workbook_id) x16 | 25,205 | 79,350 | 297 | 175 | 473 | 248 |
 | **C** hash(row_id) x16 | 22,281 | 89,762 | 265 | 125 | 390 | 204 |
-| **D** list(workbook_id), one per workbook | 23,845 | 83,875 | 297 | 175 | 473 | 248 |
+| **D** list(workbook_id), one per workbook | 20,715 | 96,547 | 297 | 175 | 473 | 248 |
 | **E** unpartitioned, bigint ids | 18,257 | 109,545 | 250 | 80 | 330 | 173 |
 
 Read p95 (ms), column index set `i1`, same pass:
@@ -80,7 +80,7 @@ Read p95 (ms), column index set `i1`, same pass:
 
 **C is eliminated**: window p95 212–303 ms single-client and 1.4–1.7 s with 8 clients against 10–18 ms for every other variant, and about 3x slower writes in the uncontrolled pass. Hashing by `row_id` spreads one window's 200 rows over all 16 partitions. A, A2, B, D, E are indistinguishable at 2M cells. The differences appear with growth (§6).
 
-Concurrent updates, controlled (§5). Maintenance: list partitioning drops a workbook in 0.8 s with 10 MB WAL where a cascading `DELETE` takes 2.4–5.2 s and ~200 MB WAL, but it needs a partition per workbook (creating one took ~10 ms and did not stall readers: window p95 11.7 → 16.5 ms while 30 partitions were created; planning with 542 partitions was 0.1 ms; measured in an earlier session as a within-run comparison). Hash x64 needs no runtime DDL and bounds the partition count, which is why F uses it. If purge cost becomes a problem, per-workbook list partitions are the measured alternative.
+Concurrent updates, controlled (§5). Maintenance: list partitioning drops a workbook in 0.8 s with 10 MB WAL where a cascading `DELETE` takes 2.4–5.2 s and ~200 MB WAL, but it needs a partition per workbook (creating one took ~9 ms and did not stall readers: window p95 11.3 → 11.4 ms while 30 partitions were created; planning with 533 partitions was 0.1 ms; measured under the final controls). Hash x64 needs no runtime DDL and bounds the partition count, which is why F uses it. If purge cost becomes a problem, per-workbook list partitions are the measured alternative.
 
 ## 5. Indexing comparison and concurrent updates
 
@@ -150,21 +150,21 @@ Integrity, full-size run of the selected design (10 concurrent runs x 50,000 row
 
 Selected design (F, no secondary index) with **12,040,000 cells in 12 workbooks (2.8 GB, larger than the instance's 2 GiB RAM)**, warm and after a container restart:
 
-F, no secondary index, 12,040,000 cells in 12 workbooks (2,757 MB, 64 partitions). Host probe 583 / 620 ms.
+F, no secondary index, 12,040,000 cells in 12 workbooks (2,757 MB, 64 partitions). 3 passes, each reloaded from scratch. Host probe before/after per pass: 583/620, 556/574, 554/566 ms. Pass 1 ran with the laptop on battery; passes 2 and 3 and the state-index run were on AC.
 
-| Case | Target p95 ms | Warm p95 | After restart p95 | Worst vs target | Result |
-|---|---:|---:|---:|---:|---:|
-| window_random | 300 | 16 | 23 | 7.5% | PASS |
-| window_8_concurrent_clients | 300 | 92 | 166 | 55.2% | PASS |
-| sort_company_asc_top | 1,500 | 203 | 308 | 20.5% | PASS |
-| sort_company_asc_deep_offset | 1,500 | 613 | 817 | 54.4% | PASS |
-| sort_lead_score_desc_top | 1,500 | 243 | 550 | 36.7% | PASS |
-| filter_state_error_window | 1,500 | 247 | 302 | 20.2% | PASS |
-| filter_value_equals_window | 1,500 | 223 | 208 | 14.9% | PASS |
-| filter_text_contains_window | 1,500 | 642 | 410 | 42.8% | PASS |
-| filter_found_email_sorted_by_company | 1,500 | 566 | 603 | 40.2% | PASS |
+| Case | Target p95 ms | Warm p95, median (min–max) | After restart p95 | With state index (1 pass): warm / cold | Worst of all passes vs target | Result |
+|---|---:|---:|---:|---:|---:|---:|
+| window_random | 300 | 16 (12–16) | 11 (11–23) | 14 / 13 | 7.5% | PASS |
+| window_8_concurrent_clients | 300 | 79 (78–92) | 78 (74–166) | 78 / 81 | 55.2% | PASS |
+| sort_company_asc_top | 1,500 | 199 (170–203) | 247 (168–308) | 105 / 159 | 20.5% | PASS |
+| sort_company_asc_deep_offset | 1,500 | 257 (250–613) | 290 (246–817) | 297 / 342 | 54.4% | PASS |
+| sort_lead_score_desc_top | 1,500 | 161 (154–243) | 159 (154–550) | 185 / 108 | 36.7% | PASS |
+| filter_state_error_window | 1,500 | 134 (110–247) | 159 (125–302) | 40 / 51 | 20.2% | PASS |
+| filter_value_equals_window | 1,500 | 152 (142–223) | 180 (145–208) | 118 / 97 | 14.9% | PASS |
+| filter_text_contains_window | 1,500 | 156 (149–642) | 157 (148–410) | 177 / 132 | 42.8% | PASS |
+| filter_found_email_sorted_by_company | 1,500 | 253 (214–566) | 285 (206–603) | 252 / 209 | 40.2% | PASS |
 
-Purging a 1,000,000-cell workbook (cascading DELETE inside its partition): 5,161 ms, 200 MB WAL, 1,050,021 dead tuples left for vacuum.
+Purging a 1,000,000-cell workbook (cascading DELETE inside its partition): 2,422 (2,311–5,161) ms, 200 MB WAL, 1,050,021 dead tuples left for vacuum.
 
 Controlled growth comparison of the alternatives at the same size (A2 uuid unpartitioned, E2 bigint unpartitioned, B hash x16, D list), median (min–max) of passes. A2 and E2 ran twice in opposite order to expose order effects:
 
@@ -208,7 +208,7 @@ Purge of a 1,000,000-cell workbook:
 | B | DELETE FROM workbooks (cascade through rows, columns, cells) | 1,000,000 | 3,402 (3,402–3,402) | 208 | 1,050,021 |
 | D | DETACH + DROP the workbook's partition, then DELETE the workbook (rows cascade) | 1,000,000 | 799 (799–799) | 10 | 0 |
 
-Reading across the three: unpartitioned uuid (A2) is the only design whose worst case (filter+sort, 1.0–1.3 s) approaches 1.5 s, and it gets worse as the table grows. Bigint ids (E2, 205 ms) or workbook partitioning (B 283 ms, D 268 ms) fix it. F combines both. F (no secondary index) is slower than B and E2 on some queries at 12M cells: state filter about 5–7x (247 vs 35–48 ms), text filter about 5–6x (642 vs 101–134 ms), deep sort about 2–3x (613 vs 229–295 ms). The design differs in several ways at once (index set, fillfactor, partition count), so the cause was not isolated. It still passes every target, worst case 817 ms (cold) against 1,500 ms, and keeps HOT updates. The state index was not measured for F at this size (§10).
+Reading across the three: unpartitioned uuid (A2) is the only design whose worst case (filter+sort, 1.0–1.3 s) approaches 1.5 s, and it gets worse as the table grows. Bigint ids (E2, 205 ms) or workbook partitioning (B 283 ms, D 268 ms) fix it. F combines both. F (no secondary index) was run three times from a fresh load. **Pass 1 is an outlier**: it ran with the laptop on battery and is 2–3x slower than passes 2 and 3 on deep sorts and text filters (deep sort 613 ms vs 250/257; text filter 642 vs 149/156). On the AC passes F is in the same range as B and E2 (deep sort 250–257 vs 229–295 ms; text filter 149–156 vs 101–134 ms). The one place F is clearly slower is the state filter (110–134 ms vs 35–48 ms), which is exactly what the optional state index fixes: with it, F's state filter is 40 ms (one pass). Pass/fail uses the worst number from any pass, warm or cold: 817 ms against 1,500 ms, so F passes everything with at least 1.8x margin and keeps HOT updates.
 
 ## 7. Query plans
 
@@ -246,9 +246,9 @@ A bug the oracle caught: the first sorted-window query returned the right 200 ro
 
 ## 10. Limitations and open items
 
-1. **The selected design's 12M-cell run was done once, not three times.** The laptop lost power twice during the final stage. Its writes (3 rounds), the full-size integrity run and the 12M-cell reads (one pass, warm and cold) are measured; the alternatives' 12M-cell runs have 1–2 passes. The 3x repeat is complete for the write comparisons and for the 2M-cell index comparison.
-2. **F with the state index was not measured at 12M cells.** Its writes were (3 rounds). The decision to leave it out rests on F-without-index already passing every target and on the write cost; add it if state filters need the headroom.
-3. **Partition-DDL and planning results (§4) come from an earlier, uncontrolled session.** They compare "during DDL" to "no DDL" inside one run, so host drift largely cancels, but they were not re-run under the final controls.
+1. **Pass 1 of the selected design's 12M-cell run is an outlier** (laptop on battery; see §6). It is kept in the tables and used for pass/fail, because the conclusion must hold on the worst run. The host probe did not flag it (583/620 ms against 554–574 ms on the AC passes), so the probe alone is not a sufficient validity test; running on AC was.
+2. **The state index was measured once at 12M cells** (3 write rounds, 1 read pass). That is enough to quantify the trade (state filter ~3x faster, writes −14%) but not to give a range.
+3. **Alternatives' 12M-cell runs have 1–2 passes** (A2 and E2 twice in opposite order, B and D once). The repeat is complete for the selected design, the write comparisons and the 2M-cell index comparison.
 4. **Not modelled**: RDS network latency, EBS (gp3) IO limits, `t4g` burst-credit throttling, Multi-AZ synchronous replication (production is Multi-AZ, which adds commit latency to every write), the application's own queries, other tenants' concurrent imports (sequential ids interleave when imports run at the same time, which may weaken clustering; the hash partitioning does not depend on it), and real provider latency.
 5. **Single-writer host noise**: two stages ran with host probes up to 665 ms against a 530–600 ms quiet baseline; the retry rule caught one disturbed run. A few valid runs still show a slow outlier (for example one A2+i1 run at 7.4k cells/s against 10.4–11.2k for the others); the tables report medians and ranges.
 6. **Insert speed** (§4) is one run per variant with ±30% variation between reloads; use it only to see that 2M cells load in 21–35 s server-side (PRD import target: 100k rows visible in under 2 minutes, which also includes parsing and mapping).

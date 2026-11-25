@@ -9,11 +9,11 @@
     "fillfactor": 100
   },
   "timings": {
-    "rowsMs": 724,
-    "cellsMs": 23845,
-    "vacuumAnalyzeMs": 1030
+    "rowsMs": 657,
+    "cellsMs": 20715,
+    "vacuumAnalyzeMs": 504
   },
-  "cellsPerSecond": 83875,
+  "cellsPerSecond": 96547,
   "counts": {
     "rows": 100000,
     "cells": 2000000,
@@ -27,5 +27,5 @@
     "partitions": 3
   },
   "bytesPerCell": 248,
-  "isolationLoadMs": 1431
+  "isolationLoadMs": 1089
 }

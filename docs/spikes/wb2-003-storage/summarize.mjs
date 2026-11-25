@@ -68,9 +68,9 @@ const sections = {
     return table(["Variant", "Method", "Cells removed", "Purge ms", "WAL MB", "Dead tuples left"], keys.map((k) => load(`purge.${k}.grown.json`)).filter(Boolean).map((d) => [NAMES[d.variant], d.method, f0(d.cellsRemoved), f0(d.purgeMs), f0(d.walMB), f0(d.deadTuplesAfter)]));
   },
   partitions() {
-    const dl = load("ddllock.d.grown.json");
-    const pl = load("planning.d.small500.json");
-    const rd = load("read.d.small500.json");
+    const dl = load("ddllock.d.fin.json");
+    const pl = load("planning.d.fin.json");
+    const rd = null;
     const out = [];
     if (dl) out.push(table(["List partitions: CREATE ... PARTITION OF while a grid reader runs", "ms"], [["Create one partition, p50", f1(dl.createPartitionMs.p50)], ["Create one partition, max", f1(dl.createPartitionMs.max)], ["Window read p95, no DDL", f1(dl.readerBaselineMs.p95)], ["Window read p95, during DDL", f1(dl.readerDuringDdlMs.p95)], ["Window read max, during DDL", f1(dl.readerDuringDdlMs.max)]]));
     if (pl) out.push(table([`Planning with ${pl.partitions} partitions`, "ms"], [["Planning time p50", f1(pl.planningMs.p50)], ["Planning time p95", f1(pl.planningMs.p95)], ["Execution time p95", f1(pl.executionMs.p95)]]));
@@ -134,15 +134,22 @@ const sections = {
     ]);
   },
   finGrowth() {
-    const w = load("read.f.fin-grown-i0-1.json"), c = load("read.f.fin-grown-i0-1.cold.json"), g = load("growth.f.fin-i0-1.json"), p = load("purge.f.fin-i0-1.json");
-    if (!w) return "";
-    const cm = Object.fromEntries(c.results.map((r) => [r.name, r]));
-    const rows = w.suites[0].results.map((r) => {
-      const worst = Math.max(r.summary.p95, cm[r.name].summary.p95);
-      return [r.name, f0(r.targetMs), f0(r.summary.p95), f0(cm[r.name].summary.p95), `${f1(worst / r.targetMs * 100)}%`, worst <= r.targetMs ? "PASS" : "FAIL"];
+    const passes = [1, 2, 3].map((n) => [load(`read.f.fin-grown-i0-${n}.json`), load(`read.f.fin-grown-i0-${n}.cold.json`)]).filter(([w, c]) => w && c);
+    const state = [load("read.f.fin-grown-i1-1.json"), load("read.f.fin-grown-i1-1.cold.json")];
+    if (!passes.length) return "";
+    const g = load("growth.f.fin-i0-1.json");
+    const at = (suite, name) => (suite.suites ? suite.suites[0] : suite).results.find((r) => r.name === name)?.summary.p95;
+    const names = passes[0][0].suites[0].results.map((r) => r.name);
+    const probes = passes.map(([w]) => `${f0(w.environment.calibrationMs)}/${f0(w.environment.calibrationAfterMs)}`).join(", ");
+    const head = `F, no secondary index, ${f0(g.totalCells)} cells in ${g.workbooks} workbooks (${f0(g.sizes.totalMB)} MB, ${g.sizes.partitions} partitions). ${passes.length} passes, each reloaded from scratch. Host probe before/after per pass: ${probes} ms. Pass 1 ran with the laptop on battery; passes 2 and 3 and the state-index run were on AC.\n\n`;
+    const rows = names.map((n) => {
+      const warm = passes.map(([w]) => at(w, n)), cold = passes.map(([, c]) => at(c, n));
+      const target = passes[0][0].suites[0].results.find((r) => r.name === n).targetMs;
+      const worst = Math.max(...warm, ...cold);
+      return [n, f0(target), rng3(warm), rng3(cold), `${f0(at(state[0], n))} / ${f0(at(state[1], n))}`, `${f1((worst / target) * 100)}%`, worst <= target ? "PASS" : "FAIL"];
     });
-    const head = `F, no secondary index, ${f0(g.totalCells)} cells in ${g.workbooks} workbooks (${f0(g.sizes.totalMB)} MB, ${g.sizes.partitions} partitions). Host probe ${f0(w.environment.calibrationMs)} / ${f0(w.environment.calibrationAfterMs)} ms.\n\n`;
-    return head + table(["Case", "Target p95 ms", "Warm p95", "After restart p95", "Worst vs target", "Result"], rows) + `\n\nPurging a 1,000,000-cell workbook (cascading DELETE inside its partition): ${f0(p.purgeMs)} ms, ${f0(p.walMB)} MB WAL, ${f0(p.deadTuplesAfter)} dead tuples left for vacuum.`;
+    const purges = [1, 2, 3].map((n) => load(`purge.f.fin-i0-${n}.json`)).filter(Boolean);
+    return head + table(["Case", "Target p95 ms", "Warm p95, median (min–max)", "After restart p95", "With state index (1 pass): warm / cold", "Worst of all passes vs target", "Result"], rows) + `\n\nPurging a 1,000,000-cell workbook (cascading DELETE inside its partition): ${rng3(purges.map((p) => p.purgeMs))} ms, ${f0(med(purges.map((p) => p.walMB)))} MB WAL, ${f0(purges[0].deadTuplesAfter)} dead tuples left for vacuum.`;
   },
   final() {
     const d = load("read.final.json");
