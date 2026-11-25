@@ -440,3 +440,67 @@ export async function revokePublicApiKey(db: Db, actor: KeyActor, keyId: string,
   await notifyPublicKeyChange({ prefixes: [revoked.prefix] });
   return revoked.view;
 }
+
+export interface UpdateKeyInput {
+  name?: string;
+  scopes?: string[];
+  ipAllowlist?: string[];
+  dailyCreditCap?: number | null;
+  monthlyCreditCap?: number | null;
+  /** Can only move earlier (KEY-5), and must stay in the future. */
+  expiresAt?: Date;
+}
+
+/**
+ * Edits a key's name, scopes, IP allowlist, caps or expiry (PAPI-027). Expiry can only be shortened.
+ * Each change is audited with before/after values (KEY-12) and dropped from every instance's key
+ * cache, so new scopes or a tighter allowlist apply within seconds.
+ */
+export async function updatePublicApiKey(db: Db, actor: KeyActor, keyId: string, input: UpdateKeyInput, now = new Date()): Promise<ApiKeyView> {
+  const changes: Partial<typeof apiKeys.$inferInsert> = {};
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name || name.length > 100) throw new HttpError("Give the key a name (up to 100 characters)", 422);
+    changes.name = name;
+  }
+  if (input.scopes !== undefined) changes.scopes = validateScopes(input.scopes);
+  if (input.ipAllowlist !== undefined) changes.ipAllowlist = validateIpAllowlist(input.ipAllowlist);
+  if (input.dailyCreditCap !== undefined) changes.dailyCreditCap = validateCap(input.dailyCreditCap, "Daily credit cap");
+  if (input.monthlyCreditCap !== undefined) changes.monthlyCreditCap = validateCap(input.monthlyCreditCap, "Monthly credit cap");
+  if (Object.keys(changes).length === 0 && input.expiresAt === undefined) throw new HttpError("Nothing to change", 422);
+
+  const result = await db.transaction(async (txRaw) => {
+    const tx = txRaw as unknown as Db;
+    const row = await loadKeyForUpdate(tx, actor.workspaceId, keyId);
+    const status = keyStatus(row, now);
+    if (status === "revoked" || status === "expired") throw new HttpError(`A ${status} key can't be changed`, 409);
+    if (input.expiresAt !== undefined) {
+      const at = input.expiresAt;
+      if (Number.isNaN(at.getTime()) || at <= now) throw new HttpError("The new expiry must be in the future", 422);
+      if (at > row.expiresAt) throw new HttpError("A key's expiry can only be shortened; rotate the key for a fresh 90 days", 422);
+      changes.expiresAt = at;
+      if (row.graceUntil && row.graceUntil > at) changes.graceUntil = at;
+    }
+    const [updated] = await tx.update(apiKeys).set(changes).where(eq(apiKeys.id, row.id)).returning();
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    const fields: [keyof typeof changes, string][] = [
+      ["name", "name"],
+      ["scopes", "scopes"],
+      ["ipAllowlist", "ip_allowlist"],
+      ["dailyCreditCap", "daily_credit_cap"],
+      ["monthlyCreditCap", "monthly_credit_cap"],
+      ["expiresAt", "expires_at"],
+    ];
+    for (const [field, label] of fields) {
+      if (changes[field] === undefined) continue;
+      const fmt = (v: unknown) => (v instanceof Date ? v.toISOString() : v);
+      before[label] = fmt(row[field as keyof typeof row]);
+      after[label] = fmt(updated![field as keyof typeof updated]);
+    }
+    await auditKey(tx, actor, row.id, "api_key.updated", { masked_key: maskKey(row.type, row.prefix), ...before }, after);
+    return { view: keyView(updated!, now), prefix: row.prefix };
+  });
+  await notifyPublicKeyChange({ prefixes: [result.prefix] });
+  return result.view;
+}

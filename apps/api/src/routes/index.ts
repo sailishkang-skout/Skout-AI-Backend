@@ -11,6 +11,7 @@ import { crmNativeRoutes } from "./crm-native.routes.js";
 import { workbookColumnRoutes } from "./workbook-column.routes.js";
 import { webhookRoutes } from "./webhooks.routes.js";
 import { developerApiAddonRoutes } from "./developer-api-addon.routes.js";
+import { developerApiKeysRoutes } from "./developer-api-keys.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
 import { enrichmentCaptureRoutes } from "./enrichment-capture.routes.js";
 import { enrichmentResearchRoutes } from "./enrichment-research.routes.js";
@@ -161,6 +162,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(crmNativeRoutes);
     await v1.register(webhookRoutes);
     await v1.register(developerApiAddonRoutes);
+    await v1.register(developerApiKeysRoutes);
     await v1.register(integrationRoutes);
     await v1.register(trackingRoutes);
     await v1.register(unsubscribeRoutes);
