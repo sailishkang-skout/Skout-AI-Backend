@@ -1,7 +1,8 @@
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
-import cors from "@fastify/cors";
+import cors, { type FastifyCorsOptions } from "@fastify/cors";
+import { isPublicApiPath } from "./routes/public-api.routes.js";
 import { ZodError } from "zod";
 import { buildPinoOptions, captureException } from "@skout/observability";
 import { resolveCorrelationId } from "@skout/shared";
@@ -188,7 +189,7 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
 
   const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
 
-  await app.register(cors, {
+  const internalCors: FastifyCorsOptions = {
     origin: (origin, cb) => {
       if (!origin) {
         cb(null, true);
@@ -202,6 +203,13 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     },
     credentials: true,
     exposedHeaders: ["x-request-id"],
+  };
+
+  // PRD §9.3: the public API sends no CORS headers, so a browser on another site can't call it with a key.
+  await app.register(cors, {
+    delegator: (request, cb) => {
+      cb(null, isPublicApiPath(request.url) ? { origin: false } : internalCors);
+    },
   });
 
   // Track registered routes so the not-found handler can distinguish a genuinely

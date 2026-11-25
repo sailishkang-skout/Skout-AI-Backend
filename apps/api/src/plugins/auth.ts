@@ -65,6 +65,7 @@ function isHealthRoute(url: string): boolean {
     url === "/api/v1/health" ||
     url === "/api/v1/slo" ||
     url === "/api/v1/metrics" ||
+    url === "/api/public/v1/health" ||
     url.startsWith("/health")
   );
 }

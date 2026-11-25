@@ -21,6 +21,7 @@ import { scrapeRoutes } from "./scrape.routes.js";
 import { signalRoutes } from "./signal.routes.js";
 import { notificationRoutes } from "./notification.routes.js";
 import { healthRoutes } from "./health.routes.js";
+import { PUBLIC_API_PREFIX, publicApiRoutes } from "./public-api.routes.js";
 import { inboxRoutes } from "./inbox.routes.js";
 import { listRoutes } from "./list.routes.js";
 import { prospectRoutes } from "./prospect.routes.js";
@@ -110,6 +111,8 @@ import { authDiscoveryRoutes } from "./auth-discovery.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
+  // PAPI-001: customer-facing public API, kept apart from the internal /api/v1 routes.
+  await app.register(publicApiRoutes, { prefix: PUBLIC_API_PREFIX });
   // AUTH-BE-12 — true root path, not under /api/v1 (standard .well-known convention).
   await app.register(jwksRoutes);
 
