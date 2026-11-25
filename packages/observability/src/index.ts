@@ -18,7 +18,7 @@ export {
   type RequestLogContext,
 } from "./context.js";
 
-export { LOG_REDACT_PATHS } from "./redact.js";
+export { LOG_REDACT_PATHS, API_KEY_VALUE_PATTERN, scrubSecrets, scrubSecretsDeep } from "./redact.js";
 
 export { isConfiguredSecret } from "./keys.js";
 
@@ -26,6 +26,7 @@ export { initDatadogTracer } from "./datadog.js";
 
 export {
   initSentry,
+  scrubSentryEvent,
   captureException,
   setSentryUser,
   isSentryEnabled,

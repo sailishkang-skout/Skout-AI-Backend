@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { isConfiguredSecret } from "./keys.js";
+import { scrubSecretsDeep } from "./redact.js";
 
 export interface SentryInitOptions {
   dsn?: string;
@@ -24,17 +25,25 @@ export function initSentry(options: SentryInitOptions): void {
       release: options.release,
       tracesSampleRate: options.tracesSampleRate ?? 0.1,
       serverName: options.service,
-      beforeSend(event) {
-        if (event.request?.headers) {
-          delete event.request.headers.authorization;
-          delete event.request.headers.Authorization;
-        }
-        return event;
-      },
+      beforeSend: scrubSentryEvent,
+      beforeBreadcrumb: (crumb) => scrubSecretsDeep(crumb),
     });
   } catch {
     // Invalid/expired DSN or network issue at startup — observability is optional.
   }
+}
+
+/**
+ * Error reports never carry credentials (PAPI-026): the Authorization and Cookie headers are dropped
+ * and any API key value anywhere in the event (URL, query, messages, extra data) is scrubbed.
+ */
+export function scrubSentryEvent<E extends { request?: { headers?: Record<string, string> } }>(event: E): E {
+  if (event.request?.headers) {
+    for (const h of Object.keys(event.request.headers)) {
+      if (/^(authorization|cookie)$/i.test(h)) delete event.request.headers[h];
+    }
+  }
+  return scrubSecretsDeep(event);
 }
 
 export function captureException(error: unknown, context?: Record<string, unknown>): void {

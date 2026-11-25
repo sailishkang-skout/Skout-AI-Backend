@@ -1,6 +1,6 @@
 import pino, { type Logger as PinoLogger, type LoggerOptions } from "pino";
 import { getRequestContext } from "./context.js";
-import { LOG_REDACT_PATHS } from "./redact.js";
+import { LOG_REDACT_PATHS, scrubSecrets } from "./redact.js";
 
 export type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 
@@ -110,6 +110,8 @@ export function buildPinoOptions(config: LoggerConfig): LoggerOptions {
       paths: [...LOG_REDACT_PATHS],
       censor: "[REDACTED]",
     },
+    // PAPI-026: API keys are scrubbed by value from every finished log line, whatever field they're in.
+    hooks: { streamWrite: scrubSecrets },
     timestamp: pino.stdTimeFunctions.isoTime,
   };
 }
