@@ -1177,6 +1177,13 @@
       "when": 1798387700000,
       "tag": "0165_credit_holds",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1798387800000,
+      "tag": "0166_public_api_tables",
+      "breakpoints": true
     }
   ]
 }

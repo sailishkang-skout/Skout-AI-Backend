@@ -26,3 +26,10 @@ export {
   type CreditMismatch,
   type CreditTransactionRow,
 } from "./credit-ledger.js";
+export {
+  maintainPublicApiTables,
+  API_REQUEST_LOG_RETENTION_DAYS,
+  API_IDEMPOTENCY_RETENTION_HOURS,
+  API_REQUEST_LOG_MONTHS_AHEAD,
+  type PublicApiMaintenanceResult,
+} from "./public-api-maintenance.js";

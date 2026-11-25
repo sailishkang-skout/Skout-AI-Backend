@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
 import { workspaces } from "./workspaces.js";
 
@@ -57,3 +57,136 @@ export const apiKeys = pgTable(
 
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
+
+/**
+ * One row per public API request, including rejected ones (PAPI-012, PRD §9.7, CRED-12).
+ * Metadata only: request and response bodies are never stored.
+ *
+ * Partitioned by month on `created_at` (migration 0166), so the primary key includes it. Partitions
+ * are created ahead and dropped once older than 90 days by `maintainPublicApiTables`.
+ * `workspace_id` and `api_key_id` are null when the key could not be resolved.
+ */
+export const apiRequestLog = pgTable(
+  "api_request_log",
+  {
+    id: uuid("id").notNull().defaultRandom(),
+    /** X-Request-Id. */
+    requestId: text("request_id").notNull(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
+    method: text("method").notNull(),
+    /** Route pattern, e.g. /people/search (never the raw URL with ids or query). */
+    endpoint: text("endpoint").notNull(),
+    statusCode: integer("status_code").notNull(),
+    /** Public error code (CONV-6) when the request failed. */
+    errorCode: text("error_code"),
+    creditsCharged: integer("credits_charged").notNull().default(0),
+    /** The prices used for this request, so a later price change never alters it (CRED-12). */
+    priceApplied: jsonb("price_applied").$type<Record<string, number>>(),
+    latencyMs: integer("latency_ms"),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.createdAt] }),
+    index("api_request_log_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    index("api_request_log_key_created_idx").on(t.apiKeyId, t.createdAt),
+    index("api_request_log_request_idx").on(t.requestId),
+  ]
+);
+
+/** Stored responses for `Idempotency-Key` replays (PAPI-012, CONV-2). Purged after 24 hours. */
+export const apiIdempotency = pgTable(
+  "api_idempotency",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    /** Hash of method, path and body; a different hash for the same key is a 409. */
+    requestHash: text("request_hash").notNull(),
+    response: jsonb("response"),
+    statusCode: integer("status_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.key] }), index("api_idempotency_created_idx").on(t.createdAt)]
+);
+
+/**
+ * Async public API jobs, e.g. batch email verification (PAPI-012, JOB-1, JOB-2).
+ * status: queued | running | completed | failed | partially_completed. Results are kept until
+ * `results_expire_at` (7 days after finishing).
+ */
+export const apiJobs = pgTable(
+  "api_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
+    requestId: text("request_id").notNull(),
+    /** Operation, e.g. emails.verify. */
+    operation: text("operation").notNull(),
+    status: text("status").notNull().default("queued"),
+    totalItems: integer("total_items").notNull(),
+    processedItems: integer("processed_items").notNull().default(0),
+    succeededItems: integer("succeeded_items").notNull().default(0),
+    failedItems: integer("failed_items").notNull().default(0),
+    /** Credit hold covering the whole batch (JOB-1). */
+    holdId: uuid("hold_id"),
+    /** Where the results are stored (object key), when not inline. */
+    resultLocation: text("result_location"),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    resultsExpireAt: timestamp("results_expire_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("api_jobs_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    index("api_jobs_results_expire_idx").on(t.resultsExpireAt),
+  ]
+);
+
+/** Who accepted which API terms version, when and from where (PAPI-012, ADD-2). Never edited. */
+export const apiTermsAcceptances = pgTable(
+  "api_terms_acceptances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    termsVersion: text("terms_version").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+    ip: text("ip"),
+  },
+  (t) => [index("api_terms_acceptances_workspace_idx").on(t.workspaceId, t.acceptedAt)]
+);
+
+/**
+ * Per-workspace public API settings (PAPI-012, ADD-1 to ADD-5, OPS-1). A null limit means "use the
+ * global default from env"; CustomerOps sets per-workspace values.
+ */
+export const workspaceApiSettings = pgTable("workspace_api_settings", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  addonEnabled: boolean("addon_enabled").notNull().default(false),
+  addonEnabledAt: timestamp("addon_enabled_at", { withTimezone: true }),
+  addonEnabledBy: uuid("addon_enabled_by").references(() => users.id, { onDelete: "set null" }),
+  /** Set when CustomerOps disables the add-on (ADD-5). */
+  addonDisabledReason: text("addon_disabled_reason"),
+  /** Lets a trial / early-access workspace create live keys (ADD-4). */
+  liveAccessForTrial: boolean("live_access_for_trial").notNull().default(false),
+  rateTier: text("rate_tier").notNull().default("standard"),
+  verifyDailyQuota: integer("verify_daily_quota"),
+  searchDailyQuota: integer("search_daily_quota"),
+  monthlyCreditCap: integer("monthly_credit_cap"),
+  maxActiveKeys: integer("max_active_keys"),
+  lowBalanceThreshold: integer("low_balance_threshold"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+});
