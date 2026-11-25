@@ -10,6 +10,7 @@ import {
 import type { Env } from "../config/env.js";
 import { signOAuthState, verifyOAuthState } from "../utils/oauth-state.js";
 import { HttpError } from "../utils/http.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 type Db = ReturnType<typeof createDb>["db"];
 const { calendarConnections } = schema;
@@ -150,11 +151,11 @@ export async function handleGoogleCalendarCallback(
       },
     });
 
-  const frontend = (config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+  const frontend = productAppUrl(config.FRONTEND_URL ?? config.CORS_ORIGIN[0] ?? "http://localhost:3000");
   return {
     workspaceId,
     // Next.js basePath is "/app" — omitting it 404'd this redirect.
-    redirectUrl: `${frontend}/app/settings/calendar?connected=google`,
+    redirectUrl: `${frontend}/settings/calendar?connected=google`,
   };
 }
 

@@ -29,6 +29,7 @@ import {
   handleMicrosoftCallback,
 } from "../services/inbox-oauth.service.js";
 import { HttpError, requireWorkspaceId } from "../utils/http.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 const PROVIDER_ALIASES: Record<string, "smtp" | "google" | "microsoft"> = {
   google: "google",
@@ -283,9 +284,9 @@ export async function inboxRoutes(app: FastifyInstance) {
   // GET /inboxes/connect/google/callback
   app.get("/inboxes/connect/google/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
-    const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+    const frontend = productAppUrl(app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000");
     // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
-    const failUrl = `${frontend}/app/deliverability?connected=google_error`;
+    const failUrl = `${frontend}/deliverability?connected=google_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleGoogleCallback(code, state, db, app.config);
@@ -311,9 +312,9 @@ export async function inboxRoutes(app: FastifyInstance) {
   // GET /inboxes/connect/microsoft/callback
   app.get("/inboxes/connect/microsoft/callback", async (request, reply) => {
     const { code, state, error } = request.query as { code?: string; state?: string; error?: string };
-    const frontend = (app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000").replace(/\/$/, "");
+    const frontend = productAppUrl(app.config.FRONTEND_URL ?? app.config.CORS_ORIGIN[0] ?? "http://localhost:3000");
     // Next.js basePath is "/app" — omitting it 404'd this redirect even on success.
-    const failUrl = `${frontend}/app/deliverability?connected=microsoft_error`;
+    const failUrl = `${frontend}/deliverability?connected=microsoft_error`;
     if (error || !code || !state || !db) return reply.redirect(failUrl);
     try {
       const { redirectUrl } = await handleMicrosoftCallback(code, state, db, app.config);

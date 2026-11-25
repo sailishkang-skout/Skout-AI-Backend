@@ -8,6 +8,7 @@ import { loadProvisionings, type ProvisioningDto } from "./cops-provisioning.ser
 import { canContact, CAN_CONTACT_MESSAGE, type CanContactBlock } from "./cops-can-contact.js";
 import { chooseOnboardingTemplate, segmentOf } from "./cops-onboarding-templates.js";
 import { getConfig } from "./cops-admin-config.service.js";
+import { productAppUrl } from "../utils/app-url.js";
 
 /**
  * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
@@ -80,10 +81,7 @@ export interface OnboardingDeps {
  * The product frontend is served under the Next.js basePath "/app", so customer-facing links
  * (invite, workspace, guides) need it; without it they 404. Adds it once, never twice.
  */
-export function productAppUrl(base: string): string {
-  const trimmed = base.replace(/\/+$/, "");
-  return /\/app$/.test(trimmed) ? trimmed : `${trimmed}/app`;
-}
+export { productAppUrl };
 
 export function defaultOnboardingDeps(config: Env): OnboardingDeps {
   const app = productAppUrl(config.FRONTEND_URL ?? "http://localhost:3000");

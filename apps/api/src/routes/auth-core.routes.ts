@@ -57,11 +57,12 @@ import {
 import { isPasswordEmailVerified, issueVerificationToken, VERIFICATION_TTL_MINUTES } from "../services/auth-recovery.service.js";
 import { buildAuthLinkEmail, sendMail } from "../services/mail.service.js";
 import { createLogger } from "@skout/observability";
+import { productAppUrl } from "../utils/app-url.js";
 
 const log = createLogger("auth-core.routes");
 
 function appBase(config: Env): string {
-  return (config.FRONTEND_URL || "http://localhost:3000").replace(/\/$/, "");
+  return productAppUrl(config.FRONTEND_URL || "http://localhost:3000");
 }
 
 const { users, userCredentials, authRefreshTokens, authSessions } = schema;
