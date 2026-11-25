@@ -1,3 +1,13 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md.
+ *   - Tables touched directly: none owned by apps/crm. The check matches the public API operation
+ *     names "companies.lookup", "companies.jobs" and "contacts.*" (price keys, not tables); the test
+ *     only writes workspaces, users, entitlements, workspace_member_roles and reads audit_logs.
+ *   - Owning service: apps/api
+ *   - Reason: PAPI-030 price resolver test (public API PRD §8 operation names).
+ *   - Review date: 2026-11-25
+ */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
