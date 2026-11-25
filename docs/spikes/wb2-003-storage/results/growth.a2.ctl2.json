@@ -1,0 +1,72 @@
+{
+  "variant": "a2",
+  "options": {
+    "big": 10,
+    "bigRows": 50000,
+    "small": 0,
+    "smallRows": 200
+  },
+  "workbooks": 12,
+  "totalCells": 12040000,
+  "bigLoads": [
+    {
+      "tag": "big0",
+      "rows": 50000,
+      "cellsMs": 20154
+    },
+    {
+      "tag": "big1",
+      "rows": 50000,
+      "cellsMs": 23262
+    },
+    {
+      "tag": "big2",
+      "rows": 50000,
+      "cellsMs": 27655
+    },
+    {
+      "tag": "big3",
+      "rows": 50000,
+      "cellsMs": 25946
+    },
+    {
+      "tag": "big4",
+      "rows": 50000,
+      "cellsMs": 28350
+    },
+    {
+      "tag": "big5",
+      "rows": 50000,
+      "cellsMs": 29758
+    },
+    {
+      "tag": "big6",
+      "rows": 50000,
+      "cellsMs": 28610
+    },
+    {
+      "tag": "big7",
+      "rows": 50000,
+      "cellsMs": 27271
+    },
+    {
+      "tag": "big8",
+      "rows": 50000,
+      "cellsMs": 24432
+    },
+    {
+      "tag": "big9",
+      "rows": 50000,
+      "cellsMs": 26499
+    }
+  ],
+  "smallWorkbooksLoadMsEach": null,
+  "totalLoadSec": 268.1,
+  "vacuumAnalyzeSec": 2.5,
+  "sizes": {
+    "heapMB": 1753.6,
+    "indexMB": 1593.1,
+    "totalMB": 3346.7,
+    "partitions": 1
+  }
+}

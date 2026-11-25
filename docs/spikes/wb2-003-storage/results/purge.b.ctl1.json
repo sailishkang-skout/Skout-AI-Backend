@@ -1,0 +1,10 @@
+{
+  "variant": "b",
+  "tag": "big0",
+  "rowsRemoved": 50000,
+  "cellsRemoved": 1000000,
+  "method": "DELETE FROM workbooks (cascade through rows, columns, cells)",
+  "purgeMs": 3402,
+  "walMB": 208.1,
+  "deadTuplesAfter": 1050021
+}

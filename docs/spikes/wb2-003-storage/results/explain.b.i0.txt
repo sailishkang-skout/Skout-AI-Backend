@@ -1,0 +1,667 @@
+### window_random
+Incremental Sort  (cost=48.69..9273.96 rows=4796 width=156) (actual time=0.090..2.573 rows=4000 loops=1)
+  Sort Key: workbook_rows."position", c.column_id
+  Presorted Key: workbook_rows."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=1490
+  ->  Nested Loop Left Join  (cost=0.97..9099.00 rows=4796 width=156) (actual time=0.050..1.841 rows=4000 loops=1)
+        Buffers: shared hit=1490
+        ->  Limit  (cost=0.42..17.75 rows=200 width=66) (actual time=0.034..0.073 rows=200 loops=1)
+              Buffers: shared hit=8
+              ->  Index Scan using workbook_rows_workbook_position_idx on workbook_rows  (cost=0.42..6275.07 rows=72395 width=66) (actual time=0.033..0.064 rows=200 loops=1)
+                    Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND ("position" >= 25994))
+                    Buffers: shared hit=8
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.005..0.008 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = workbook_rows.id))
+              Buffers: shared hit=1482
+Settings: effective_cache_size = '1GB'
+Planning Time: 0.123 ms
+Execution Time: 2.673 ms
+
+### window_first
+Incremental Sort  (cost=48.68..9271.86 rows=4796 width=156) (actual time=0.065..2.553 rows=4000 loops=1)
+  Sort Key: workbook_rows."position", c.column_id
+  Presorted Key: workbook_rows."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=1564
+  ->  Nested Loop Left Join  (cost=0.97..9096.90 rows=4796 width=156) (actual time=0.027..1.805 rows=4000 loops=1)
+        Buffers: shared hit=1564
+        ->  Limit  (cost=0.42..15.65 rows=200 width=66) (actual time=0.015..0.053 rows=200 loops=1)
+              Buffers: shared hit=7
+              ->  Index Scan using workbook_rows_workbook_position_idx on workbook_rows  (cost=0.42..7612.83 rows=99930 width=66) (actual time=0.015..0.041 rows=200 loops=1)
+                    Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND ("position" >= 0))
+                    Buffers: shared hit=7
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.004..0.007 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = workbook_rows.id))
+              Buffers: shared hit=1557
+Settings: effective_cache_size = '1GB'
+Planning Time: 0.098 ms
+Execution Time: 2.650 ms
+
+### window_middle
+Incremental Sort  (cost=48.71..9277.75 rows=4796 width=156) (actual time=0.080..2.487 rows=4000 loops=1)
+  Sort Key: workbook_rows."position", c.column_id
+  Presorted Key: workbook_rows."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=1490
+  ->  Nested Loop Left Join  (cost=0.97..9102.79 rows=4796 width=156) (actual time=0.036..1.756 rows=4000 loops=1)
+        Buffers: shared hit=1490
+        ->  Limit  (cost=0.42..21.54 rows=200 width=66) (actual time=0.025..0.069 rows=200 loops=1)
+              Buffers: shared hit=8
+              ->  Index Scan using workbook_rows_workbook_position_idx on workbook_rows  (cost=0.42..5105.10 rows=48331 width=66) (actual time=0.024..0.059 rows=200 loops=1)
+                    Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND ("position" >= 50804))
+                    Buffers: shared hit=8
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.005..0.007 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = workbook_rows.id))
+              Buffers: shared hit=1482
+Settings: effective_cache_size = '1GB'
+Planning Time: 0.109 ms
+Execution Time: 2.586 ms
+
+### window_last
+Incremental Sort  (cost=3505.56..8753.45 rows=4580 width=156) (actual time=2.964..5.301 rows=4000 loops=1)
+  Sort Key: workbook_rows."position", c.column_id
+  Presorted Key: workbook_rows."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=3081
+  ->  Nested Loop Left Join  (cost=3477.37..8586.47 rows=4580 width=156) (actual time=2.938..4.565 rows=4000 loops=1)
+        Buffers: shared hit=3081
+        ->  Limit  (cost=3476.82..3489.70 rows=112 width=66) (actual time=2.921..2.981 rows=200 loops=1)
+              Buffers: shared hit=1610
+              ->  Gather Merge  (cost=3476.82..3489.70 rows=112 width=66) (actual time=2.921..2.971 rows=200 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=1610
+                    ->  Sort  (cost=2476.81..2477.09 rows=112 width=66) (actual time=2.047..2.051 rows=100 loops=2)
+                          Sort Key: workbook_rows."position"
+                          Sort Method: quicksort  Memory: 37kB
+                          Buffers: shared hit=1610
+                          Worker 0:  Sort Method: quicksort  Memory: 37kB
+                          ->  Parallel Seq Scan on workbook_rows  (cost=0.00..2473.00 rows=112 width=66) (actual time=1.966..2.022 rows=100 loops=2)
+                                Filter: (("position" >= 99800) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                Rows Removed by Filter: 50900
+                                Buffers: shared hit=1573
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.28 rows=23 width=106) (actual time=0.005..0.007 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = workbook_rows.id))
+              Buffers: shared hit=1471
+Settings: effective_cache_size = '1GB'
+Planning Time: 0.077 ms
+Execution Time: 5.397 ms
+
+### sort_company_asc_top
+Sort  (cost=65731.68..65743.67 rows=4796 width=156) (actual time=77.123..78.141 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 734kB
+  Buffers: shared hit=40475
+  ->  Nested Loop Left Join  (cost=56332.76..65438.46 rows=4796 width=156) (actual time=74.158..76.629 rows=4000 loops=1)
+        Buffers: shared hit=40475
+        ->  Limit  (cost=56332.21..56355.21 rows=200 width=94) (actual time=74.136..75.100 rows=200 loops=1)
+              Buffers: shared hit=38959
+              ->  Gather Merge  (cost=56332.21..63092.83 rows=58788 width=94) (actual time=74.136..75.091 rows=200 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38959
+                    ->  Sort  (cost=55332.20..55479.17 rows=58788 width=94) (actual time=73.241..73.248 rows=149 loops=2)
+                          Sort Key: s.value, r."position"
+                          Sort Method: top-N heapsort  Memory: 69kB
+                          Buffers: shared hit=38959
+                          Worker 0:  Sort Method: top-N heapsort  Memory: 69kB
+                          ->  Parallel Hash Left Join  (cost=50314.09..52791.42 rows=58788 width=94) (actual time=54.003..64.585 rows=50000 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.005..3.117 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=49793.87..49793.87 rows=41618 width=44) (actual time=53.022..53.022 rows=50000 loops=2)
+                                      Buckets: 131072  Batches: 1  Memory Usage: 8224kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=41618 width=44) (actual time=0.007..45.314 rows=50000 loops=2)
+                                            Filter: ((column_id = '1c917e93-3d61-f4cf-0b5b-7267202910b7'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                            Rows Removed by Filter: 950000
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.004..0.006 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1516
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.141 ms
+Execution Time: 78.247 ms
+
+### sort_company_asc_deep_offset
+Sort  (cost=77072.33..77084.32 rows=4796 width=156) (actual time=178.536..183.184 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 743kB
+  Buffers: shared hit=40433, temp read=1118 written=1212
+  I/O Timings: temp read=1.094 write=3.577
+  ->  Nested Loop Left Join  (cost=67673.42..76779.11 rows=4796 width=156) (actual time=175.314..181.860 rows=4000 loops=1)
+        Buffers: shared hit=40433, temp read=1118 written=1212
+        I/O Timings: temp read=1.094 write=3.577
+        ->  Limit  (cost=67672.86..67695.86 rows=200 width=94) (actual time=175.287..180.070 rows=200 loops=1)
+              Buffers: shared hit=38959, temp read=1118 written=1212
+              I/O Timings: temp read=1.094 write=3.577
+              ->  Gather Merge  (cost=61465.39..68226.01 rows=58788 width=94) (actual time=159.948..178.928 rows=54178 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38959, temp read=1118 written=1212
+                    I/O Timings: temp read=1.094 write=3.577
+                    ->  Sort  (cost=60465.38..60612.35 rows=58788 width=94) (actual time=157.387..162.867 rows=27372 loops=2)
+                          Sort Key: s.value, r."position"
+                          Sort Method: external merge  Disk: 4992kB
+                          Buffers: shared hit=38959, temp read=1118 written=1212
+                          I/O Timings: temp read=1.094 write=3.577
+                          Worker 0:  Sort Method: external merge  Disk: 4688kB
+                          ->  Parallel Hash Left Join  (cost=50314.09..52791.42 rows=58788 width=94) (actual time=51.821..63.779 rows=50000 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.004..3.313 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=49793.87..49793.87 rows=41618 width=44) (actual time=51.453..51.453 rows=50000 loops=2)
+                                      Buckets: 131072  Batches: 1  Memory Usage: 8224kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=41618 width=44) (actual time=0.008..44.038 rows=50000 loops=2)
+                                            Filter: ((column_id = '1c917e93-3d61-f4cf-0b5b-7267202910b7'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                            Rows Removed by Filter: 950000
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.005..0.008 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1474
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.217 ms
+Execution Time: 184.163 ms
+
+### sort_lead_score_desc_top
+Sort  (cost=65733.05..65745.04 rows=4796 width=156) (actual time=79.862..81.075 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 736kB
+  Buffers: shared hit=40459
+  ->  Nested Loop Left Join  (cost=56334.14..65439.83 rows=4796 width=156) (actual time=77.068..80.133 rows=4000 loops=1)
+        Buffers: shared hit=40459
+        ->  Limit  (cost=56333.58..56356.58 rows=200 width=94) (actual time=77.045..78.197 rows=200 loops=1)
+              Buffers: shared hit=38959
+              ->  Gather Merge  (cost=56333.58..63094.20 rows=58788 width=94) (actual time=77.043..78.185 rows=200 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38959
+                    ->  Sort  (cost=55333.57..55480.54 rows=58788 width=94) (actual time=76.051..76.061 rows=151 loops=2)
+                          Sort Key: s.value DESC NULLS LAST, r."position"
+                          Sort Method: top-N heapsort  Memory: 71kB
+                          Buffers: shared hit=38959
+                          Worker 0:  Sort Method: top-N heapsort  Memory: 69kB
+                          ->  Parallel Hash Left Join  (cost=50315.47..52792.80 rows=58788 width=94) (actual time=56.530..68.671 rows=50000 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.006..3.649 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=49793.87..49793.87 rows=41728 width=44) (actual time=56.132..56.133 rows=50000 loops=2)
+                                      Buckets: 131072  Batches: 1  Memory Usage: 7936kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=41728 width=44) (actual time=0.007..47.483 rows=50000 loops=2)
+                                            Filter: ((column_id = '54d0bc6a-6bdb-bd22-0af0-a44faa339e77'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                            Rows Removed by Filter: 950000
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.005..0.008 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1500
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.218 ms
+Execution Time: 81.192 ms
+
+### sort_ai_summary_asc_deep_offset
+Sort  (cost=68279.28..68279.34 rows=24 width=156) (actual time=228.144..233.049 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 720kB
+  Buffers: shared hit=40463, temp read=1625 written=1791
+  I/O Timings: temp read=1.944 write=4.798
+  ->  Nested Loop Left Join  (cost=68231.42..68278.73 rows=24 width=156) (actual time=225.984..232.363 rows=4000 loops=1)
+        Buffers: shared hit=40463, temp read=1625 written=1791
+        I/O Timings: temp read=1.944 write=4.798
+        ->  Limit  (cost=68230.86..68230.98 rows=1 width=94) (actual time=225.953..230.803 rows=200 loops=1)
+              Buffers: shared hit=38959, temp read=1625 written=1791
+              I/O Timings: temp read=1.944 write=4.798
+              ->  Gather Merge  (cost=61470.24..68230.86 rows=58788 width=94) (actual time=196.898..229.333 rows=69086 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38959, temp read=1625 written=1791
+                    I/O Timings: temp read=1.944 write=4.798
+                    ->  Sort  (cost=60470.23..60617.20 rows=58788 width=94) (actual time=187.530..203.330 rows=34861 loops=2)
+                          Sort Key: s.value, r."position"
+                          Sort Method: external merge  Disk: 7656kB
+                          Buffers: shared hit=38959, temp read=1625 written=1791
+                          I/O Timings: temp read=1.944 write=4.798
+                          Worker 0:  Sort Method: external merge  Disk: 6640kB
+                          ->  Parallel Hash Left Join  (cost=50318.94..52796.27 rows=58788 width=94) (actual time=48.238..61.584 rows=50000 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.003..3.305 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=49793.87..49793.87 rows=42006 width=44) (actual time=47.872..47.872 rows=50000 loops=2)
+                                      Buckets: 131072  Batches: 1  Memory Usage: 12736kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=42006 width=44) (actual time=0.006..40.858 rows=50000 loops=2)
+                                            Filter: ((column_id = '088f40b8-9b92-df55-883a-678746465148'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                            Rows Removed by Filter: 950000
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..47.51 rows=23 width=106) (actual time=0.004..0.006 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1504
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.243 ms
+Execution Time: 234.628 ms
+
+### sort_company_prefix_key_top
+Sort  (cost=66025.62..66037.61 rows=4796 width=156) (actual time=75.486..76.527 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 734kB
+  Buffers: shared hit=40475
+  ->  Nested Loop Left Join  (cost=56626.70..65732.40 rows=4796 width=156) (actual time=72.491..74.961 rows=4000 loops=1)
+        Buffers: shared hit=40475
+        ->  Limit  (cost=56626.15..56649.15 rows=200 width=98) (actual time=72.475..73.431 rows=200 loops=1)
+              Buffers: shared hit=38959
+              ->  Gather Merge  (cost=56626.15..63386.77 rows=58788 width=98) (actual time=72.475..73.421 rows=200 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38959
+                    ->  Sort  (cost=55626.14..55773.11 rows=58788 width=98) (actual time=71.535..71.543 rows=148 loops=2)
+                          Sort Key: ("left"((s.value #>> '{}'::text[]), 64)), r."position"
+                          Sort Method: top-N heapsort  Memory: 69kB
+                          Buffers: shared hit=38959
+                          Worker 0:  Sort Method: top-N heapsort  Memory: 69kB
+                          ->  Parallel Hash Left Join  (cost=50314.09..53085.36 rows=58788 width=98) (actual time=47.571..64.282 rows=50000 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.003..3.374 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=49793.87..49793.87 rows=41618 width=44) (actual time=47.212..47.213 rows=50000 loops=2)
+                                      Buckets: 131072  Batches: 1  Memory Usage: 8224kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=41618 width=44) (actual time=0.007..41.321 rows=50000 loops=2)
+                                            Filter: ((column_id = '1c917e93-3d61-f4cf-0b5b-7267202910b7'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                            Rows Removed by Filter: 950000
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.004..0.006 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1516
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.201 ms
+Execution Time: 76.648 ms
+
+### filter_state_error_window
+Incremental Sort  (cost=1218.02..21491.15 rows=4796 width=156) (actual time=18.615..22.611 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Presorted Key: r."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+  Buffers: shared hit=19701
+  ->  Nested Loop Left Join  (cost=1112.76..21316.18 rows=4796 width=156) (actual time=18.446..21.884 rows=4000 loops=1)
+        Buffers: shared hit=19701
+        ->  Limit  (cost=1112.21..12234.93 rows=200 width=66) (actual time=18.440..20.551 rows=200 loops=1)
+              Buffers: shared hit=18195
+              ->  Gather Merge  (cost=1000.98..182357.05 rows=3261 width=66) (actual time=18.300..20.540 rows=202 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=18195
+                    ->  Nested Loop  (cost=0.97..180990.18 rows=1918 width=66) (actual time=0.109..9.596 rows=108 loops=2)
+                          Buffers: shared hit=18195
+                          ->  Parallel Index Scan using workbook_rows_workbook_position_idx on workbook_rows r  (cost=0.42..6951.66 rows=58788 width=66) (actual time=0.009..0.267 rows=1810 loops=2)
+                                Index Cond: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                Buffers: shared hit=89
+                          ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 s  (cost=0.55..2.95 rows=1 width=16) (actual time=0.005..0.005 rows=0 loops=3621)
+                                Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id) AND (column_id = '578fadcd-c905-b7b5-fece-ec8b79ae397b'::uuid))
+                                Filter: (state = 'error'::text)
+                                Rows Removed by Filter: 1
+                                Buffers: shared hit=18106
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.003..0.005 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1506
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.219 ms
+Execution Time: 22.723 ms
+
+### filter_state_error_count
+Finalize Aggregate  (cost=54789.92..54789.93 rows=1 width=4) (actual time=36.867..39.921 rows=1 loops=1)
+  Buffers: shared hit=55162
+  ->  Gather  (cost=54789.70..54789.91 rows=2 width=8) (actual time=36.809..39.918 rows=3 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=55162
+        ->  Partial Aggregate  (cost=53789.70..53789.71 rows=1 width=8) (actual time=35.622..35.623 rows=1 loops=3)
+              Buffers: shared hit=55162
+              ->  Nested Loop  (cost=0.42..53786.31 rows=1359 width=0) (actual time=0.051..35.531 rows=1985 loops=3)
+                    Buffers: shared hit=55162
+                    ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..51877.51 rows=1387 width=16) (actual time=0.023..31.737 rows=1985 loops=3)
+                          Filter: ((column_id = '578fadcd-c905-b7b5-fece-ec8b79ae397b'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (state = 'error'::text))
+                          Rows Removed by Filter: 664682
+                          Buffers: shared hit=37292
+                    ->  Index Only Scan using workbook_rows_workbook_id_id_key on workbook_rows r  (cost=0.42..1.38 rows=1 width=16) (actual time=0.002..0.002 rows=1 loops=5955)
+                          Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (id = s.row_id))
+                          Heap Fetches: 0
+                          Buffers: shared hit=17870
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.141 ms
+Execution Time: 39.937 ms
+
+### filter_value_equals_window
+Incremental Sort  (cost=55587.83..55588.15 rows=24 width=156) (actual time=66.228..72.904 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Presorted Key: r."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=40504
+  ->  Nested Loop Left Join  (cost=55539.97..55587.28 rows=24 width=156) (actual time=66.192..72.144 rows=4000 loops=1)
+        Buffers: shared hit=40504
+        ->  Limit  (cost=55539.42..55539.53 rows=1 width=66) (actual time=66.169..70.190 rows=200 loops=1)
+              Buffers: shared hit=38951
+              ->  Gather Merge  (cost=55417.63..55539.42 rows=1059 width=66) (actual time=66.003..70.143 rows=1835 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=38951
+                    ->  Sort  (cost=54417.62..54420.27 rows=1059 width=66) (actual time=65.173..65.208 rows=1186 loops=2)
+                          Sort Key: r."position"
+                          Sort Method: top-N heapsort  Memory: 323kB
+                          Buffers: shared hit=38951
+                          Worker 0:  Sort Method: top-N heapsort  Memory: 324kB
+                          ->  Parallel Hash Join  (cost=51887.09..54364.42 rows=1059 width=66) (actual time=53.609..63.208 rows=20352 loops=2)
+                                Hash Cond: (r.id = s.row_id)
+                                Buffers: shared hit=38914
+                                ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.006..3.616 rows=50000 loops=2)
+                                      Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=1573
+                                ->  Parallel Hash  (cost=51877.51..51877.51 rows=766 width=16) (actual time=53.493..53.494 rows=20352 loops=2)
+                                      Buckets: 65536 (originally 2048)  Batches: 1 (originally 1)  Memory Usage: 2960kB
+                                      Buffers: shared hit=37292
+                                      ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..51877.51 rows=766 width=16) (actual time=0.007..48.446 rows=20352 loops=2)
+                                            Filter: ((column_id = '38acf029-8c39-9697-1c96-a486caead483'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (value = '"valid"'::jsonb))
+                                            Rows Removed by Filter: 979648
+                                            Buffers: shared hit=37292
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..47.51 rows=23 width=106) (actual time=0.005..0.008 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1553
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.219 ms
+Execution Time: 73.014 ms
+
+### filter_value_equals_count
+Finalize Aggregate  (cost=54516.68..54516.69 rows=1 width=4) (actual time=50.520..53.901 rows=1 loops=1)
+  Buffers: shared hit=159409
+  ->  Gather  (cost=54516.46..54516.67 rows=2 width=8) (actual time=50.449..53.897 rows=3 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=159409
+        ->  Partial Aggregate  (cost=53516.46..53516.47 rows=1 width=8) (actual time=49.091..49.091 rows=1 loops=3)
+              Buffers: shared hit=159409
+              ->  Nested Loop  (cost=0.42..53514.59 rows=750 width=0) (actual time=0.027..48.594 rows=13568 loops=3)
+                    Buffers: shared hit=159409
+                    ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..51877.51 rows=766 width=16) (actual time=0.012..32.759 rows=13568 loops=3)
+                          Filter: ((column_id = '38acf029-8c39-9697-1c96-a486caead483'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (value = '"valid"'::jsonb))
+                          Rows Removed by Filter: 653099
+                          Buffers: shared hit=37292
+                    ->  Index Only Scan using workbook_rows_workbook_id_id_key on workbook_rows r  (cost=0.42..2.14 rows=1 width=16) (actual time=0.001..0.001 rows=1 loops=40704)
+                          Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (id = s.row_id))
+                          Heap Fetches: 0
+                          Buffers: shared hit=122117
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.197 ms
+Execution Time: 53.921 ms
+
+### filter_text_contains_window
+Incremental Sort  (cost=6600.56..63755.88 rows=4796 width=156) (actual time=7.121..9.442 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Presorted Key: r."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=8943
+  ->  Nested Loop Left Join  (cost=6303.20..63580.92 rows=4796 width=156) (actual time=7.028..8.702 rows=4000 loops=1)
+        Buffers: shared hit=8943
+        ->  Limit  (cost=6302.65..54499.67 rows=200 width=66) (actual time=7.024..7.354 rows=200 loops=1)
+              Buffers: shared hit=7423
+              ->  Gather Merge  (cost=1000.98..182221.76 rows=752 width=66) (actual time=6.515..7.342 rows=222 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=7423
+                    ->  Nested Loop  (cost=0.97..181137.15 rows=442 width=66) (actual time=0.089..3.483 rows=126 loops=2)
+                          Buffers: shared hit=7423
+                          ->  Parallel Index Scan using workbook_rows_workbook_position_idx on workbook_rows r  (cost=0.42..6951.66 rows=58788 width=66) (actual time=0.010..0.089 rows=738 loops=2)
+                                Index Cond: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                Buffers: shared hit=37
+                          ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 s  (cost=0.55..2.95 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=1477)
+                                Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id) AND (column_id = '431fa143-7fd9-936d-128c-decf1c836601'::uuid))
+                                Filter: ((value #>> '{}'::text[]) ~~* '%.io'::text)
+                                Rows Removed by Filter: 1
+                                Buffers: shared hit=7386
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.003..0.005 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1520
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.216 ms
+Execution Time: 9.557 ms
+
+### filter_text_contains_count
+Finalize Aggregate  (cost=55960.49..55960.50 rows=1 width=4) (actual time=83.569..86.805 rows=1 loops=1)
+  Buffers: shared hit=87595
+  ->  Gather  (cost=55960.27..55960.48 rows=2 width=8) (actual time=83.502..86.802 rows=3 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=87595
+        ->  Partial Aggregate  (cost=54960.27..54960.28 rows=1 width=8) (actual time=82.129..82.129 rows=1 loops=3)
+              Buffers: shared hit=87595
+              ->  Nested Loop  (cost=0.42..54959.49 rows=313 width=0) (actual time=0.051..81.792 rows=5589 loops=3)
+                    Buffers: shared hit=87595
+                    ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..53961.16 rows=320 width=16) (actual time=0.034..47.309 rows=5589 loops=3)
+                          Filter: ((column_id = '431fa143-7fd9-936d-128c-decf1c836601'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND ((value #>> '{}'::text[]) ~~* '%.io'::text))
+                          Rows Removed by Filter: 661078
+                          Buffers: shared hit=37292
+                    ->  Index Only Scan using workbook_rows_workbook_id_id_key on workbook_rows r  (cost=0.42..3.12 rows=1 width=16) (actual time=0.005..0.005 rows=1 loops=16766)
+                          Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (id = s.row_id))
+                          Heap Fetches: 0
+                          Buffers: shared hit=50303
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.157 ms
+Execution Time: 86.820 ms
+
+### filter_numeric_gt_window
+Incremental Sort  (cost=2243.48..12577.50 rows=4796 width=156) (actual time=11.616..15.180 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Presorted Key: r."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=15443
+  ->  Nested Loop Left Join  (cost=2189.98..12402.54 rows=4796 width=156) (actual time=11.576..14.445 rows=4000 loops=1)
+        Buffers: shared hit=15443
+        ->  Limit  (cost=2189.43..3321.29 rows=200 width=66) (actual time=11.564..12.959 rows=200 loops=1)
+              Buffers: shared hit=13886
+              ->  Gather Merge  (cost=1000.98..186110.85 rows=32709 width=66) (actual time=6.258..12.942 rows=410 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=13886
+                    ->  Nested Loop  (cost=0.97..181431.08 rows=19241 width=66) (actual time=0.135..6.382 rows=236 loops=2)
+                          Buffers: shared hit=13886
+                          ->  Parallel Index Scan using workbook_rows_workbook_position_idx on workbook_rows r  (cost=0.42..6951.66 rows=58788 width=66) (actual time=0.010..0.182 rows=1382 loops=2)
+                                Index Cond: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                Buffers: shared hit=70
+                          ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 s  (cost=0.55..2.96 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=2763)
+                                Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id) AND (column_id = '54d0bc6a-6bdb-bd22-0af0-a44faa339e77'::uuid))
+                                Filter: (CASE WHEN (jsonb_typeof(value) = 'number'::text) THEN (value)::numeric ELSE NULL::numeric END > '80'::numeric)
+                                Rows Removed by Filter: 1
+                                Buffers: shared hit=13816
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.002..0.006 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1557
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.198 ms
+Execution Time: 15.288 ms
+
+### filter_numeric_gt_count
+Finalize Aggregate  (cost=61827.87..61827.88 rows=1 width=4) (actual time=69.520..72.658 rows=1 loops=1)
+  Buffers: shared hit=38928
+  ->  Gather  (cost=61827.76..61827.87 rows=1 width=8) (actual time=69.433..72.655 rows=2 loops=1)
+        Workers Planned: 1
+        Workers Launched: 1
+        Buffers: shared hit=38928
+        ->  Partial Aggregate  (cost=60827.76..60827.77 rows=1 width=8) (actual time=68.555..68.556 rows=1 loops=2)
+              Buffers: shared hit=38928
+              ->  Parallel Hash Join  (cost=58302.32..60779.65 rows=19241 width=0) (actual time=61.625..68.290 rows=9388 loops=2)
+                    Hash Cond: (r.id = s.row_id)
+                    Buffers: shared hit=38928
+                    ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=16) (actual time=0.003..3.109 rows=50000 loops=2)
+                          Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                          Rows Removed by Filter: 1000
+                          Buffers: shared hit=1573
+                    ->  Parallel Hash  (cost=58128.45..58128.45 rows=13910 width=16) (actual time=61.418..61.418 rows=9388 loops=2)
+                          Buckets: 65536  Batches: 1  Memory Usage: 1440kB
+                          Buffers: shared hit=37292
+                          ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..58128.45 rows=13910 width=16) (actual time=0.013..52.474 rows=9388 loops=2)
+                                Filter: ((column_id = '54d0bc6a-6bdb-bd22-0af0-a44faa339e77'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (CASE WHEN (jsonb_typeof(value) = 'number'::text) THEN (value)::numeric ELSE NULL::numeric END > '80'::numeric))
+                                Rows Removed by Filter: 990612
+                                Buffers: shared hit=37292
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.153 ms
+Execution Time: 72.673 ms
+
+### filter_is_empty_window
+Incremental Sort  (cost=7083.23..17803.24 rows=4796 width=156) (actual time=9.577..14.105 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Presorted Key: r."position"
+  Full-sort Groups: 100  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+  Buffers: shared hit=17211
+  ->  Nested Loop Left Join  (cost=7027.73..17628.28 rows=4796 width=156) (actual time=9.553..13.333 rows=4000 loops=1)
+        Buffers: shared hit=17211
+        ->  Limit  (cost=7027.18..8547.03 rows=200 width=66) (actual time=9.545..12.154 rows=200 loops=1)
+              Buffers: shared hit=15718
+              ->  Gather Merge  (cost=1000.98..184560.66 rows=24155 width=66) (actual time=4.594..12.121 rows=993 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    Buffers: shared hit=15718
+                    ->  Nested Loop Left Join  (cost=0.97..180843.21 rows=14209 width=66) (actual time=0.037..6.155 rows=652 loops=2)
+                          Filter: (s.value IS NULL)
+                          Rows Removed by Filter: 912
+                          Buffers: shared hit=15718
+                          ->  Parallel Index Scan using workbook_rows_workbook_position_idx on workbook_rows r  (cost=0.42..6951.66 rows=58788 width=66) (actual time=0.007..0.160 rows=1564 loops=2)
+                                Index Cond: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                Buffers: shared hit=82
+                          ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 s  (cost=0.55..2.95 rows=1 width=44) (actual time=0.004..0.004 rows=1 loops=3127)
+                                Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id) AND (column_id = '1ba7a44a-39fe-2d6f-98fa-f20a03363d45'::uuid))
+                                Buffers: shared hit=15636
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.002..0.005 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1493
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.170 ms
+Execution Time: 14.214 ms
+
+### filter_is_empty_count
+Finalize Aggregate  (cost=53818.37..53818.38 rows=1 width=4) (actual time=63.737..67.060 rows=1 loops=1)
+  Buffers: shared hit=38928
+  ->  Gather  (cost=53818.26..53818.37 rows=1 width=8) (actual time=63.612..67.058 rows=2 loops=1)
+        Workers Planned: 1
+        Workers Launched: 1
+        Buffers: shared hit=38928
+        ->  Partial Aggregate  (cost=52818.26..52818.27 rows=1 width=8) (actual time=62.463..62.464 rows=1 loops=2)
+              Buffers: shared hit=38928
+              ->  Parallel Hash Left Join  (cost=50305.41..52782.74 rows=14209 width=0) (actual time=53.436..61.889 rows=21036 loops=2)
+                    Hash Cond: (r.id = s.row_id)
+                    Filter: (s.value IS NULL)
+                    Rows Removed by Filter: 28964
+                    Buffers: shared hit=38928
+                    ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=16) (actual time=0.005..2.867 rows=50000 loops=2)
+                          Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                          Rows Removed by Filter: 1000
+                          Buffers: shared hit=1573
+                    ->  Parallel Hash  (cost=49793.87..49793.87 rows=40923 width=44) (actual time=52.963..52.963 rows=50000 loops=2)
+                          Buckets: 131072  Batches: 1  Memory Usage: 7104kB
+                          Buffers: shared hit=37292
+                          ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=40923 width=44) (actual time=0.008..45.065 rows=50000 loops=2)
+                                Filter: ((column_id = '1ba7a44a-39fe-2d6f-98fa-f20a03363d45'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                Rows Removed by Filter: 950000
+                                Buffers: shared hit=37292
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.122 ms
+Execution Time: 67.075 ms
+
+### filter_found_email_sorted_by_company
+Sort  (cost=77167.43..77179.42 rows=4796 width=156) (actual time=185.614..190.496 rows=4000 loops=1)
+  Sort Key: r."position", c.column_id
+  Sort Method: quicksort  Memory: 738kB
+  Buffers: shared hit=53862, temp read=916 written=1212
+  I/O Timings: temp read=1.325 write=4.334
+  ->  Nested Loop Left Join  (cost=66970.62..76874.22 rows=4796 width=156) (actual time=182.354..189.204 rows=4000 loops=1)
+        Buffers: shared hit=53862, temp read=916 written=1212
+        I/O Timings: temp read=1.325 write=4.334
+        ->  Limit  (cost=66970.07..67790.97 rows=200 width=94) (actual time=182.349..188.265 rows=200 loops=1)
+              Buffers: shared hit=52339, temp read=916 written=1212
+              I/O Timings: temp read=1.325 write=4.334
+              ->  Nested Loop  (cost=61465.95..368723.96 rows=74859 width=94) (actual time=173.538..188.219 rows=1541 loops=1)
+                    Buffers: shared hit=52339, temp read=916 written=1212
+                    I/O Timings: temp read=1.325 write=4.334
+                    ->  Gather Merge  (cost=61465.39..72855.61 rows=99940 width=94) (actual time=173.491..179.168 rows=2676 loops=1)
+                          Workers Planned: 1
+                          Workers Launched: 1
+                          Buffers: shared hit=38959, temp read=916 written=1212
+                          I/O Timings: temp read=1.325 write=4.334
+                          ->  Sort  (cost=60465.38..60612.35 rows=58788 width=94) (actual time=161.389..161.700 rows=1607 loops=2)
+                                Sort Key: s.value, r."position"
+                                Sort Method: external merge  Disk: 5392kB
+                                Buffers: shared hit=38959, temp read=916 written=1212
+                                I/O Timings: temp read=1.325 write=4.334
+                                Worker 0:  Sort Method: external merge  Disk: 4288kB
+                                ->  Parallel Hash Left Join  (cost=50314.09..52791.42 rows=58788 width=94) (actual time=51.733..66.489 rows=50000 loops=2)
+                                      Hash Cond: (r.id = s.row_id)
+                                      Buffers: shared hit=38914
+                                      ->  Parallel Seq Scan on workbook_rows r  (cost=0.00..2323.00 rows=58788 width=66) (actual time=0.006..3.822 rows=50000 loops=2)
+                                            Filter: (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid)
+                                            Rows Removed by Filter: 1000
+                                            Buffers: shared hit=1573
+                                      ->  Parallel Hash  (cost=49793.87..49793.87 rows=41618 width=44) (actual time=51.305..51.305 rows=50000 loops=2)
+                                            Buckets: 131072  Batches: 1  Memory Usage: 8224kB
+                                            Buffers: shared hit=37292
+                                            ->  Parallel Seq Scan on workbook_cells_p13 s  (cost=0.00..49793.87 rows=41618 width=44) (actual time=0.008..44.158 rows=50000 loops=2)
+                                                  Filter: ((column_id = '1c917e93-3d61-f4cf-0b5b-7267202910b7'::uuid) AND (workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid))
+                                                  Rows Removed by Filter: 950000
+                                                  Buffers: shared hit=37292
+                    ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 f  (cost=0.55..2.95 rows=1 width=16) (actual time=0.003..0.003 rows=1 loops=2676)
+                          Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id) AND (column_id = '578fadcd-c905-b7b5-fece-ec8b79ae397b'::uuid))
+                          Filter: (state = 'found'::text)
+                          Rows Removed by Filter: 0
+                          Buffers: shared hit=13380
+        ->  Index Scan using workbook_cells_p13_pkey on workbook_cells_p13 c  (cost=0.55..45.18 rows=23 width=106) (actual time=0.001..0.003 rows=20 loops=200)
+              Index Cond: ((workbook_id = '42b11095-fa9d-e791-2e79-82fa21d568f0'::uuid) AND (row_id = r.id))
+              Buffers: shared hit=1523
+Settings: effective_cache_size = '1GB'
+Planning:
+  Buffers: shared hit=16
+Planning Time: 0.245 ms
+Execution Time: 191.531 ms

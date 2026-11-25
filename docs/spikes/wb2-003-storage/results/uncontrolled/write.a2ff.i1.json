@@ -1,0 +1,95 @@
+{
+  "variant": "a2ff",
+  "label": "i1",
+  "indexes": [
+    "workbook_cells_col_state_row_idx"
+  ],
+  "options": {
+    "workers": 10,
+    "rowsPerRun": 50000,
+    "readers": 4
+  },
+  "elapsedSec": 144,
+  "cellsUpdated": 500000,
+  "cellsPerSecond": 3472,
+  "perChunk": {
+    "claimMs": {
+      "n": 5000,
+      "min": 8.742541000000529,
+      "p50": 98.12325000000055,
+      "p95": 225.2546250000014,
+      "p99": 378.64279199999874,
+      "max": 571.476834000001,
+      "mean": 109.31532408179979
+    },
+    "completeMs": {
+      "n": 5000,
+      "min": 9.689292000000023,
+      "p50": 95.63204200000109,
+      "p95": 233.32212500000605,
+      "p99": 379.8435000000027,
+      "max": 590.2189580000013,
+      "mean": 112.10523532940007
+    },
+    "totalMs": {
+      "n": 5000,
+      "min": 34.450708000000304,
+      "p50": 197.20337499999732,
+      "p95": 427.32004099999904,
+      "p99": 603.8023750000011,
+      "max": 932.5169170000008,
+      "mean": 221.46197202500076
+    }
+  },
+  "dbMsPerRowP95": 4.273,
+  "readersDuringWrites": {
+    "n": 4794,
+    "min": 15.71650000000227,
+    "p50": 107.11891699999978,
+    "p95": 262.82783300001756,
+    "p99": 415.6571249999979,
+    "max": 775.4063750000023,
+    "mean": 120.17735692010831
+  },
+  "userEditsDuringWrites": {
+    "n": 741,
+    "min": 5.997957999999926,
+    "p50": 63.4776669999992,
+    "p95": 200.57404199999291,
+    "p99": 333.3692080000037,
+    "max": 426.7008339999884,
+    "mean": 88.23428244669361
+  },
+  "hotUpdateRatio": 0.001,
+  "walMB": 646,
+  "sizeGrowth": {
+    "heapMB": 31.2,
+    "indexMB": 83.5
+  },
+  "deadTuplesAfter": 272456,
+  "deadlocks": 0,
+  "integrity": {
+    "targetCellMismatches": 0,
+    "mismatchByColumn": {
+      "7": 0,
+      "8": 0,
+      "9": 0,
+      "10": 0,
+      "11": 0,
+      "12": 0,
+      "13": 0,
+      "14": 0,
+      "17": 0,
+      "18": 0
+    },
+    "stuckInRunning": 0,
+    "duplicatePrimaryKeys": 0,
+    "totalCellsBefore": 2040000,
+    "totalCellsAfter": 2040000,
+    "untouchedCellsUnchanged": true,
+    "untouchedCellsChecked": 900000,
+    "targetCellsBeyondRangeUnchanged": true,
+    "userEditsApplied": "739/739",
+    "claimShortfalls": 3131
+  }
+}

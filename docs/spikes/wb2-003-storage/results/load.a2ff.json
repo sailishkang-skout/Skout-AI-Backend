@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "a2ff",
+    "label": "A2 + fillfactor 80",
+    "partition": "none",
+    "partitions": 1,
+    "idType": "uuid",
+    "workbookIdOnCells": true,
+    "fillfactor": 80
+  },
+  "timings": {
+    "rowsMs": 612,
+    "cellsMs": 20617,
+    "vacuumAnalyzeMs": 358
+  },
+  "cellsPerSecond": 97005,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 372.4,
+    "indexMB": 123.8,
+    "totalMB": 496.2,
+    "partitions": 1
+  },
+  "bytesPerCell": 260,
+  "isolationLoadMs": 1176
+}

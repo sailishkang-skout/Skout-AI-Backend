@@ -1,0 +1,15 @@
+{
+  "variant": "c",
+  "set": "i1",
+  "builds": [
+    {
+      "statement": "CREATE INDEX workbook_cells_col_state_row_idx ON wbs_c.workbook_cells (column_id, state, row_id)",
+      "createMs": 3014,
+      "sizeMB": 117
+    }
+  ],
+  "vacuumAnalyzeMs": 1847,
+  "heapMB": 265.3,
+  "indexTotalMB": 241.6,
+  "totalMB": 506.9
+}

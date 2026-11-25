@@ -1,0 +1,168 @@
+{
+  "variant": "e2",
+  "schema": "wbs_e2",
+  "passed": 32,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "main workbook has the expected rows",
+      "pass": true,
+      "detail": "100000 rows"
+    },
+    {
+      "name": "main workbook has 20 columns",
+      "pass": true,
+      "detail": "20 columns"
+    },
+    {
+      "name": "main workbook has rows x 20 cells",
+      "pass": true,
+      "detail": "2,000,000 cells"
+    },
+    {
+      "name": "second workspace's workbook is complete",
+      "pass": true,
+      "detail": "2000 rows, 40000 cells"
+    },
+    {
+      "name": "no other cells exist",
+      "pass": true,
+      "detail": "table total = both workbooks"
+    },
+    {
+      "name": "no duplicate (row_id, column_id)",
+      "pass": true,
+      "detail": "0 duplicates"
+    },
+    {
+      "name": "no cell without a row",
+      "pass": true,
+      "detail": "0 orphans"
+    },
+    {
+      "name": "no cell without a column",
+      "pass": true,
+      "detail": "0 orphans"
+    },
+    {
+      "name": "cell.workbook_id always equals its row's and column's workbook",
+      "pass": true,
+      "detail": "0 mismatches"
+    },
+    {
+      "name": "foreign key rejects a cell for a missing row",
+      "pass": true,
+      "detail": "insert or update on table \"workbook_cells\" violates foreign key constraint \"workbook_cells_workbook_id_row_id_fkey\""
+    },
+    {
+      "name": "state CHECK rejects an unknown state",
+      "pass": true,
+      "detail": "new row for relation \"workbook_cells\" violates check constraint \"workbook_cells_state_check\""
+    },
+    {
+      "name": "a cell cannot join a row of one workbook to a column of another",
+      "pass": true,
+      "detail": "insert or update on table \"workbook_cells\" violates foreign key constraint \"workbook_cells_workbook_id_column_id_fkey\""
+    },
+    {
+      "name": "enrichment state mix matches the dataset spec (+-0.8 pp at 100k rows)",
+      "pass": true,
+      "detail": "found 58.1% (target 58%), not_found 13.9% (target 14%), queued 8.0% (target 8%), running 1.0% (target 1%), error 6.0% (target 6%), skipped 9.0% (target 9%), needs_input 4.0% (target 4%)"
+    },
+    {
+      "name": "internal_provenance is set exactly for found_via = skout",
+      "pass": true,
+      "detail": "0 exceptions"
+    },
+    {
+      "name": "a window of workbook A returns only workbook A's rows",
+      "pass": true,
+      "detail": "200 rows, 0 from another workbook"
+    },
+    {
+      "name": "window response carries no internal_provenance",
+      "pass": true,
+      "detail": "4000 cell rows, columns: row_id,position,source,suppressed,column_id,value,state,confidence,credits_charged,found_via,error_code,updated_at"
+    },
+    {
+      "name": "a window of workbook B returns only workbook B's rows",
+      "pass": true,
+      "detail": "200 rows, 0 from workbook A"
+    },
+    {
+      "name": "sorting workbook A by a column of workbook B exposes none of B's values",
+      "pass": true,
+      "detail": "4000 cell rows, none from the foreign column"
+    },
+    {
+      "name": "workspace B owns only its own workbook",
+      "pass": true,
+      "detail": "1 workbook(s)"
+    },
+    {
+      "name": "deleting a workspace cascades to its workbooks, rows and cells only",
+      "pass": true,
+      "detail": "deleting workspace B removed its 40000 cells in 381 ms; workspace A still has 2,000,000"
+    },
+    {
+      "name": "sorting all 100k rows by a text column matches an independent JS sort",
+      "pass": true,
+      "detail": "100000 rows compared end to end"
+    },
+    {
+      "name": "numeric sort (jsonb order) window at offset 0 matches the JS sort",
+      "pass": true,
+      "detail": "200 rows"
+    },
+    {
+      "name": "numeric sort (jsonb order) window at offset 30718 matches the JS sort",
+      "pass": true,
+      "detail": "200 rows"
+    },
+    {
+      "name": "numeric sort (jsonb order) window at offset 60446 matches the JS sort",
+      "pass": true,
+      "detail": "200 rows"
+    },
+    {
+      "name": "numeric sort (jsonb order) window at offset 90293 matches the JS sort",
+      "pass": true,
+      "detail": "200 rows"
+    },
+    {
+      "name": "numeric sort (jsonb order) window at offset 99800 matches the JS sort",
+      "pass": true,
+      "detail": "200 rows"
+    },
+    {
+      "name": "sorting happens in the database and returns one window",
+      "pass": true,
+      "detail": "plan has a Sort/index-ordered node and a Limit; the client received 4000 cell rows, not 100k"
+    },
+    {
+      "name": "filter state_error: count and first window match the oracle (Work email: state is error (~6% of rows))",
+      "pass": true,
+      "detail": "db 5,955 vs oracle 5,955 rows across all 100,000"
+    },
+    {
+      "name": "filter value_equals: count and first window match the oracle (Email status = valid (~40% of rows))",
+      "pass": true,
+      "detail": "db 40,704 vs oracle 40,704 rows across all 100,000"
+    },
+    {
+      "name": "filter text_contains: count and first window match the oracle (Domain ends with .io (~17% of rows))",
+      "pass": true,
+      "detail": "db 16,766 vs oracle 16,766 rows across all 100,000"
+    },
+    {
+      "name": "filter numeric_gt: count and first window match the oracle (Lead score > 80 (~19% of rows))",
+      "pass": true,
+      "detail": "db 18,777 vs oracle 18,777 rows across all 100,000"
+    },
+    {
+      "name": "filter is_empty: count and first window match the oracle (Phone is empty (~42% of rows))",
+      "pass": true,
+      "detail": "db 42,071 vs oracle 42,071 rows across all 100,000"
+    }
+  ]
+}

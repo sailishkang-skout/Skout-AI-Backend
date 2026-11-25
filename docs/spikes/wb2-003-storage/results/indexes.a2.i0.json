@@ -1,0 +1,9 @@
+{
+  "variant": "a2",
+  "set": "i0",
+  "builds": [],
+  "vacuumAnalyzeMs": 183,
+  "heapMB": 297.2,
+  "indexTotalMB": 123.8,
+  "totalMB": 421
+}

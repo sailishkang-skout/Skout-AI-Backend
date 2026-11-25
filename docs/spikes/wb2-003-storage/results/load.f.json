@@ -1,0 +1,31 @@
+{
+  "variant": {
+    "key": "f",
+    "label": "F  bigint ids + hash(workbook_id) x64 + fillfactor 80",
+    "partition": "hash_workbook",
+    "partitions": 64,
+    "idType": "bigint",
+    "workbookIdOnCells": true,
+    "fillfactor": 80
+  },
+  "timings": {
+    "rowsMs": 454,
+    "cellsMs": 20387,
+    "vacuumAnalyzeMs": 573
+  },
+  "cellsPerSecond": 98102,
+  "counts": {
+    "rows": 100000,
+    "cells": 2000000,
+    "columns": 20,
+    "workbooks": 2
+  },
+  "sizes": {
+    "heapMB": 352.6,
+    "indexMB": 115.1,
+    "totalMB": 467.7,
+    "partitions": 64
+  },
+  "bytesPerCell": 245,
+  "isolationLoadMs": 1148
+}

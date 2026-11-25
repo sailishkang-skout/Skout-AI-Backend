@@ -37,7 +37,8 @@
     "studio": "drizzle-kit studio",
     "truncate": "tsx src/truncate.ts",
     "test": "vitest run --passWithNoTests",
-    "backfill-deal-closed-status": "tsx src/backfill-deal-closed-status.ts"
+    "backfill-deal-closed-status": "tsx src/backfill-deal-closed-status.ts",
+    "spike:wb2-003": "tsx src/spikes/wb2-003-storage/spike.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.2",

@@ -1,0 +1,99 @@
+{
+  "variant": "a2ff",
+  "label": "ctl-i1-r1",
+  "indexes": [
+    "workbook_cells_col_state_row_idx"
+  ],
+  "environment": {
+    "settleMs": 9019,
+    "calibrationMs": 598
+  },
+  "options": {
+    "workers": 10,
+    "rowsPerRun": 20000,
+    "readers": 4
+  },
+  "elapsedSec": 17.7,
+  "cellsUpdated": 200000,
+  "cellsPerSecond": 11297,
+  "perChunk": {
+    "claimMs": {
+      "n": 2000,
+      "min": 6.473458000000392,
+      "p50": 31.407708000002458,
+      "p95": 57.27258299999812,
+      "p99": 74.06299999999828,
+      "max": 102.56270899999981,
+      "mean": 33.4290901989999
+    },
+    "completeMs": {
+      "n": 2000,
+      "min": 5.496166000000812,
+      "p50": 29.97466600000189,
+      "p95": 58.43145899999945,
+      "p99": 85.4788750000007,
+      "max": 114.72516599999835,
+      "mean": 32.68079776549996
+    },
+    "totalMs": {
+      "n": 2000,
+      "min": 19.971083000000363,
+      "p50": 64.0994580000006,
+      "p95": 95.08100000000195,
+      "p99": 120.16604200000074,
+      "max": 186.51437500000065,
+      "mean": 66.12557587599989
+    }
+  },
+  "dbMsPerRowP95": 0.951,
+  "readersDuringWrites": {
+    "n": 2343,
+    "min": 9.379042000000481,
+    "p50": 27.335000000002765,
+    "p95": 55.73199999999997,
+    "p99": 79.32766700000138,
+    "max": 125.82116700000006,
+    "mean": 30.2570874699103
+  },
+  "userEditsDuringWrites": {
+    "n": 246,
+    "min": 6.422500000000582,
+    "p50": 23.798624999999447,
+    "p95": 51.98504099999991,
+    "p99": 70.79662500000268,
+    "max": 94.9169579999998,
+    "mean": 26.833296215447305
+  },
+  "hotUpdateRatio": 0.001,
+  "walMB": 335.4,
+  "sizeGrowth": {
+    "heapMB": 6.9,
+    "indexMB": 56.3
+  },
+  "deadTuplesAfter": 389633,
+  "deadlocks": 0,
+  "integrity": {
+    "targetCellMismatches": 0,
+    "mismatchByColumn": {
+      "7": 0,
+      "8": 0,
+      "9": 0,
+      "10": 0,
+      "11": 0,
+      "12": 0,
+      "13": 0,
+      "14": 0,
+      "17": 0,
+      "18": 0
+    },
+    "stuckInRunning": 0,
+    "duplicatePrimaryKeys": 0,
+    "totalCellsBefore": 2040000,
+    "totalCellsAfter": 2040000,
+    "untouchedCellsUnchanged": true,
+    "untouchedCellsChecked": 900000,
+    "targetCellsBeyondRangeUnchanged": true,
+    "userEditsApplied": "246/246",
+    "claimShortfalls": 1232
+  }
+}

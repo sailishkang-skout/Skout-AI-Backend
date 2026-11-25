@@ -1,0 +1,20 @@
+{
+  "variant": "a2",
+  "set": "i3",
+  "builds": [
+    {
+      "statement": "CREATE INDEX workbook_cells_col_state_row_idx ON wbs_a2.workbook_cells (column_id, state, row_id)",
+      "createMs": 1423,
+      "sizeMB": 116.6
+    },
+    {
+      "statement": "CREATE INDEX workbook_cells_col_row_cover_idx ON wbs_a2.workbook_cells (column_id, row_id) INCLUDE (state, value)",
+      "createMs": 1203,
+      "sizeMB": 170.9
+    }
+  ],
+  "vacuumAnalyzeMs": 170,
+  "heapMB": 297.2,
+  "indexTotalMB": 411.4,
+  "totalMB": 708.5
+}

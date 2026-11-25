@@ -1,0 +1,222 @@
+{
+  "variant": "e2",
+  "label": "ctl-grown-2",
+  "runs": 1,
+  "environment": {
+    "settleMs": 8933,
+    "calibrationMs": 585,
+    "calibrationAfterMs": 579
+  },
+  "p95AcrossRuns": {
+    "window_random": {
+      "min": 16.1,
+      "median": 16.1,
+      "max": 16.1
+    },
+    "window_8_concurrent_clients": {
+      "min": 83.7,
+      "median": 83.7,
+      "max": 83.7
+    },
+    "sort_company_asc_top": {
+      "min": 214.1,
+      "median": 214.1,
+      "max": 214.1
+    },
+    "sort_company_asc_deep_offset": {
+      "min": 228.8,
+      "median": 228.8,
+      "max": 228.8
+    },
+    "sort_lead_score_desc_top": {
+      "min": 169.8,
+      "median": 169.8,
+      "max": 169.8
+    },
+    "filter_state_error_window": {
+      "min": 95.8,
+      "median": 95.8,
+      "max": 95.8
+    },
+    "filter_value_equals_window": {
+      "min": 220.3,
+      "median": 220.3,
+      "max": 220.3
+    },
+    "filter_text_contains_window": {
+      "min": 171.1,
+      "median": 171.1,
+      "max": 171.1
+    },
+    "filter_found_email_sorted_by_company": {
+      "min": 205.1,
+      "median": 205.1,
+      "max": 205.1
+    }
+  },
+  "suites": [
+    {
+      "variant": "e2",
+      "label": "E2 bigint ids + workbook_id",
+      "indexes": [
+        "workbook_cells_col_state_row_idx"
+      ],
+      "rows": 100000,
+      "results": [
+        {
+          "name": "window_random",
+          "targetMs": 300,
+          "concurrency": 1,
+          "summary": {
+            "n": 300,
+            "min": 5.276499999999942,
+            "p50": 8.05225000000064,
+            "p95": 16.075583000001643,
+            "p99": 24.26366599999892,
+            "max": 67.00529199999983,
+            "mean": 9.486608339999966
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1251038,
+          "stoppedEarly": false
+        },
+        {
+          "name": "window_8_concurrent_clients",
+          "targetMs": 300,
+          "concurrency": 8,
+          "summary": {
+            "n": 800,
+            "min": 9.968292000001384,
+            "p50": 52.06120899999951,
+            "p95": 83.67437500000051,
+            "p99": 116.6038750000007,
+            "max": 146.77345799999966,
+            "mean": 54.67433027000003
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1246904,
+          "stoppedEarly": false
+        },
+        {
+          "name": "sort_company_asc_top",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 106.93754199999967,
+            "p50": 134.98354200000176,
+            "p95": 214.05687500000204,
+            "p99": 292.79004200000054,
+            "max": 292.79004200000054,
+            "mean": 154.9627064000004
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1243810,
+          "stoppedEarly": false
+        },
+        {
+          "name": "sort_company_asc_deep_offset",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 108.23495899999762,
+            "p50": 198.44249999999738,
+            "p95": 228.81670799999847,
+            "p99": 237.25054100000125,
+            "max": 237.25054100000125,
+            "mean": 192.43788534999968
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1241910,
+          "stoppedEarly": false
+        },
+        {
+          "name": "sort_lead_score_desc_top",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 95.51070800000161,
+            "p50": 106.79624999999942,
+            "p95": 169.80358299999716,
+            "p99": 183.25437500000044,
+            "max": 183.25437500000044,
+            "mean": 120.84674790000008
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1243378,
+          "stoppedEarly": false
+        },
+        {
+          "name": "filter_state_error_window",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 22.810083000000304,
+            "p50": 41.351458000001,
+            "p95": 95.83837499999936,
+            "p99": 104.74333399999887,
+            "max": 104.74333399999887,
+            "mean": 49.617547999999985
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1249237,
+          "stoppedEarly": false
+        },
+        {
+          "name": "filter_value_equals_window",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 98.64912500000355,
+            "p50": 121.76045799999702,
+            "p95": 220.27479199999652,
+            "p99": 375.9320829999997,
+            "max": 375.9320829999997,
+            "mean": 152.16898755000003
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1243040,
+          "stoppedEarly": false
+        },
+        {
+          "name": "filter_text_contains_window",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 97.62216600000102,
+            "p50": 129.79295800000546,
+            "p95": 171.14304200000333,
+            "p99": 223.13474999999744,
+            "max": 223.13474999999744,
+            "mean": 137.18250410000002
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1243589,
+          "stoppedEarly": false
+        },
+        {
+          "name": "filter_found_email_sorted_by_company",
+          "targetMs": 1500,
+          "concurrency": 1,
+          "summary": {
+            "n": 20,
+            "min": 122.84941600000457,
+            "p50": 166.05025000000023,
+            "p95": 205.05970900000102,
+            "p99": 222.9717079999973,
+            "max": 222.9717079999973,
+            "mean": 164.18769369999936
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1255051,
+          "stoppedEarly": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "variant": "d",
+  "label": "small500",
+  "runs": 1,
+  "p95AcrossRuns": {
+    "window_random": {
+      "min": 27,
+      "median": 27,
+      "max": 27
+    },
+    "window_first": {
+      "min": 11.5,
+      "median": 11.5,
+      "max": 11.5
+    },
+    "window_middle": {
+      "min": 10.5,
+      "median": 10.5,
+      "max": 10.5
+    },
+    "window_last": {
+      "min": 14.3,
+      "median": 14.3,
+      "max": 14.3
+    },
+    "window_8_concurrent_clients": {
+      "min": 135.2,
+      "median": 135.2,
+      "max": 135.2
+    }
+  },
+  "suites": [
+    {
+      "variant": "d",
+      "label": "D  list(workbook_id), one per workbook",
+      "indexes": [
+        "workbook_cells_col_state_row_idx"
+      ],
+      "rows": 100000,
+      "results": [
+        {
+          "name": "window_random",
+          "targetMs": 300,
+          "concurrency": 1,
+          "summary": {
+            "n": 300,
+            "min": 6.0909999999998945,
+            "p50": 11.932749999999942,
+            "p95": 26.983667000000025,
+            "p99": 34.64999999999998,
+            "max": 44.27408300000002,
+            "mean": 13.560570146666675
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1375038,
+          "stoppedEarly": false
+        },
+        {
+          "name": "window_first",
+          "targetMs": 300,
+          "concurrency": 1,
+          "summary": {
+            "n": 60,
+            "min": 5.985791000000063,
+            "p50": 6.353500000000167,
+            "p95": 11.486833999999362,
+            "p99": 12.594791000000441,
+            "max": 12.594791000000441,
+            "mean": 7.274509616666637
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1360668,
+          "stoppedEarly": false
+        },
+        {
+          "name": "window_middle",
+          "targetMs": 300,
+          "concurrency": 1,
+          "summary": {
+            "n": 60,
+            "min": 6.132416999999805,
+            "p50": 6.61304199999995,
+            "p95": 10.549332999999933,
+            "p99": 10.973042000000532,
+            "max": 10.973042000000532,
+            "mean": 7.24990896666659
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1372869,
+          "stoppedEarly": false
+        },
+        {
+          "name": "window_last",
+          "targetMs": 300,
+          "concurrency": 1,
+          "summary": {
+            "n": 60,
+            "min": 6.015166999999565,
+            "p50": 9.141749999999774,
+            "p95": 14.292000000000371,
+            "p99": 20.839874999999665,
+            "max": 20.839874999999665,
+            "mean": 9.50248049999997
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1373243,
+          "stoppedEarly": false
+        },
+        {
+          "name": "window_8_concurrent_clients",
+          "targetMs": 300,
+          "concurrency": 8,
+          "summary": {
+            "n": 800,
+            "min": 17.68095799999992,
+            "p50": 75.52649999999994,
+            "p95": 135.21858299999985,
+            "p99": 178.65904200000114,
+            "max": 276.16058300000077,
+            "mean": 79.66823885374997
+          },
+          "sampleRows": 4000,
+          "sampleBytes": 1370746,
+          "stoppedEarly": false
+        }
+      ]
+    }
+  ]
+}
