@@ -61,7 +61,7 @@
     const status = panel.querySelector("#skout-ai-status");
     if (!status) return;
     status.textContent = message;
-    status.style.color = isError ? "#fca5a5" : "#94a3b8";
+    status.style.color = isError ? "#fca5a5" : "#b4c0d4";
   }
 
   function populateLists(select, lists, selectedId) {
@@ -162,9 +162,9 @@
         }
         #skout-ai-bulk-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
         #skout-ai-bulk-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-        #skout-ai-bulk-close { background: transparent; border: 0; color: #94a3b8; cursor: pointer; font-size: 18px; }
+        #skout-ai-bulk-close { background: transparent; border: 0; color: #b4c0d4; cursor: pointer; font-size: 18px; }
         #skout-ai-bulk-summary { margin: 0 0 8px; font-size: 12px; color: #cbd5e1; }
-        #skout-ai-bulk-panel label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+        #skout-ai-bulk-panel label { display: block; font-size: 11px; color: #b4c0d4; margin-bottom: 4px; }
         #skout-ai-bulk-list-select {
           width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
           border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
@@ -181,14 +181,14 @@
         }
         .skout-bulk-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 2px; font-size: 11px; }
         .skout-bulk-row label { margin: 0; flex: 1; cursor: pointer; color: #e2e8f0; line-height: 1.35; }
-        .skout-bulk-row small { display: block; color: #94a3b8; font-size: 10px; margin-top: 2px; }
+        .skout-bulk-row small { display: block; color: #b4c0d4; font-size: 11px; margin-top: 2px; }
         #skout-ai-bulk-add {
           width: 100%; border: 0; border-radius: 8px; padding: 8px 10px; font-size: 12px; font-weight: 600;
           cursor: pointer; background: #2563eb; color: white;
         }
         #skout-ai-bulk-add:disabled { opacity: 0.6; cursor: wait; }
-        #skout-ai-bulk-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
-        #skout-ai-bulk-progress { margin-top: 4px; font-size: 10px; color: #64748b; display: none; }
+        #skout-ai-bulk-status { margin-top: 8px; font-size: 11px; color: #b4c0d4; }
+        #skout-ai-bulk-progress { margin-top: 4px; font-size: 11px; color: #b4c0d4; display: none; }
         .skout-bulk-row-status { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
         .skout-bulk-row input[type="checkbox"]:disabled + label { opacity: 0.45; }
       </style>
@@ -269,7 +269,7 @@
     // Processed URLs from previous add operations: url -> { icon, color }
     const processed = panel.__skoutProcessedUrls || new Map();
     if (!results.length) {
-      rowsEl.innerHTML = `<p style="margin:0;font-size:11px;color:#94a3b8;">No profile cards detected. Open LinkedIn people search results and click Rescan.</p>`;
+      rowsEl.innerHTML = `<p style="margin:0;font-size:11px;color:#b4c0d4;">No profile cards detected. Open LinkedIn people search results and click Rescan.</p>`;
       updateBulkSelectionSummary(panel);
       return;
     }
@@ -315,7 +315,7 @@
     const status = panel.querySelector("#skout-ai-bulk-status");
     if (!status) return;
     status.textContent = message;
-    status.style.color = isError ? "#fca5a5" : "#94a3b8";
+    status.style.color = isError ? "#fca5a5" : "#b4c0d4";
   }
 
   async function onBulkAdd(panel) {
@@ -348,7 +348,7 @@
         if (r.status === "added") {
           panel.__skoutProcessedUrls.set(r.linkedinUrl, { icon: "✓", color: "#86efac" });
         } else if (r.status === "skipped") {
-          panel.__skoutProcessedUrls.set(r.linkedinUrl, { icon: "⊘", color: "#64748b" });
+          panel.__skoutProcessedUrls.set(r.linkedinUrl, { icon: "⊘", color: "#b4c0d4" });
         }
       });
 
@@ -367,7 +367,7 @@
           cb.checked = false;
           cb.disabled = true;
         } else if (r.status === "skipped") {
-          if (statusSpan) { statusSpan.textContent = "⊘"; statusSpan.style.color = "#64748b"; }
+          if (statusSpan) { statusSpan.textContent = "⊘"; statusSpan.style.color = "#b4c0d4"; }
           cb.checked = false;
           cb.disabled = true;
         } else if (r.status === "failed") {
@@ -421,9 +421,9 @@
         }
         #skout-ai-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
         #skout-ai-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
-        #skout-ai-close { background: transparent; border: 0; color: #94a3b8; cursor: pointer; font-size: 18px; }
+        #skout-ai-close { background: transparent; border: 0; color: #b4c0d4; cursor: pointer; font-size: 18px; }
         #skout-ai-summary { margin: 0 0 10px; font-size: 12px; color: #cbd5e1; line-height: 1.4; }
-        #skout-ai-panel label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
+        #skout-ai-panel label { display: block; font-size: 11px; color: #b4c0d4; margin-bottom: 4px; }
         #skout-ai-list-select {
           width: 100%; box-sizing: border-box; margin-bottom: 8px; border-radius: 8px;
           border: 1px solid #334155; padding: 7px 8px; font-size: 12px; background: #1e293b; color: #f8fafc;
@@ -442,16 +442,16 @@
         #skout-ai-score { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
         #skout-ai-icp-badge { margin: 0 0 8px; font-size: 11px; color: #86efac; display: none; }
         #skout-ai-panel button:disabled { opacity: 0.6; cursor: wait; }
-        #skout-ai-status { margin-top: 8px; font-size: 11px; color: #94a3b8; }
+        #skout-ai-status { margin-top: 8px; font-size: 11px; color: #b4c0d4; }
         #skout-ai-field-picker { margin-bottom: 6px; }
-        #skout-ai-field-picker p { margin: 0 0 4px; font-size: 11px; color: #64748b; }
+        #skout-ai-field-picker p { margin: 0 0 4px; font-size: 11px; color: #b4c0d4; }
         .skout-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
         .skout-field-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #cbd5e1; cursor: pointer; }
         .skout-field-item input { width: auto; margin: 0; cursor: pointer; }
         #skout-ai-enrich-results { margin-top: 6px; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; display: none; }
         .skout-result-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px; border-bottom: 1px solid #1e293b; }
         .skout-result-row:last-child { border-bottom: 0; }
-        .skout-result-label { color: #64748b; width: 64px; flex-shrink: 0; text-transform: capitalize; }
+        .skout-result-label { color: #b4c0d4; width: 64px; flex-shrink: 0; text-transform: capitalize; }
         .skout-result-value { flex: 1; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .skout-result-icon { flex-shrink: 0; font-size: 11px; width: 14px; text-align: center; }
         #skout-ai-credits-hint { margin-top: 6px; font-size: 11px; color: #fcd34d; display: none; }
@@ -523,7 +523,7 @@
       if (profile.employeeCount) meta.push(`${esc(profile.employeeCount)} employees`);
       if (profile.domain) meta.push(esc(profile.domain));
       if (profile.followers) meta.push(`${esc(profile.followers)} followers`);
-      if (meta.length) lines.push(`<span style="color:#94a3b8">${meta.join(" · ")}</span>`);
+      if (meta.length) lines.push(`<span style="color:#b4c0d4">${meta.join(" · ")}</span>`);
       return lines.join("<br>");
     }
 
@@ -532,7 +532,7 @@
       const lines = [`<strong style="color:#f8fafc">${esc(profile.fullName)}</strong>`];
       if (profile.title) lines.push(esc(profile.title));
       if (profile.companyName) lines.push(`@ ${esc(profile.companyName)}`);
-      lines.push(`<span style="color:#94a3b8">Captured from LinkedIn post</span>`);
+      lines.push(`<span style="color:#b4c0d4">Captured from LinkedIn post</span>`);
       return lines.join("<br>");
     }
 
@@ -544,7 +544,7 @@
     if (profile.location) meta.push(esc(profile.location));
     if (profile.connections) meta.push(`${esc(profile.connections)} connections`);
     if (profile.followers) meta.push(`${esc(profile.followers)} followers`);
-    if (meta.length) lines.push(`<span style="color:#94a3b8">${meta.join(" · ")}</span>`);
+    if (meta.length) lines.push(`<span style="color:#b4c0d4">${meta.join(" · ")}</span>`);
     return lines.join("<br>");
   }
 
@@ -803,7 +803,7 @@
         (f) => `
       <div class="skout-result-row" data-field="${esc(f)}">
         <span class="skout-result-label">${esc(FIELD_LABELS[f] || f)}</span>
-        <span class="skout-result-value" style="color:#475569">⏳</span>
+        <span class="skout-result-value" style="color:#b4c0d4">⏳</span>
         <span class="skout-result-icon"></span>
       </div>`
       )
@@ -830,8 +830,8 @@
           if (iconEl) { iconEl.textContent = "in"; iconEl.style.color = "#60a5fa"; }
           continue;
         }
-        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#b4c0d4"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#b4c0d4"; }
       } else if (match.validationStatus === "skipped") {
         const reason = match.valueJson?.reason;
         if (valueEl) {
@@ -845,8 +845,8 @@
       } else {
         const displayValue = displayValueForResult(field, match);
         if (!displayValue || match.status === "not_found") {
-            if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-            if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+            if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#b4c0d4"; }
+            if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#b4c0d4"; }
         } else {
           if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
           if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
@@ -881,8 +881,8 @@
       } else {
         const displayValue = displayValueForResult(field, match);
         if (!displayValue || match.status === "not_found") {
-        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#475569"; }
-        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#475569"; }
+        if (valueEl) { valueEl.textContent = "Not found"; valueEl.style.color = "#b4c0d4"; }
+        if (iconEl) { iconEl.textContent = "—"; iconEl.style.color = "#b4c0d4"; }
         } else {
           if (valueEl) { valueEl.textContent = displayValue; valueEl.style.color = "#e2e8f0"; }
           if (iconEl) { iconEl.textContent = "✓"; iconEl.style.color = "#86efac"; }
@@ -969,7 +969,7 @@
       }
     } catch (error) {
       panel.querySelectorAll("#skout-ai-enrich-results .skout-result-value").forEach((el) => {
-        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#475569"; }
+        if (el.textContent === "⏳") { el.textContent = "—"; el.style.color = "#b4c0d4"; }
       });
       const msg = error instanceof Error ? error.message : "Enrich failed";
       const isCreditsError =

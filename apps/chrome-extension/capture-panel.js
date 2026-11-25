@@ -4,6 +4,10 @@ export const DRAFT_KEY = "skoutCaptureDraft";
 export const PROGRESS_KEY = "skoutCaptureProgress";
 export const HALT_KEY = "skoutCaptureHalt";
 export const RUN_QUEUE_KEY = "skoutCaptureRunQueue";
+export const JOB_SCAN_RESULT_KEY = "skoutJobScanResult";
+export const JOB_SCAN_PENDING_KEY = "skoutJobScanPending";
+export const JOB_SCAN_LIVE_KEY = "skoutJobScanLive";
+export const jobScanCheckpointKey = (companyId) => `skoutJobScanCheckpoint:${companyId}`;
 const checkpointKey = (companyId) => `company-people-capture:${companyId}`;
 /** Matches capture-background.js: a reader silent for this long is no longer running. */
 const PROGRESS_STALE_MS = 3 * 60 * 1000;
@@ -45,9 +49,12 @@ export function companyIdForUrl(url) {
 const isPublicProfileUrl = (value) => /^https:\/\/(www\.)?linkedin\.com\/in\/[^/]+\/?$/.test(value || "");
 
 /** The draft as it will be saved: the edited data minus the leads the reviewer unticked. */
-export function reviewedData(data, excludedIds) {
-  if (!Array.isArray(data?.peopleProfiles) || !excludedIds?.size) return data;
-  return { ...data, peopleProfiles: data.peopleProfiles.filter((profile) => !excludedIds.has(profile.publicId)) };
+export function reviewedData(data, excludedIds, options = {}) {
+  let out = data;
+  // The reviewer can leave the job roles out of what is saved with the company.
+  if (options.skipJobs && out?.jobScan) { const { jobScan: _jobScan, ...rest } = out; out = rest; }
+  if (!Array.isArray(out?.peopleProfiles) || !excludedIds?.size) return out;
+  return { ...out, peopleProfiles: out.peopleProfiles.filter((profile) => !excludedIds.has(profile.publicId)) };
 }
 
 /** One-line counts of what a draft contains. */
@@ -67,9 +74,11 @@ export function draftSummary(kind, data) {
   } else if (kind === "company") {
     parts.push(`${Object.keys(data.sectionCaptures || {}).length} company sections`);
     if (data.employeesOnLi != null) parts.push(`${data.employeesOnLi} members on LinkedIn`);
-    for (const [key, label] of [["openJobs", "jobs"], ["products", "products"], ["recentPosts", "posts"]]) {
+    for (const [key, label] of [["products", "products"], ["recentPosts", "posts"]]) {
       if (size(data[key])) parts.push(`${size(data[key])} ${label}`);
     }
+    if (data.jobScan) parts.push(`${size(data.jobScan.jobs)} job roles (${jobScanStatusLabel(data.jobScan)})`);
+    else if (size(data.openJobs)) parts.push(`${size(data.openJobs)} jobs`);
     parts.push(`${size(data.peopleProfiles)} people (discovery candidates)`);
   } else {
     const leads = data.peopleProfiles || [];
@@ -173,6 +182,19 @@ export function companyProgressText(company) {
 
 /** One line for a company in a running queue. */
 export function runItemText(item) {
+  if (item?.workflow) {
+    const order = Object.keys(WORKFLOW_STEP_LABELS);
+    const number = Math.max(0, order.indexOf(item.step || "company")) + 1;
+    const label = WORKFLOW_STEP_LABELS[item.step || "company"];
+    switch (item.status) {
+      case "running": return `Step ${number} of ${order.length} · ${label} · working…`;
+      case "review": return `Step ${number} of ${order.length} · ${label} · review and save above`;
+      case "pending": return item.attempts ? `Trying again (attempt ${item.attempts + 1}) · ${label}` : `Step ${number} of ${order.length} · ${label} · waiting`;
+      case "done": return item.moreRemain ? "Finished with more people remaining · retry continues" : "Complete · verified in the workspace";
+      case "failed": return `Stopped at ${label}: ${item.error || "unknown error"}`;
+      case "skipped": return "Skipped";
+    }
+  }
   switch (item?.status) {
     case "running": return item.batches ? `Reading batch ${item.batches + 1}…` : "Reading people…";
     case "review": return "Review and save the batch above";
@@ -180,11 +202,122 @@ export function runItemText(item) {
       const batches = item.batches > 1 ? ` in ${item.batches} batches` : "";
       return `Saved ${item.saved ?? 0} people${batches}${item.moreRemain ? " · more remain, pick it again to continue" : ""}`;
     }
-    case "pending": return item.batches ? `Batch ${item.batches} saved (${item.saved ?? 0} people so far) · reading the next batch` : "Waiting";
+    case "pending": return item.attempts ? `Trying again (attempt ${item.attempts + 1})` : item.batches ? `Batch ${item.batches} saved (${item.saved ?? 0} people so far) · reading the next batch` : "Waiting";
     case "skipped": return "Skipped";
     case "failed": return `Could not read: ${item.error || "unknown error"}`;
     default: return "Waiting";
   }
+}
+
+const VERIFICATION_LABELS = {
+  verified: "Completed & verified",
+  missing_data: "Completed with missing data",
+  verification_required: "Verification required",
+  partial: "Partial capture",
+  not_loaded: "Not loaded",
+  restricted: "Restricted by LinkedIn",
+  failed: "Failed",
+};
+const SECTION_WORDS = { complete: "matches what LinkedIn shows", incomplete: "short of what LinkedIn shows", none: "none on LinkedIn (confirmed)", not_loaded: "did not load", restricted: "restricted by LinkedIn", failed: "could not be read" };
+
+/** The review lines for a capture's verification scan: the verdict, each section, and what was not found. */
+export function verificationLines(verification) {
+  if (!verification) return [];
+  const lines = [`Verification: ${VERIFICATION_LABELS[verification.status] || "Unknown"} (${verification.passes} scan${verification.passes === 1 ? "" : "s"})`];
+  for (const [key, section] of Object.entries(verification.sections || {})) {
+    const name = key.charAt(0).toUpperCase() + key.slice(1);
+    lines.push(`${name}: ${section.found}${section.expected !== undefined ? ` of ${section.expected}` : ""} · ${SECTION_WORDS[section.state] || section.state}${section.note ? ` (${section.note})` : ""}`);
+  }
+  if (verification.missing?.length) lines.push(`Not found on the profile: ${verification.missing.join(", ")}. Fill any you know below.`);
+  lines.push(...(verification.notes || []).filter((note) => !/^(Skills|Education|Experience): captured/.test(note)));
+  return lines;
+}
+
+/** What to tell the user after a save: complete, or partial with what is missing. Never "saved" alone for a partial capture. */
+export function captureCompletenessText(completeness) {
+  if (!completeness || completeness.level === "unverified") return "";
+  if (completeness.level === "complete") return " Complete: every section was found and checked.";
+  const parts = [...(completeness.incomplete || []).map((name) => `${name} is incomplete`), ...(completeness.missing?.length ? [`not found: ${completeness.missing.join(", ")}`] : [])];
+  return ` PARTIAL capture${parts.length ? ` (${parts.join("; ")})` : ""}. The data found is saved; open the page again and recapture to complete it.`;
+}
+
+/** How far a job scan can be trusted, in words (before and after the workspace has judged it). */
+export function jobScanStatusLabel(scan) {
+  const jobs = Array.isArray(scan?.jobs) ? scan.jobs.length : Number(scan?.jobsFound) || 0;
+  const passes = Array.isArray(scan?.passes) ? scan.passes : [];
+  switch (scan?.status) {
+    case "completed_verified": return "Completed & verified";
+    case "verification_required": return "Verification required";
+    case "partial": return "Partial capture";
+    case "not_found": return "Not found (confirmed by two scans)";
+    case "restricted": return "Restricted by LinkedIn";
+    case "not_loaded": return "Not loaded";
+    case "failed": return "Failed";
+    case "in_progress": return "In progress";
+    case "requested": return "Requested";
+    case "completed": {
+      // A finished scan the workspace has not judged yet: the same rules apply.
+      const twice = passes.length >= 2 && passes.every((pass) => pass.complete);
+      if (twice) return jobs ? "Completed & verified" : "Not found (confirmed by two scans)";
+      return passes.some((pass) => !pass.complete) && jobs ? "Partial capture" : "Verification required";
+    }
+    default: return "Unknown";
+  }
+}
+
+/** Counts of a job scan in words: what was captured, updated, skipped, failed and is still to read. */
+export function jobScanCountsText(scan) {
+  if (!scan) return "";
+  const counts = scan.counts || {};
+  const found = Number(scan.jobsFound ?? counts.found) || 0;
+  const parts = [`${found}${counts.expected ? ` of ${counts.expected}` : ""} role${found === 1 && !counts.expected ? "" : "s"} captured`];
+  if (scan.jobsNew != null) parts.push(`${scan.jobsNew} new`, `${scan.jobsUpdated || 0} updated`);
+  if (counts.skipped) parts.push(`${counts.skipped} skipped (another company)`);
+  if (counts.failed) parts.push(`${counts.failed} failed`);
+  const remaining = Math.max(Number(counts.remaining) || 0, counts.expected ? Math.max(0, counts.expected - found) : 0);
+  if (remaining) parts.push(`${remaining} remaining`);
+  if (counts.resumed) parts.push("resumed");
+  return parts.join(" · ");
+}
+
+/** The running scan in one line: the company, what it is doing, and what it has found, skipped and failed so far. */
+export function jobScanLiveText(live) {
+  if (!live) return "";
+  const parts = [`${live.found || 0}${live.expected ? ` of about ${live.expected}` : ""} found`];
+  if (live.skipped) parts.push(`${live.skipped} skipped`);
+  if (live.failed) parts.push(`${live.failed} failed`);
+  return `${live.name || live.companyId}: ${live.text || "scanning"} · ${parts.join(" · ")}`;
+}
+
+/** The workflow steps of a queued company, each with its own status and what it produced. */
+const STEP_STATUS_WORDS = { pending: "waiting", running: "in progress", done: "done", partial: "partial", failed: "failed", skipped: "skipped" };
+export const WORKFLOW_STEP_LABELS = { company: "Company profile", jobs: "Job roles", people: "Employees", verify: "Verification" };
+export function workflowSteps(item) {
+  if (!item?.workflow) return [];
+  return Object.keys(WORKFLOW_STEP_LABELS).map((key) => {
+    const detail = item.stepDetail?.[key];
+    const current = item.step === key && ["running", "review", "pending"].includes(item.status);
+    const status = detail?.status || (current ? "running" : "pending");
+    const counts = [];
+    if (key === "jobs" && detail?.found != null) counts.push(`${detail.found} found`, ...(detail.updated ? [`${detail.updated} updated`] : []));
+    if (key === "people" && detail?.captured != null) counts.push(`${detail.captured} captured`, ...(detail.duplicates ? [`${detail.duplicates} duplicates`] : []), ...(detail.refused ? [`${detail.refused} refused`] : []));
+    if (key === "verify" && detail?.status === "done") counts.push(`${detail.found ?? 0} roles · ${detail.captured ?? 0} people in the workspace`);
+    if (detail?.failed) counts.push(`${detail.failed} failed`);
+    const text = [counts.join(" · "), detail?.error, detail?.note].filter(Boolean).join(" — ");
+    return { key, label: WORKFLOW_STEP_LABELS[key], status, current, text };
+  });
+}
+
+/** The Scan job roles button: whether it can be pressed, what it says, and (when it cannot) why. */
+export function jobScanButtonState({ tab, progress, halt, saving, checkpoint, active, now = Date.now() } = {}) {
+  const companyId = tab?.kind === "company" ? companyIdForUrl(tab.url) : undefined;
+  const label = checkpoint ? "Resume job scan" : "Scan job roles";
+  if (active) return { companyId, disabled: true, label, reason: `A job scan for ${active.name || active.companyId} is running. Stop it or wait for it to finish.` };
+  if (!companyId) return { companyId, disabled: true, label, reason: "Open a company page on LinkedIn to scan its job roles." };
+  if (isProgressActive(progress, now)) return { companyId, disabled: true, label, reason: "Another capture or scan is running. Wait for it to finish, or stop it." };
+  if (halt) return { companyId, disabled: true, label, reason: "Capture is paused because LinkedIn showed a warning. Review it above to allow capture again." };
+  if (saving) return { companyId, disabled: true, label, reason: "Saving a capture. Try again in a moment." };
+  return { companyId, disabled: false, label, reason: "" };
 }
 
 export const NOT_FOUND_PLACEHOLDER = "NOT FOUND · type to add";
@@ -302,7 +435,7 @@ export function initCapturePanel() {
   const runResumeBtn = $("capture-run-resume");
   const runClearBtn = $("capture-run-clear");
 
-  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "" };
+  const state = { status: null, statusError: "", tab: null, progress: null, halt: null, draft: null, data: null, excluded: new Set(), saving: false, invalid: new Map(), continueCompany: null, requested: [], companies: [], selected: new Set(), run: null, companiesError: "", skipJobs: false, jobScan: null, jobScanPending: false, requestedJobScans: [], jobCheckpoint: null, jobLive: null, jobActive: null };
 
   const show = (el, visible) => el?.classList.toggle("hidden", !visible);
 
@@ -453,6 +586,30 @@ export function initCapturePanel() {
           Object.assign(document.createElement("span"), { className: "capture-company-name", textContent: item.name, title: item.name }),
           Object.assign(document.createElement("span"), { className: "capture-company-meta", textContent: runItemText(item) }),
         );
+        const steps = workflowSteps(item);
+        if (steps.length) {
+          const list = Object.assign(document.createElement("ol"), { className: "capture-steps", ariaLabel: `${item.name} workflow steps` });
+          for (const step of steps) {
+            const entry = Object.assign(document.createElement("li"), { className: "capture-step" });
+            entry.dataset.status = step.status;
+            if (step.current) entry.setAttribute("aria-current", "step");
+            entry.append(
+              Object.assign(document.createElement("span"), { className: "capture-step-label", textContent: `${step.label}: ${STEP_STATUS_WORDS[step.status] || step.status}` }),
+              ...(step.text ? [Object.assign(document.createElement("span"), { className: "capture-step-text", textContent: step.text })] : []),
+            );
+            list.append(entry);
+          }
+          row.append(list);
+        }
+        if (item.status === "failed" || item.status === "skipped") {
+          const retry = Object.assign(document.createElement("button"), { type: "button", className: "capture-run-retry", textContent: "Retry" });
+          retry.addEventListener("click", async () => {
+            retry.disabled = true;
+            const response = await send("capture-queue-retry", { companyPublicId: item.companyPublicId });
+            if (!response.ok) setResult(response.error, "capture-error");
+          });
+          row.append(retry);
+        }
         return row;
       })
     );
@@ -575,7 +732,7 @@ export function initCapturePanel() {
   }
 
   function currentData() {
-    return reviewedData(state.data, state.excluded);
+    return reviewedData(state.data, state.excluded, { skipJobs: state.skipJobs });
   }
 
   function syncJson() {
@@ -595,6 +752,7 @@ export function initCapturePanel() {
     reviewNotesEl.replaceChildren(
       ...[
         draftSummary(draft.kind, currentData()),
+        ...verificationLines(data.verification),
         `Source: ${draft.sourceUrl || data.sourceUrl || "unknown"} · captured ${new Date(draft.capturedAt).toLocaleString()}`,
         ...(draft.kind === "sales" ? (data.filters || []).map((filter) => `Your filter: ${filter}`) : []),
         ...(draft.notes || []),
@@ -681,6 +839,13 @@ export function initCapturePanel() {
     renderCoverage();
     reviewFieldsEl.replaceChildren(...(fieldEls.length ? [coverageEl, ...fieldEls] : []));
 
+    if (draft.kind === "company" && data.jobScan) {
+      const jobsBox = Object.assign(document.createElement("label"), { className: "checkbox-row" });
+      const skip = Object.assign(document.createElement("input"), { type: "checkbox", checked: !state.skipJobs });
+      skip.addEventListener("change", () => { state.skipJobs = !skip.checked; reviewNotesEl.firstChild.textContent = draftSummary(draft.kind, currentData()); syncJson(); });
+      jobsBox.append(skip, document.createTextNode(` Save the ${data.jobScan.jobs.length} job roles with this company (${jobScanStatusLabel(data.jobScan)})`));
+      reviewFieldsEl.append(jobsBox);
+    }
     const leads = Array.isArray(data.peopleProfiles) ? data.peopleProfiles : [];
     show(reviewLeadsEl, leads.length > 0);
     reviewLeadsEl.replaceChildren(
@@ -713,6 +878,7 @@ export function initCapturePanel() {
 
   function applyDraft(draft) {
     state.draft = draft || null;
+    state.skipJobs = false;
     state.data = draft ? structuredClone(draft.data) : null;
     state.excluded = new Set();
     renderReview();
@@ -746,8 +912,10 @@ export function initCapturePanel() {
   async function refreshTab() {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const kind = captureKindForUrl(tab?.url);
-    state.tab = tab?.id != null ? { id: tab.id, url: tab.url, kind } : null;
+    state.tab = tab?.id != null ? { id: tab.id, url: tab.url, title: tab.title, kind } : null;
     renderStart();
+    renderJobs();
+    await refreshJobScans();
     await renderCheckpoint();
   }
 
@@ -760,6 +928,7 @@ export function initCapturePanel() {
         ? {
             includeCompany: true,
             includePeople: $("capture-include-people").checked,
+            includeJobs: $("capture-include-jobs").checked,
             focus: { departments: $("capture-departments").value.trim(), seniorities: $("capture-seniorities").value.trim() },
           }
         : undefined;
@@ -814,10 +983,12 @@ export function initCapturePanel() {
         setContinue(null);
       }
       const dropped = response.rejectedFields?.length ? ` ${response.rejectedFields.length} non-profile items were left out.` : "";
-      setResult(`Saved. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${dropped}${next}`, "capture-success");
+      const partial = response.completeness?.level === "partial";
+      setResult(`Saved${partial ? " (partial)" : ""}. Capture run ${response.run.status}: ${created} new, ${merged} merged, ${rejected} rejected.${captureCompletenessText(response.completeness)}${dropped}${next}`, partial ? "capture-error" : "capture-success");
     } else {
       const runState = response.run ? ` Capture run status: ${response.run.status}.` : "";
-      setResult(`Not saved: ${response.error}${runState}`, "capture-error");
+      // A save that could not be confirmed is not a failure: the batch is kept and Save is safe to repeat.
+      setResult(response.pending ? response.error : `Not saved: ${response.error}${runState}`, "capture-error");
       sendBtn.disabled = false;
     }
     await refreshStatus();
@@ -827,8 +998,124 @@ export function initCapturePanel() {
 
   continueBtn.addEventListener("click", () => void continueQueue(state.continueCompany));
 
+  // ── Job roles: scan a company's jobs twice, save them, retry a save, answer workspace requests ──
+  const jobsBtn = $("capture-jobs-scan");
+  const jobsResultEl = $("capture-jobs-result");
+  const jobsStatusEl = $("capture-jobs-status");
+  const jobsNotesEl = $("capture-jobs-notes");
+  const jobsSaveBtn = $("capture-jobs-save");
+  const jobsReasonEl = $("capture-jobs-reason");
+  const jobsCountsEl = $("capture-jobs-counts");
+  const jobsRestartBtn = $("capture-jobs-restart");
+  const jobsRunningEl = $("capture-jobs-running");
+  const jobsLiveEl = $("capture-jobs-live");
+  const jobsStopBtn = $("capture-jobs-stop");
+  const jobsQuitBtn = $("capture-jobs-quit");
+  const jobsRequestedEl = $("capture-jobs-requested");
+  const jobsRequestedListEl = $("capture-jobs-requested-list");
+
+  const companyNameFromTab = () => (state.tab?.title || "").replace(/^\(\d+\)\s*/, "").replace(/\s*\|\s*LinkedIn.*$/i, "").trim();
+
+  function renderJobs() {
+    const button = jobScanButtonState({ tab: state.tab, progress: state.progress, halt: state.halt, saving: state.saving, checkpoint: state.jobCheckpoint, active: state.jobActive });
+    show(jobsRunningEl, Boolean(state.jobActive));
+    jobsLiveEl.textContent = state.jobActive ? jobScanLiveText(state.jobLive) || `${state.jobActive.name}: starting…` : "";
+    jobsStopBtn.disabled = Boolean(state.jobActive?.stopping);
+    jobsQuitBtn.disabled = state.jobActive?.stopping === "quit";
+    jobsStopBtn.textContent = state.jobActive?.stopping === "stop" ? "Stopping…" : "Stop (keep what was read)";
+    jobsBtn.disabled = button.disabled;
+    jobsBtn.textContent = button.label;
+    jobsReasonEl.textContent = button.reason;
+    show(jobsReasonEl, Boolean(button.reason));
+    show(jobsRestartBtn, Boolean(state.jobCheckpoint) && !button.disabled);
+    // Only the scan of the company that is open is shown: another company's result is not this company's.
+    const result = state.jobScan && button.companyId && state.jobScan.companyId === button.companyId ? state.jobScan : null;
+    show(jobsResultEl, Boolean(result));
+    if (result) {
+      jobsStatusEl.textContent = `${result.name || result.companyId || "Company"}: ${jobScanStatusLabel(result)}`;
+      jobsCountsEl.textContent = jobScanCountsText(result);
+      const lines = [...(result.saveError ? [result.saveError] : []), ...(result.error ? [`Error: ${result.error}`] : []), ...(result.notes || [])];
+      jobsNotesEl.replaceChildren(...lines.map((line) => Object.assign(document.createElement("li"), { textContent: line })));
+    }
+    const busy = isProgressActive(state.progress);
+    show(jobsSaveBtn, state.jobScanPending);
+    const requested = state.requestedJobScans;
+    show(jobsRequestedEl, requested.length > 0);
+    jobsRequestedListEl.replaceChildren(
+      ...requested.map((entry) => {
+        const row = Object.assign(document.createElement("li"), { className: "capture-queue-item" });
+        const name = Object.assign(document.createElement("span"), { className: "capture-queue-name", textContent: entry.name || entry.companyPublicId, title: entry.name });
+        const go = Object.assign(document.createElement("button"), { type: "button", className: "primary", textContent: "Scan" });
+        go.disabled = busy || state.tab?.id == null;
+        go.addEventListener("click", () => void scanJobs(entry.companyPublicId, entry.name));
+        row.append(name, go);
+        return row;
+      })
+    );
+  }
+
+  async function scanJobs(companyId, name, { resume = true } = {}) {
+    if (state.tab?.id == null) return setResult("Open a LinkedIn tab first.", "capture-error");
+    setResult("");
+    jobsBtn.disabled = true;
+    const response = await send("capture-jobs-scan", { tabId: state.tab.id, companyId, name, resume });
+    if (response.scan) state.jobScan = { companyId, name, ...response.scan, ...(response.error ? { saveError: response.error } : {}) };
+    state.jobScanPending = Boolean(response.pending);
+    if (!response.ok && !response.scan) setResult(`Job scan did not start: ${response.error}`, "capture-error");
+    await refreshJobScans();
+    renderJobs();
+  }
+
+  async function refreshJobScans() {
+    const stored = await chrome.storage.local.get([JOB_SCAN_RESULT_KEY, JOB_SCAN_PENDING_KEY]);
+    state.jobScan = stored[JOB_SCAN_RESULT_KEY] || state.jobScan;
+    state.jobScanPending = Boolean(stored[JOB_SCAN_PENDING_KEY]);
+    const activeScan = await send("capture-jobs-active");
+    state.jobActive = activeScan.ok ? activeScan.active : null;
+    state.jobLive = state.jobActive ? (await chrome.storage.local.get(JOB_SCAN_LIVE_KEY))[JOB_SCAN_LIVE_KEY] || null : null;
+    const openCompany = state.tab?.kind === "company" ? companyIdForUrl(state.tab.url) : undefined;
+    state.jobCheckpoint = openCompany ? (await chrome.storage.local.get(jobScanCheckpointKey(openCompany)))[jobScanCheckpointKey(openCompany)] || null : null;
+    const requested = await send("capture-job-scans-requested");
+    state.requestedJobScans = requested.ok ? requested.scans || [] : [];
+    renderJobs();
+  }
+
+  jobsBtn.addEventListener("click", () => {
+    const companyId = companyIdForUrl(state.tab?.url);
+    if (companyId) void scanJobs(companyId, companyNameFromTab());
+  });
+  jobsStopBtn.addEventListener("click", async () => {
+    jobsStopBtn.disabled = true;
+    const response = await send("capture-jobs-stop");
+    if (!response.ok) setResult(response.error, "capture-error");
+    await refreshJobScans();
+  });
+  jobsQuitBtn.addEventListener("click", async () => {
+    if (!window.confirm("Quit the job scan? What it has read so far is discarded and nothing is saved.")) return;
+    jobsQuitBtn.disabled = true;
+    const response = await send("capture-jobs-quit");
+    if (!response.ok) setResult(response.error, "capture-error");
+    await refreshJobScans();
+  });
+  jobsRestartBtn.addEventListener("click", () => {
+    const companyId = companyIdForUrl(state.tab?.url);
+    if (companyId) void scanJobs(companyId, companyNameFromTab(), { resume: false });
+  });
+  jobsSaveBtn.addEventListener("click", async () => {
+    jobsSaveBtn.disabled = true;
+    const response = await send("capture-jobs-retry-save");
+    if (response.scan) state.jobScan = { ...state.jobScan, ...response.scan, saveError: undefined };
+    state.jobScanPending = Boolean(response.pending);
+    if (!response.ok) setResult(response.error, "capture-error");
+    jobsSaveBtn.disabled = false;
+    renderJobs();
+  });
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    if (changes[JOB_SCAN_LIVE_KEY]) { state.jobLive = changes[JOB_SCAN_LIVE_KEY].newValue || null; renderJobs(); }
+    if (changes[JOB_SCAN_RESULT_KEY] || changes[JOB_SCAN_PENDING_KEY] || Object.keys(changes).some((key) => key.startsWith("skoutJobScanCheckpoint:"))) void refreshJobScans();
+    if (changes[PROGRESS_KEY]) renderJobs();
     if (changes[PROGRESS_KEY]) {
       state.progress = changes[PROGRESS_KEY].newValue || null;
       renderProgress();
@@ -869,6 +1156,6 @@ export function initCapturePanel() {
     applyDraft(stored[DRAFT_KEY]);
     state.run = (await chrome.storage.local.get(RUN_QUEUE_KEY))[RUN_QUEUE_KEY] || null;
     renderRun();
-    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies(), refreshServerAuto()]);
+    await Promise.all([refreshStatus(), refreshTab(), refreshCompanies(), refreshServerAuto(), refreshJobScans()]);
   })();
 }

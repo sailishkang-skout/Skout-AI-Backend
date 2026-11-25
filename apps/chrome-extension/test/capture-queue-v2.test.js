@@ -166,7 +166,7 @@ describe("queue: empty, already-saved and automatic batches", () => {
     return { store, api, review, statuses };
   }
   const person = (id) => ({ publicId: id, sourceUrl: `https://www.linkedin.com/in/${id}/`, fullName: id });
-  const start = (extra = {}) => handleCaptureMessage({ type: "capture-queue-start", companies: [{ companyPublicId: "alpha", name: "Alpha" }, { companyPublicId: "beta", name: "Beta" }], ...extra }, {});
+  const start = (extra = {}) => handleCaptureMessage({ type: "capture-queue-start", workflow: false, companies: [{ companyPublicId: "alpha", name: "Alpha" }, { companyPublicId: "beta", name: "Beta" }], ...extra }, {});
 
   it("retries a company whose batch has no people once, then fails it and moves on", async () => {
     const env = browser();

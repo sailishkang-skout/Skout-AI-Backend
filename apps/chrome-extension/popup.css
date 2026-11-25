@@ -1,71 +1,118 @@
+/*
+ * Skout AI extension design system. Dark, high contrast. Every text/background pair below is checked by
+ * test/ui-contrast.test.js (WCAG AA: 4.5:1 for text, 3:1 for the edges of controls). Use the tokens, not
+ * raw colours, so nothing ends up faded or unreadable.
+ */
 :root {
   color-scheme: dark;
-  font-family: Inter, system-ui, sans-serif;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --bg: #0b1220;
+  --surface: #111a2e;
+  --surface-2: #1a2740;
+  --border: #3b4a68;
+  --border-strong: #7a8db1;
+
+  --text: #f8fafc;
+  --text-2: #dbe4f3;
+  --muted: #b4c0d4;
+
+  --brand: #1d4ed8;
+  --brand-hover: #2563eb;
+  --on-brand: #ffffff;
+  --link: #93c5fd;
+  --focus: #fde047;
+
+  --control: #1f2d4a;
+  --control-hover: #2a3c61;
+  --disabled-bg: #1a2438;
+  --disabled-text: #9aa8c0;
+  --disabled-border: #3b4a68;
+
+  --success: #86efac;
+  --warning: #fde68a;
+  --danger: #fecaca;
+  --danger-strong: #fca5a5;
+  --success-bg: #0f3a25;
+  --warning-bg: #4a2a07;
+  --danger-bg: #4c1010;
+  --danger-hover: #6b1a1a;
+  --info-bg: #0f2a52;
+  --info-text: #dbeafe;
+  --success-text: #dcfce7;
+  --warning-text: #fde68a;
+  --danger-text: #fee2e2;
 }
+
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   width: 320px;
-  background: #020617;
-  color: #f8fafc;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
-header {
-  padding: 16px 16px 8px;
-}
+a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 
-header h1 {
-  margin: 0;
-  font-size: 16px;
-}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-header p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #94a3b8;
-}
+header { padding: 16px 16px 8px; }
+header h1 { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); }
+header p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-logo { flex: none; width: 36px; height: 36px; border-radius: 9px; }
+.brand-text { min-width: 0; }
 
 .card {
   margin: 8px 12px;
-  padding: 12px;
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  background: #0f172a;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
 }
 
-label {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 11px;
-  color: #cbd5e1;
-}
+label { display: block; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
 
-input,
-select,
-button {
+input, select, button {
   width: 100%;
-  box-sizing: border-box;
   margin-bottom: 8px;
   border-radius: 8px;
-  border: 1px solid #334155;
-  padding: 8px 10px;
-  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
 }
 
-select option {
-  background: #1e293b;
-  color: #f8fafc;
-}
+input, select, textarea { background: var(--surface-2); color: var(--text); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+select option { background: var(--surface-2); color: var(--text); }
 
 button {
   cursor: pointer;
-  background: #1e293b;
-  color: #f8fafc;
+  background: var(--control);
+  color: var(--text);
+  font-weight: 600;
 }
+button:hover:not(:disabled) { background: var(--control-hover); }
 
 button.primary {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-brand);
+}
+button.primary:hover:not(:disabled) { background: var(--brand-hover); border-color: var(--brand-hover); }
+
+/* A disabled control is clearly disabled, and its words are still readable. */
+button:disabled, input:disabled, select:disabled {
+  cursor: not-allowed;
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  border-style: dashed;
+  color: var(--disabled-text);
 }
 
 #status {
@@ -73,108 +120,59 @@ button.primary {
   padding: 8px 12px 12px;
   font-size: 12px;
   line-height: 1.4;
-  border-top: 1px solid #1e293b;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
 }
+.status-error { color: var(--danger-strong); font-weight: 700; }
+.status-ok { color: var(--text-2); }
 
-.status-error {
-  color: #fca5a5;
-  font-weight: 600;
-}
-
-.status-ok {
-  color: #94a3b8;
-}
-
-.auth-status {
-  margin: 0 0 10px;
-  font-size: 12px;
-  color: #fca5a5;
-}
-
-.auth-status.connected {
-  color: #86efac;
-}
+.auth-status { margin: 0 0 10px; font-size: 13px; color: var(--danger-strong); font-weight: 600; }
+.auth-status.connected { color: var(--success); }
 
 .checkbox-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin-top: 8px;
-  font-size: 11px;
-  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
 }
+.checkbox-row input { width: auto; margin: 2px 0 0; accent-color: var(--brand-hover); }
 
-.checkbox-row input {
-  width: auto;
-  margin: 0;
-}
-
-.hidden {
-  display: none !important;
-}
+.hidden { display: none !important; }
 
 #enrich-field-picker { margin: 8px 0 4px; }
-.field-picker-label { margin: 0 0 4px; font-size: 11px; color: #64748b; }
-.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.field-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #cbd5e1; cursor: pointer; }
-.field-item input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; }
+.field-picker-label { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.field-item { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; font-weight: 500; color: var(--text-2); cursor: pointer; }
+.field-item input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; accent-color: var(--brand-hover); }
 
-#enrich-results { margin: 6px 0 0; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; display: none; }
-.enrich-result-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px; border-bottom: 1px solid #1e293b; }
+#enrich-results { margin: 6px 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: none; }
+.enrich-result-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; border-bottom: 1px solid var(--border); }
 .enrich-result-row:last-child { border-bottom: 0; }
-.enrich-result-label { color: #64748b; width: 68px; flex-shrink: 0; }
-.enrich-result-value { flex: 1; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.enrich-result-icon { flex-shrink: 0; width: 14px; text-align: center; font-size: 11px; }
+.enrich-result-label { color: var(--muted); width: 72px; flex-shrink: 0; }
+.enrich-result-value { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.enrich-result-icon { flex-shrink: 0; width: 14px; text-align: center; font-size: 12px; }
 
-.credits-hint { margin: 6px 0 0; font-size: 11px; color: #fcd34d; }
-.credits-hint a { color: #60a5fa; text-decoration: underline; }
+.credits-hint { margin: 6px 0 0; font-size: 12px; color: var(--warning); }
+.credits-hint a { color: var(--link); }
 
 .hitl-warning {
   margin: 0 0 8px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-radius: 8px;
-  background: #451a03;
-  border: 1px solid #92400e;
-  color: #fcd34d;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.enroll-confirm {
-  margin: 8px 0 0;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  color: var(--warning-text);
   font-size: 12px;
-  color: #86efac;
+  line-height: 1.45;
 }
 
-.enroll-confirm a {
-  color: #60a5fa;
-  text-decoration: underline;
-}
+.enroll-confirm { margin: 8px 0 0; font-size: 13px; color: var(--success); }
+.enroll-confirm a { color: var(--link); }
 
-.dev-details {
-  margin: 8px 12px 0;
-  padding: 0 12px 8px;
-  font-size: 11px;
-  color: #64748b;
-}
-
-.dev-details summary {
-  cursor: pointer;
-  padding: 8px 0;
-  list-style: none;
-}
-
-.dev-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.dev-details[open] summary {
-  margin-bottom: 8px;
-  color: #94a3b8;
-}
-
-.dev-details input,
-.dev-details select,
-.dev-details button {
-  margin-bottom: 8px;
-}
+.dev-details { margin: 8px 12px 0; padding: 0 12px 8px; font-size: 12px; color: var(--text-2); }
+.dev-details summary { cursor: pointer; padding: 8px 0; font-weight: 600; color: var(--text); }
+.dev-details[open] summary { margin-bottom: 8px; }
+.dev-details input, .dev-details select, .dev-details button { margin-bottom: 8px; }

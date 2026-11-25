@@ -9,7 +9,7 @@ describe("person capture merge", () => {
     const window = loadCapturePage({
       url: "https://www.linkedin.com/in/jane-doe/",
       html: "<main></main>",
-      files: [...EXTRACT_FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/person-capture.js"],
+      files: [...EXTRACT_FILES, "capture/restriction-detect.js", "capture/capture-ui.js", "capture/capture-verify.js", "capture/person-capture.js"],
     });
     const out = window.SkoutPersonCapture.merge(
       { educations: [{ school: "IIT Delhi", source: "topcard" }], currentCompanies: [{ company: "Uber", source: "topcard" }] },

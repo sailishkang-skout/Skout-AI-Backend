@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skout AI Prospector",
-  "version": "0.11.22",
+  "version": "0.11.26",
   "description": "Capture reviewed LinkedIn profiles, companies and Sales Navigator results into Skout, and enrich contacts.",
   "permissions": [
     "storage",
@@ -67,11 +67,13 @@
         "capture/page-extract.js",
         "capture/restriction-detect.js",
         "capture/capture-ui.js",
+        "capture/capture-verify.js",
         "capture/company-capture.js",
         "capture/person-capture.js",
         "capture/sales-navigator-capture.js",
         "capture/sales-lead-link-reader.js",
         "capture/company-people-search.js",
+        "capture/company-jobs.js",
         "capture/capture-content.js"
       ],
       "run_at": "document_idle"
@@ -91,6 +93,7 @@
   ],
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   }

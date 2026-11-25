@@ -2,12 +2,17 @@
 // EnrichmentTool prototype. Read-only: no network requests, clicks, scrolling or navigation,
 // and no reads of inline page JSON or private APIs.
 globalThis.SkoutCapturePage = (() => {
-const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace } =
+const { text, firstMatch, allMatches, metaContent, publicIdFromUrl, parseCount, textMultiline, cleanWebsite, countryFromPlace, resolveCompanyCountry } =
   window.SkoutCaptureExtract;
 
 // ---------------------------------------------------------------------------
 // Extraction
 // ---------------------------------------------------------------------------
+
+function _signals() {
+  const { expectedCounts, showAll } = extractExpectedCounts();
+  return { _expectedCounts: expectedCounts, _showAll: showAll };
+}
 
 function extractPerson() {
   const publicId = publicIdFromUrl('person');
@@ -229,6 +234,7 @@ function extractPerson() {
     // validated email and phone values are sent to the capture endpoint.
     _contactInfo: contactInfo,
     _locationRank: locationRank,
+    ..._signals(),
     // Contact info first; otherwise an email or phone the person wrote in their bio.
     // Contact info first; otherwise a website the person shows in their profile header.
     website: contactInfo ? contactInfo.website : topcardWebsite(topcard),
@@ -243,6 +249,28 @@ function extractPerson() {
       experience: experience.length, educations: educations.length, skills: skills.length,
     }),
   };
+}
+
+/**
+ * What the profile says it has, from its own "Show all 27 skills" / "Show all 6 experiences" links:
+ * the totals the verification scan compares against, and whether a Show all link exists at all.
+ */
+function extractExpectedCounts() {
+  const expectedCounts = {};
+  const showAll = {};
+  const names = { skill: 'skills', experience: 'experience', education: 'education' };
+  const main = document.querySelector('main') || document.body;
+  for (const node of main.querySelectorAll('a, button, span')) {
+    const label = ((node.getAttribute('aria-label') || text(node) || '')).replace(/\s+/g, ' ').trim();
+    const match = label.match(/^show all(?:\s+([\d,]+))?\s+(skills?|experiences?|educations?)\b/i);
+    if (!match) continue;
+    const key = names[match[2].toLowerCase().replace(/s$/, '')];
+    if (!key) continue;
+    showAll[key] = true;
+    const total = match[1] ? Number(match[1].replace(/,/g, '')) : undefined;
+    if (Number.isFinite(total)) expectedCounts[key] = Math.max(expectedCounts[key] || 0, total);
+  }
+  return { expectedCounts, showAll };
 }
 
 /** "Present" in the date ranges of the languages LinkedIn profiles are commonly shown in. */
@@ -597,6 +625,10 @@ function extractCompany() {
   const peopleProfiles = window.SkoutCompanySections.peopleProfiles();
   const insights = extractCompanyInsights();
 
+  const companyCountry = resolveCompanyCountry({
+    structured: structuredCountry(),
+    headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
+  });
   const company = {
     publicId,
     sourceUrl: window.location.href.split('?')[0],
@@ -605,8 +637,9 @@ function extractCompany() {
     logoUrl,
     industry: detailMap['industry'] || industry || sduiAbout.industry || sduiTopCard.industry,
     headquarter: detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter,
-    // The country of the headquarters: written there, or known from its state or city.
-    locationCountry: countryFromPlace(detailMap['headquarters'] || headquarter || sduiAbout.headquarter || sduiTopCard.headquarter),
+    // The country: what the page states, else the country of the headquarters' state or city (never guessed).
+    locationCountry: companyCountry.country,
+    locationCountrySource: companyCountry.source,
     memberId,
     followers,
     size: detailMap['company size']?.replace(/\s*employees?$/i, '').trim() ||
@@ -641,6 +674,21 @@ function extractCompany() {
   };
   company.sectionCaptures = window.SkoutCompanySections.captures(company);
   return company;
+}
+
+/** The country in the page's structured data (an Organization's address), when LinkedIn includes it. */
+function structuredCountry() {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const data = JSON.parse(script.textContent || 'null');
+      for (const item of [].concat(data?.['@graph'] || data || [])) {
+        const address = [].concat(item?.address || item?.location?.address || [])[0];
+        const code = typeof address?.addressCountry === 'string' ? address.addressCountry : address?.addressCountry?.name;
+        if (code) return code;
+      }
+    } catch { /* not JSON */ }
+  }
+  return undefined;
 }
 
 function countTruthy(obj) {

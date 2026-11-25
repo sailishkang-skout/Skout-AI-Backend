@@ -19,11 +19,13 @@ export const CAPTURE_CONTENT_FILES = [
   'capture/page-extract.js',
   'capture/restriction-detect.js',
   'capture/capture-ui.js',
+  'capture/capture-verify.js',
   'capture/company-capture.js',
   'capture/person-capture.js',
   'capture/sales-navigator-capture.js',
   'capture/sales-lead-link-reader.js',
   'capture/company-people-search.js',
+  'capture/company-jobs.js',
   'capture/capture-content.js',
 ];
 
@@ -42,16 +44,33 @@ async function getStored(key) {
  * page a capture opens, so a LinkedIn warning or the workspace kill switch stops a long
  * run at the next step. A status that cannot be confirmed also stops it.
  */
-async function captureBlock() {
+// The last "capture is enabled" the API confirmed. The API enforces the kill switch and the daily
+// limit on every save, so when one status check fails (a slow or restarting API) a recent
+// confirmation lets the reader carry on: nothing is saved without the API answering.
+const STATUS_FALLBACK_MS = 10 * 60 * 1000;
+let lastConfirmedStatus = null;
+
+/**
+ * Why a capture may not read another page right now: `{ reason }`, with `transient: true` when
+ * the cause is only that the status could not be confirmed (try again) rather than a decision
+ * (a LinkedIn warning, the kill switch). Nothing blocks: `{}`.
+ */
+async function captureBlockDetail() {
   const halt = await getStored(CAPTURE_HALT_KEY);
-  if (halt) return `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.`;
+  if (halt) return { reason: `Capture is stopped: ${halt.reason} Review the warning in the Skout side panel before continuing.` };
   try {
     const status = await deps.skoutFetch(`${API}/capture/status`);
-    if (!status?.enabled) return `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}`;
+    lastConfirmedStatus = status?.enabled ? { at: Date.now() } : null;
+    if (!status?.enabled) return { reason: `Capture is disabled for this workspace${status?.disabledReason ? `: ${status.disabledReason}` : '.'}` };
   } catch (error) {
-    return `Capture status could not be confirmed (${error?.message || 'request failed'}).`;
+    if (lastConfirmedStatus && Date.now() - lastConfirmedStatus.at < STATUS_FALLBACK_MS) return {};
+    return { reason: `Capture status could not be confirmed (${error?.message || 'request failed'}).`, transient: true };
   }
-  return undefined;
+  return {};
+}
+
+async function captureBlock() {
+  return (await captureBlockDetail()).reason;
 }
 
 // ── Sales Navigator: public-link lookup, one lead page at a time ──────────────
@@ -169,8 +188,8 @@ async function readCompanyPage(request, sender, collectMessage = 'COLLECT_COMPAN
     let timeout;
     try {
       const result = await Promise.race([
-        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url}),
-        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),55000);}),
+        chrome.tabs.sendMessage(tab.id,{type:collectMessage,companyId:request.companyId,url,deep:request.deep === true}),
+        new Promise((_,reject) => {timeout=setTimeout(() => reject(new Error('Page took too long to load.')),request.deep === true ? 90000 : 55000);}),
       ]);
       return task.cancelled ? {ok:true,cancelled:true} : result;
     } finally {clearTimeout(timeout);}
@@ -293,8 +312,13 @@ async function readCompanyPeopleSearch(request, sender) {
     let afterPage;
     let lastReadUrl = draft?.lastReadUrl;
     for (; pagesRead < maxPages && !task.cancelled;) {
-      const blocked = await captureBlock();
-      if (blocked) throw new Error(blocked);
+      const block = await captureBlockDetail();
+      if (block.reason) {
+        // Only the status check failed: keep the pages already read as a batch instead of
+        // throwing them away; the next run continues from here.
+        if (block.transient && pagesRead > 0) { stopReason = 'the capture status could not be confirmed (it will continue next time)'; await saveDraft(); break; }
+        throw new Error(block.reason);
+      }
       const ready = await waitForCompanyPeoplePage(tab.id,searchKey,afterPage,task);
       if (!ready) return {ok:true,cancelled:true};
       const result = await chrome.tabs.sendMessage(tab.id,{type:'COLLECT_COMPANY_PEOPLE_PAGE'});
@@ -382,7 +406,7 @@ async function readPersonPage(request, sender) {
     // Skills detail pages can load several bounded "Show more" batches.
     // Keep this user-triggered, same-profile reader alive long enough to
     // finish them; it still closes its temporary tab immediately afterward.
-    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),45000);})]); }
+    try { return await Promise.race([chrome.tabs.sendMessage(tab.id,{type:'COLLECT_PERSON_PAGE',personId:request.personId,url,deep:request.deep === true}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Profile page took too long to load.')),request.deep === true ? 120000 : 45000);})]); }
     finally { clearTimeout(timeout); }
   } catch(error) { return task.cancelled ? {ok:true,cancelled:true} : {ok:false,error:error.message}; }
   finally {
@@ -392,9 +416,496 @@ async function readPersonPage(request, sender) {
   }
 }
 
+// ── Company job scans: an initial scan, an independent verification scan, then the details ───────
+// A scan never relies on one read. Pass 1 reads the company's Jobs tab (scrolling and pressing
+// "Show more" until nothing more loads). Pass 2 reads LinkedIn's job search for the same company,
+// newest first, page by page, which is a different source and catches what the tab did not show.
+// The two are merged without duplicates, and each pass says whether it reached the end of what
+// LinkedIn shows. The server decides what that can be trusted for (see recordJobScan). A scan that
+// failed, was restricted, or did not load is never reported as "no jobs".
+const jobReads = new Map();
+export const JOB_SCAN_LIMITS = { SEARCH_PAGES: 40, DETAIL_PAGES: 25, PAGE_GAP_MS: 2500, RETRIES: 2 };
+export const JOB_SCAN_RESULT_KEY = 'skoutJobScanResult';
+export const JOB_SCAN_PENDING_KEY = 'skoutJobScanPending';
+
+export function jobsTabUrl(companyId) {
+  return COMPANY_ID.test(companyId || '') ? `https://www.linkedin.com/company/${companyId}/jobs/` : undefined;
+}
+/** LinkedIn's job search for one company, newest first. Only the company id and the page offset are ever set. */
+export function jobsSearchUrl(memberId, start = 0) {
+  if (!/^\d{1,20}$/.test(String(memberId || '')) || !Number.isInteger(start) || start < 0 || start > 1000) return undefined;
+  return `https://www.linkedin.com/jobs/search/?f_C=${memberId}&sortBy=DD&start=${start}`;
+}
+export function jobViewUrl(jobId) {
+  return /^\d{4,20}$/.test(String(jobId || '')) ? `https://www.linkedin.com/jobs/view/${jobId}/` : undefined;
+}
+/** The page LinkedIn showed is the one asked for (it may add tracking parameters or redirect). */
+function sameJobsPage(expected, actual) {
+  try {
+    const a = new URL(expected), b = new URL(actual);
+    if (a.pathname.replace(/\/$/, '') !== b.pathname.replace(/\/$/, '')) return false;
+    for (const key of ['f_C', 'start']) if ((a.searchParams.get(key) ?? '0') !== (b.searchParams.get(key) ?? '0') && a.searchParams.has(key)) return false;
+    return true;
+  } catch { return false; }
+}
+
+/** Reads one jobs page in a temporary tab and closes it. Returns the reader's answer. */
+async function readJobsPage(owner, task, url, message, timeoutMs = 90_000) {
+  if (!url) throw new Error('That jobs address is not allowed.');
+  const tab = await chrome.tabs.create({ url, active: true, openerTabId: owner });
+  task.tabId = tab.id;
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 40 && !task.cancelled; attempt++) {
+      try {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'JOBS_READER_READY' });
+        if (response?.ok && sameJobsPage(url, response.url)) { ready = true; break; }
+      } catch { /* the document is still loading */ }
+      await companyReadDelay(500);
+    }
+    if (task.cancelled) return { ok: true, cancelled: true };
+    if (!ready) return { ok: true, state: 'not_loaded', jobs: [], complete: false, notes: ['The page did not become readable.'] };
+    let timer;
+    try {
+      return await Promise.race([
+        chrome.tabs.sendMessage(tab.id, message),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('The jobs page took too long to load.')), timeoutMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  } finally {
+    task.tabId = null;
+    await chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+/** Trims a scan to what the API accepts: bounded text, valid dates, known work modes, LinkedIn job URLs. */
+export function sanitizeJobCounts(counts) {
+  const n = (value) => Math.max(0, Math.min(100000, Math.round(Number(value) || 0)));
+  return {
+    found: n(counts.found), ...(counts.expected != null ? { expected: n(counts.expected) } : {}),
+    skipped: n(counts.wrongCompany), failed: n(counts.detailsFailed), remaining: n(counts.detailsRemaining),
+    detailsRead: n(counts.detailsRead), pagesRead: n(counts.pagesRead), retries: n(counts.retries), resumed: counts.resumed === true,
+  };
+}
+
+export function sanitizeJobScan(scan) {
+  const cut = (value, max) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : undefined);
+  const iso = (value) => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined; };
+  const jobs = [];
+  const seen = new Set();
+  for (const job of scan.jobs || []) {
+    const title = cut(job?.title, 300);
+    if (!title) continue;
+    const jobId = /^\d{4,20}$/.test(String(job.jobId || '')) ? String(job.jobId) : undefined;
+    const key = jobId ? `id:${jobId}` : `text:${title.toLowerCase()}|${(job.location || '').toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const entry = {
+      jobId, jobUrl: jobId ? jobViewUrl(jobId) : undefined, title,
+      companyName: cut(job.companyName, 300), department: cut(job.department, 200), location: cut(job.location, 300),
+      country: cut(job.country, 120), employmentType: cut(job.employmentType, 80),
+      workplaceType: ['remote', 'hybrid', 'on_site'].includes(job.workplaceType) ? job.workplaceType : undefined,
+      description: cut(job.description, 30000), requirements: cut(job.requirements, 15000),
+      postedAt: iso(job.postedAt), postedText: cut(job.postedText, 100), source: cut(job.source, 60),
+    };
+    jobs.push(Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined)));
+    if (jobs.length >= 500) break;
+  }
+  return {
+    clientScanId: scan.clientScanId,
+    status: scan.status,
+    ...(cut(scan.source, 60) ? { source: cut(scan.source, 60) } : {}),
+    passes: (scan.passes || []).slice(0, 5).map((pass) => ({
+      pass: pass.pass, ...(cut(pass.method, 80) ? { method: cut(pass.method, 80) } : {}),
+      found: Math.max(0, Math.min(5000, Number(pass.found) || 0)), complete: pass.complete === true,
+      ...(cut(pass.note, 300) ? { note: cut(pass.note, 300) } : {}),
+    })),
+    jobs,
+    ...(scan.counts ? { counts: sanitizeJobCounts(scan.counts) } : {}),
+    notes: (scan.notes || []).map((note) => cut(note, 300)).filter(Boolean).slice(0, 30),
+    ...(cut(scan.error, 500) ? { error: cut(scan.error, 500) } : {}),
+    ...(iso(scan.startedAt) ? { startedAt: iso(scan.startedAt) } : {}),
+    ...(iso(scan.completedAt) ? { completedAt: iso(scan.completedAt) } : {}),
+  };
+}
+
+const mergeJob = (a, b) => ({ ...a, ...Object.fromEntries(Object.entries(b).filter(([, value]) => value !== undefined && value !== '')) });
+
+export const JOB_SCAN_CHECKPOINT_PREFIX = 'skoutJobScanCheckpoint:';
+export const JOB_SCAN_CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
+export const jobScanCheckpointKey = (companyId) => `${JOB_SCAN_CHECKPOINT_PREFIX}${companyId}`;
+
+const NAME_NOISE = /\b(?:incorporated|inc|llc|ltd|limited|corp|corporation|co|company|gmbh|plc|sa|ag|bv|pty|platforms?|technologies|technology|group|holdings?)\b/g;
+/** A company name reduced to what identifies it: "Meta Platforms, Inc." and "Meta" are the same company. */
+export function normalizeCompanyName(value) {
+  return String(value || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(NAME_NOISE, ' ').replace(/\s+/g, ' ').trim();
+}
+/** Whether a job card's company is the company being scanned (a card with no company name is not judged). */
+export function sameCompany(cardName, knownNames) {
+  const card = normalizeCompanyName(cardName);
+  if (!card || !knownNames.length) return true;
+  return knownNames.some((name) => name === card || (name.length >= 3 && card.length >= 3 && (name.startsWith(`${card} `) || card.startsWith(`${name} `))));
+}
+
+const jobKeyOf = (job) => (job.jobId ? `id:${job.jobId}` : `text:${(job.title || '').toLowerCase()}|${(job.location || '').toLowerCase()}`);
+
+export async function loadJobScanCheckpoint(companyId, now = Date.now()) {
+  const stored = await getStored(jobScanCheckpointKey(companyId));
+  if (!stored || stored.companyId !== companyId || now - (stored.savedAt || 0) > JOB_SCAN_CHECKPOINT_TTL_MS) return undefined;
+  return stored;
+}
+export const clearJobScanCheckpoint = (companyId) => chrome.storage.local.remove(jobScanCheckpointKey(companyId));
+
+/**
+ * Runs both scans and the detail reads for one company and returns the scan (not saved yet).
+ * `owner` is the LinkedIn tab the user started it from: progress is shown for it and its stop
+ * button cancels the scan. A scan that could not finish leaves a checkpoint, so the next scan of the
+ * same company resumes at the page it stopped on instead of starting over.
+ */
+export async function collectJobScan({ owner, companyId, memberId, publicName, resume = true }) {
+  const task = { tabId: null, cancelled: false };
+  jobReads.set(owner, task);
+  const startedAt = new Date().toISOString();
+  const jobs = new Map();
+  const passes = [];
+  const notes = [];
+  const counts = { found: 0, expected: undefined, wrongCompany: 0, pagesRead: 0, detailsRead: 0, detailsFailed: 0, detailsRemaining: 0, retries: 0, resumed: false };
+  let status = 'completed';
+  let error;
+  let names = publicName ? [normalizeCompanyName(publicName)].filter(Boolean) : [];
+  let nextStart = 0;
+  let firstDone = false;
+  let secondFinished = false;
+  const progress = (text) => {
+    // The panel shows these live: what has been read so far, how many are skipped or failed.
+    chrome.storage.local.set({ [JOB_SCAN_LIVE_KEY]: { companyId, name: publicName || companyId, text, found: jobs.size, expected: counts.expected, pagesRead: counts.pagesRead, skipped: counts.wrongCompany, failed: counts.detailsFailed, at: Date.now() } }).catch(() => {});
+    return setProgress({ kind: 'jobs', tabId: owner, active: true, text });
+  };
+  const add = (list) => {
+    let added = 0;
+    for (const job of list || []) {
+      const key = jobKeyOf(job);
+      if (!jobs.has(key)) added++;
+      jobs.set(key, mergeJob(jobs.get(key) || {}, job));
+    }
+    return added;
+  };
+  /** Stops reading when LinkedIn warns, the workspace switched capture off, or the user stopped it. */
+  const blocked = async () => {
+    if (task.cancelled) return 'Stopped.';
+    const block = await captureBlockDetail();
+    if (block.reason && !block.transient) { status = block.reason.includes('stopped') ? 'restricted' : 'failed'; error = block.reason; return block.reason; }
+    return block.transient ? block.reason : undefined;
+  };
+  const record = (pass, method, found, complete, note) => passes.push({ pass, method, found, complete, ...(note ? { note } : {}) });
+  /** A page that did not load or timed out is tried again (it is usually LinkedIn being slow); real answers are not. */
+  const read = async (url, message, timeoutMs) => {
+    let result;
+    for (let attempt = 0; attempt <= JOB_SCAN_LIMITS.RETRIES; attempt++) {
+      result = await readJobsPage(owner, task, url, message, timeoutMs).catch((failure) => ({ ok: false, error: failure?.message, transient: true }));
+      const recoverable = result.transient || (result.ok && result.state === 'not_loaded') || (!result.ok && /took too long|did not|Receiving end|Could not establish/i.test(result.error || ''));
+      if (!recoverable || result.cancelled || task.cancelled || attempt === JOB_SCAN_LIMITS.RETRIES) break;
+      counts.retries++;
+      await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS * (attempt + 2));
+    }
+    // Stop or Quit closes the page being read, which looks like an error: it is a stop, not a failure.
+    if (task.cancelled) return { ok: true, cancelled: true };
+    return result;
+  };
+  const checkpoint = async (extra = {}) => {
+    await chrome.storage.local.set({ [jobScanCheckpointKey(companyId)]: { companyId, memberId, names, nextStart, firstDone, jobs: [...jobs.values()], savedAt: Date.now(), ...extra } }).catch(() => {});
+  };
+
+  try {
+    const previous = resume ? await loadJobScanCheckpoint(companyId) : undefined;
+    if (previous?.jobs?.length || previous?.firstDone) {
+      add(previous.jobs);
+      memberId = memberId || previous.memberId;
+      names = [...new Set([...names, ...(previous.names || [])])];
+      nextStart = previous.nextStart || 0;
+      firstDone = previous.firstDone === true;
+      counts.resumed = true;
+      notes.push(`Resumed an earlier scan: ${jobs.size} role${jobs.size === 1 ? '' : 's'} were already read${nextStart ? `; continuing at search result ${nextStart + 1}` : ''}.`);
+    }
+
+    // Pass 1: the company's Jobs tab.
+    const stopReason = await blocked();
+    if (stopReason) {
+      // Nothing was read yet: the scan did not run, and that is a failure with its reason, not "no jobs".
+      if (status === 'completed') status = 'failed';
+      error = error || stopReason;
+      throw Object.assign(new Error(error), { handled: true });
+    }
+    if (!firstDone) {
+      progress(`Job roles: initial scan of ${publicName || companyId}'s Jobs tab…`);
+      const first = await read(jobsTabUrl(companyId), { type: 'COLLECT_JOBS_PAGE', options: { source: 'company-jobs-tab' } });
+      if (first.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
+      if (!first.ok) throw new Error(first.error || 'The Jobs tab could not be read.');
+      add(first.jobs);
+      memberId = memberId || first.memberId;
+      // The company's own jobs name it: that name is what the search results are checked against.
+      names = [...new Set([...names, ...(first.jobs || []).map((job) => normalizeCompanyName(job.companyName)).filter(Boolean)])];
+      counts.expected = first.expectedTotal;
+      record(1, 'company-jobs-tab', (first.jobs || []).length, first.state === 'ok' || first.state === 'empty' ? first.complete === true : false, (first.notes || [])[0]);
+      notes.push(...(first.notes || []));
+      if (first.state === 'restricted') { status = 'restricted'; error = (first.notes || [])[0]; throw Object.assign(new Error(error || 'LinkedIn restricted this page.'), { handled: true }); }
+      firstDone = true;
+      await checkpoint();
+    } else {
+      record(1, 'company-jobs-tab', jobs.size, true, 'Read by the earlier scan.');
+    }
+
+    // Pass 2: verification by LinkedIn's job search for the same company (another source).
+    await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
+    progress('Job roles: verification scan…');
+    let secondFound = 0;
+    let secondComplete = false;
+    let secondMethod = 'job-search';
+    let searchTotal;
+    const before = jobs.size;
+    if (memberId) {
+      let start = nextStart;
+      for (let page = Math.floor(start / 25); page < JOB_SCAN_LIMITS.SEARCH_PAGES; page++, start += 25) {
+        const stop = await blocked();
+        if (stop) { notes.push(`Verification stopped: ${stop}`); break; }
+        progress(`Job roles: verification scan, results page ${page + 1} (${jobs.size} roles so far)…`);
+        // A page that fails after its retries is an incomplete verification, not a failed scan: what was read is kept.
+        const result = await read(jobsSearchUrl(memberId, start), { type: 'COLLECT_JOBS_PAGE', options: { source: 'job-search' } });
+        if (result.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
+        if (!result.ok) { notes.push(`Verification page ${page + 1}: ${result.error || 'could not be read'}`); break; }
+        if (result.state === 'restricted') { status = 'restricted'; error = (result.notes || [])[0]; break; }
+        if (result.state === 'not_loaded') { notes.push(`Verification page ${page + 1} did not load.`); break; }
+        counts.pagesRead++;
+        // LinkedIn's count for the whole search (the Jobs tab's own count is a different list).
+        searchTotal = result.expectedTotal ?? searchTotal;
+        if (searchTotal) counts.expected = Math.max(counts.expected || 0, searchTotal);
+        // Every job on a results page must belong to this company. A page of someone else's jobs means the
+        // search was filtered to the wrong company: it is not used, and the scan says so.
+        const own = (result.jobs || []).filter((job) => sameCompany(job.companyName, names));
+        const foreign = (result.jobs || []).length - own.length;
+        counts.wrongCompany += foreign;
+        if (foreign > 0 && own.length === 0) {
+          notes.push(`LinkedIn's job search for company id ${memberId} returned another company's jobs, so the verification pass was not used.`);
+          break;
+        }
+        if (foreign > 0) notes.push(`Left out ${foreign} role${foreign === 1 ? '' : 's'} on results page ${page + 1} that belong to another company.`);
+        secondFound += own.length;
+        add(own);
+        nextStart = start + 25;
+        await checkpoint();
+        const reachedTotal = searchTotal && start + (result.jobs || []).length >= searchTotal;
+        if (result.state === 'empty' || !result.hasNext || reachedTotal) { secondComplete = result.complete !== false; secondFinished = true; break; }
+        if (page === JOB_SCAN_LIMITS.SEARCH_PAGES - 1) notes.push(`Verification stopped after ${JOB_SCAN_LIMITS.SEARCH_PAGES} result pages (${secondFound} roles); LinkedIn may list more. Rescan continues from there.`);
+        await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
+      }
+    } else {
+      // LinkedIn's company id was not found, so job search cannot be filtered to this company.
+      secondMethod = 'company-jobs-tab-deep';
+      notes.push("LinkedIn's company id was not found on the page, so the verification pass re-read the Jobs tab with deeper loading.");
+      const result = await read(jobsTabUrl(companyId), { type: 'COLLECT_JOBS_PAGE', options: { source: 'company-jobs-tab', maxPasses: 120, wait: 900 } });
+      if (result.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
+      if (result.ok && (result.state === 'ok' || result.state === 'empty')) { secondFound = (result.jobs || []).length; secondComplete = result.complete === true; secondFinished = true; add(result.jobs); }
+      else if (result.state === 'restricted') { status = 'restricted'; error = (result.notes || [])[0]; }
+      else notes.push('The deeper Jobs tab read did not load.');
+    }
+    record(2, secondMethod, secondFound, secondComplete);
+    const missedByFirst = jobs.size - before;
+    if (missedByFirst > 0 && !counts.resumed) notes.push(`The verification scan found ${missedByFirst} role${missedByFirst === 1 ? '' : 's'} the first scan missed; they were merged in.`);
+    else if (jobs.size && secondComplete && !missedByFirst) notes.push('The verification scan found nothing the first scan had missed.');
+    if (!jobs.size && !(passes[0]?.complete && secondComplete)) notes.push('No jobs were found, but the scans could not confirm that there are none.');
+
+    // Details: the description and requirements of roles the workspace does not have them for yet.
+    if (jobs.size && status === 'completed') {
+      let known = new Map();
+      try {
+        const body = await deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/known`);
+        known = new Map((body?.jobs || []).map((entry) => [String(entry.jobId), entry.detailsComplete === true]));
+      } catch { /* every role without a description is read */ }
+      const missing = [...jobs.values()]
+        .filter((job) => job.jobId && !job.description && !known.get(String(job.jobId)))
+        .sort((a, b) => String(b.postedAt || '').localeCompare(String(a.postedAt || '')));
+      const wanted = missing.slice(0, JOB_SCAN_LIMITS.DETAIL_PAGES);
+      for (const [index, job] of wanted.entries()) {
+        if (await blocked()) break;
+        progress(`Job roles: reading details ${index + 1} of ${wanted.length}…`);
+        await companyReadDelay(JOB_SCAN_LIMITS.PAGE_GAP_MS);
+        const result = await read(jobViewUrl(job.jobId), { type: 'COLLECT_JOB_DETAIL' }, 60_000);
+        if (result?.cancelled) throw Object.assign(new Error('Stopped.'), { handled: true, stopped: true });
+        if (result?.state === 'restricted') { status = 'restricted'; error = result.note; break; }
+        if (result?.ok && result.detail?.description) {
+          const detail = result.detail;
+          // The description and requirements come from the job's own page; card facts stay unless missing.
+          const key = `id:${job.jobId}`;
+          const current = jobs.get(key) || job;
+          jobs.set(key, { ...mergeJob(detail, current), description: detail.description, requirements: detail.requirements ?? current.requirements, department: detail.department ?? current.department });
+          counts.detailsRead++;
+        } else counts.detailsFailed++;
+      }
+      counts.detailsRemaining = [...jobs.values()].filter((job) => job.jobId && !job.description && !known.get(String(job.jobId))).length;
+      if (counts.detailsFailed) notes.push(`${counts.detailsFailed} job page${counts.detailsFailed === 1 ? '' : 's'} did not load, so those roles have no description yet.`);
+      if (counts.detailsRemaining > counts.detailsFailed) notes.push(`${counts.detailsRemaining} role${counts.detailsRemaining === 1 ? '' : 's'} still have no description (${JOB_SCAN_LIMITS.DETAIL_PAGES} are read per scan); Rescan continues with the rest.`);
+    }
+  } catch (caught) {
+    if (!caught?.handled) { status = status === 'restricted' ? status : 'failed'; error = caught?.message || 'The job scan failed.'; }
+    else if (caught.stopped) { status = 'failed'; error = 'The job scan was stopped.'; }
+    // A page the scan could not get to before stopping is an incomplete pass, not an empty one.
+    if (!passes.length) record(1, 'company-jobs-tab', jobs.size, false, error);
+  } finally {
+    jobReads.delete(owner);
+  }
+  counts.found = jobs.size;
+  // A scan that read nothing because the pages never loaded is "not loaded", not "failed".
+  if (status === 'completed' && !jobs.size && passes.length && passes.every((pass) => !pass.complete) && notes.some((note) => /did not (?:finish loading|load|become readable)/i.test(note))) status = 'not_loaded';
+  // The checkpoint is kept while there is more to read (so Rescan resumes) and removed once the scan genuinely finished.
+  const finished = status === 'completed' && passes.length >= 2 && passes.every((pass) => pass.complete) && secondFinished && counts.detailsRemaining === 0;
+  if (finished) await clearJobScanCheckpoint(companyId).catch(() => {});
+  else if (jobs.size) await checkpoint({ detailsRemaining: counts.detailsRemaining });
+  return sanitizeJobScan({
+    clientScanId: globalThis.crypto?.randomUUID?.() || `scan-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    status, source: 'company-jobs-tab+job-search', passes, jobs: [...jobs.values()], notes, error, counts, startedAt, completedAt: new Date().toISOString(),
+  });
+}
+
+/** What the side panel shows for a finished scan. */
+export function jobScanSummary(scan, saved) {
+  return {
+    status: saved?.status || scan.status,
+    jobsFound: scan.jobs.length,
+    jobsNew: saved?.jobsNew,
+    jobsUpdated: saved?.jobsUpdated,
+    counts: scan.counts,
+    verified: saved?.verified === true,
+    passes: scan.passes,
+    notes: scan.notes,
+    error: scan.error,
+    at: Date.now(),
+  };
+}
+
+async function saveJobScan(companyId, scan) {
+  let last;
+  for (let attempt = 1; attempt <= SAVE_ATTEMPTS; attempt++) {
+    try {
+      // The same scan id every time: a repeated request is recorded once.
+      return await deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/scan`, { method: 'POST', body: JSON.stringify(scan), timeoutMs: 60_000 });
+    } catch (error) {
+      last = error;
+      if (!(error?.transient || error?.timedOut) || attempt >= SAVE_ATTEMPTS) break;
+      await timing.delay(Math.min(15_000, 3_000 * attempt));
+    }
+  }
+  throw last;
+}
+
+/**
+ * A job scan started from the side panel (or a workspace request): scans, then saves it. A save that
+ * cannot be confirmed keeps the scan so "Save again" is safe.
+ */
+// One job scan at a time, whichever company or tab started it: two would fight over the same LinkedIn
+// session and checkpoint. Stop keeps what was read (a checkpoint, and a partial scan the workspace records);
+// Quit throws it away and saves nothing.
+export const JOB_SCAN_LIVE_KEY = 'skoutJobScanLive';
+let activeJobScan = null;
+
+export function activeJobScanInfo() {
+  return activeJobScan ? { companyId: activeJobScan.companyId, name: activeJobScan.name, tabId: activeJobScan.tabId, startedAt: activeJobScan.startedAt, stopping: activeJobScan.mode || null } : null;
+}
+
+/** Stop (keep progress, resume later) or Quit (discard) the running job scan. */
+async function endJobScan(mode) {
+  if (!activeJobScan) return { ok: false, error: 'No job scan is running.' };
+  if (activeJobScan.mode === 'quit') return { ok: true };
+  activeJobScan.mode = mode === 'quit' ? 'quit' : 'stop';
+  for (const task of jobReads.values()) cancelTask(task);
+  await setProgress({ kind: 'jobs', tabId: activeJobScan.tabId, active: true, text: mode === 'quit' ? 'Cancelling the job scan…' : 'Stopping the job scan after the page it is on…' });
+  return { ok: true };
+}
+
+async function runJobScan(message) {
+  const companyId = String(message.companyId || '');
+  if (!COMPANY_ID.test(companyId)) return { ok: false, error: 'Not a LinkedIn company.' };
+  if (message.tabId == null) return { ok: false, error: 'Open the company on LinkedIn first.' };
+  if (activeJobScan || jobReads.has(message.tabId)) {
+    return { ok: false, error: `A job scan for ${activeJobScan?.name || 'another company'} is already running. Stop it or wait for it to finish.` };
+  }
+  const block = await captureBlockDetail();
+  if (block.reason) return { ok: false, error: block.reason };
+  const scanId = globalThis.crypto?.randomUUID?.() ?? `scan-${Date.now()}`;
+  const control = { companyId, name: message.name || companyId, tabId: message.tabId, startedAt: Date.now(), mode: null };
+  activeJobScan = control;
+  try {
+    // Tell the workspace it started (best effort): it shows "In progress" and answers a rescan request.
+    deps.skoutFetch(`${API}/companies/${encodeURIComponent(companyId)}/jobs/scan/start`, { method: 'POST', body: JSON.stringify({ clientScanId: scanId }) }).catch(() => {});
+    const scan = await collectJobScan({ owner: message.tabId, companyId, publicName: message.name, resume: message.resume !== false });
+    scan.clientScanId = scanId;
+    if (control.mode === 'quit') return await finishQuitJobScan(control, scan);
+    let result = { ok: true, scan: jobScanSummary(scan) };
+    try {
+      const saved = await saveJobScan(companyId, scan);
+      await chrome.storage.local.remove(JOB_SCAN_PENDING_KEY);
+      result = { ok: true, scan: jobScanSummary(scan, saved?.scan || saved), saved: true, ...(control.mode === 'stop' ? { stopped: true } : {}) };
+      await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId, name: message.name, ...result.scan } });
+      await setProgress({ kind: 'jobs', tabId: message.tabId, active: false, text: control.mode === 'stop' ? `Job scan stopped: ${scan.jobs.length} roles kept. Resume continues where it stopped.` : `Job roles saved: ${scan.jobs.length} found.` });
+    } catch (error) {
+      const unconfirmed = error?.transient || error?.timedOut;
+      if (error?.body?.error === 'company_not_captured' || /capture this company first/i.test(error?.message || '')) {
+        result = { ok: false, error: 'Capture this company first, then its job roles can be saved.', scan: jobScanSummary(scan) };
+      } else if (unconfirmed) {
+        await chrome.storage.local.set({ [JOB_SCAN_PENDING_KEY]: { companyId, name: message.name, scan } });
+        result = { ok: false, pending: true, error: `The scan finished but Skout did not confirm the save (${error.message}). It is kept: choose Save again. It will not be saved twice.`, scan: jobScanSummary(scan) };
+      } else {
+        result = { ok: false, error: error?.message || 'The job scan could not be saved.', scan: jobScanSummary(scan) };
+      }
+      await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId, name: message.name, ...result.scan, saveError: result.error } });
+      await setProgress({ kind: 'jobs', tabId: message.tabId, active: false, isError: true, text: result.error });
+    }
+    return result;
+  } finally {
+    activeJobScan = null;
+    await chrome.storage.local.remove(JOB_SCAN_LIVE_KEY).catch(() => {});
+  }
+}
+
+/** Quit: nothing from the scan is kept or saved, its checkpoint goes, and the workspace's "in progress" row is closed. */
+async function finishQuitJobScan(control, scan) {
+  await clearJobScanCheckpoint(control.companyId).catch(() => {});
+  await chrome.storage.local.remove([JOB_SCAN_PENDING_KEY, JOB_SCAN_RESULT_KEY]).catch(() => {});
+  // Close the "in progress" scan the workspace was told about: a cancelled scan with no roles, so no role is touched.
+  deps.skoutFetch(`${API}/companies/${encodeURIComponent(control.companyId)}/jobs/scan`, {
+    method: 'POST',
+    body: JSON.stringify({ clientScanId: scan.clientScanId, status: 'failed', passes: [], jobs: [], notes: ['The job scan was cancelled before it finished.'], error: 'Cancelled by the user.' }),
+  }).catch(() => {});
+  await setProgress({ kind: 'jobs', tabId: control.tabId, active: false, text: 'Job scan cancelled. Nothing from it was saved.' });
+  return { ok: true, quit: true };
+}
+
+async function retryJobScanSave() {
+  const pending = await getStored(JOB_SCAN_PENDING_KEY);
+  if (!pending?.scan) return { ok: false, error: 'There is no job scan waiting to be saved.' };
+  try {
+    const saved = await saveJobScan(pending.companyId, pending.scan);
+    await chrome.storage.local.remove(JOB_SCAN_PENDING_KEY);
+    const summary = jobScanSummary(pending.scan, saved?.scan || saved);
+    await chrome.storage.local.set({ [JOB_SCAN_RESULT_KEY]: { companyId: pending.companyId, name: pending.name, ...summary } });
+    return { ok: true, scan: summary, saved: true };
+  } catch (error) {
+    return { ok: false, pending: true, error: error?.message || 'The job scan could not be saved.' };
+  }
+}
+
+/** Companies the workspace asked to rescan, for the side panel. */
+async function listRequestedJobScans() {
+  try {
+    const body = await deps.skoutFetch(`${API}/capture/job-scans/requested`);
+    return { ok: true, scans: (body?.scans || []).filter((scan) => COMPANY_ID.test(scan.companyPublicId || '')) };
+  } catch (error) {
+    return { ok: false, error: error?.message || 'Requested job scans could not be loaded.' };
+  }
+}
+
 // ── Drafts, progress, halt ────────────────────────────────────────────────────
 
-const taskMaps = () => [salesLinkReads, companyReads, personReads, companyPeopleReads];
+const taskMaps = () => [salesLinkReads, companyReads, personReads, companyPeopleReads, jobReads];
 
 function cancelTask(task) {
   task.cancelled = true;
@@ -459,6 +970,8 @@ async function storeDraft(message, sender) {
     notes: Array.isArray(message.notes) ? message.notes.filter(Boolean).map(String) : [],
     sourceUrl: message.sourceUrl,
     capturedAt: message.capturedAt || new Date().toISOString(),
+    // Names this capture for idempotent saves (see sendCapture).
+    clientRunId: globalThis.crypto?.randomUUID?.(),
     tabId: sender.tab?.id,
     meta: {
       companyId: message.kind === 'company' ? data.publicId : undefined,
@@ -484,6 +997,39 @@ async function storeDraft(message, sender) {
   return { ok: true };
 }
 
+/**
+ * What must be present before a capture is sent. A record with no name or no LinkedIn id would be saved
+ * as an empty shell: it is refused here, in words, instead of failing at the API or looking saved.
+ */
+export function draftValidation(draft) {
+  const data = draft?.data || {};
+  const has = value => typeof value === 'string' && value.trim().length > 0;
+  const errors = [];
+  if (draft?.kind === 'person') {
+    if (!has(data.fullName)) errors.push("The person's name was not found on the page.");
+    if (!has(data.publicId)) errors.push("The profile's LinkedIn id was not found.");
+  } else if (draft?.kind === 'company') {
+    if (!has(data.name)) errors.push("The company's name was not found on the page.");
+    if (!has(data.publicId)) errors.push("The company's LinkedIn id was not found.");
+  }
+  return errors;
+}
+
+/**
+ * How complete a reviewed capture is, from its verification scan: complete, partial (with what is missing)
+ * or unverified (no verification ran). Partial data is kept and saved, but never reported as complete.
+ */
+export function draftCompleteness(draft) {
+  const verification = draft?.data?.verification;
+  if (!verification) return { level: 'unverified', status: null, missing: [], incomplete: [] };
+  const incomplete = Object.entries(verification.sections || {})
+    .filter(([, section]) => !['complete', 'none'].includes(section?.state))
+    .map(([key, section]) => `${key}${section.expected !== undefined ? ` (${section.found} of ${section.expected})` : ''}`);
+  const missing = [...(verification.missing || [])];
+  const level = verification.status === 'verified' && !incomplete.length ? 'complete' : 'partial';
+  return { level, status: verification.status, missing, incomplete };
+}
+
 /** The request body for a reviewed draft. Exported for tests. */
 export function buildCapturePayload(draft, data) {
   const clean = withoutInternal(data);
@@ -492,6 +1038,7 @@ export function buildCapturePayload(draft, data) {
     throw new Error(`A capture run saves at most ${CAPTURE_CAPS.MAX_LEADS} leads. Remove ${leads.length - CAPTURE_CAPS.MAX_LEADS} before saving.`);
   }
   const capturedAt = draft.capturedAt;
+  const key = draft.clientRunId ? { clientRunId: draft.clientRunId } : {};
   if (draft.kind === 'sales') {
     return {
       sourceUrl: clean.sourceUrl,
@@ -500,10 +1047,11 @@ export function buildCapturePayload(draft, data) {
       resultCount: clean.resultCount,
       peopleProfiles: leads || [],
       capturedAt,
+      ...key,
     };
   }
   if (draft.kind === 'company') {
-    const payload = { ...clean, capturedAt };
+    const payload = { ...clean, capturedAt, ...key };
     if (leads?.length) {
       payload.peopleProfiles = leads;
       payload.pagesRead = Math.min(CAPTURE_CAPS.MAX_PAGES, Number(draft.meta?.progress?.pagesThisBatch) || 0);
@@ -513,9 +1061,11 @@ export function buildCapturePayload(draft, data) {
     }
     return payload;
   }
-  return { ...clean, capturedAt };
+  return { ...clean, capturedAt, ...key };
 }
 
+// A save that times out is sent again this many times in all before the user is asked to retry.
+const SAVE_ATTEMPTS = 3;
 const INGEST_PATHS = { person: 'person', company: 'company', sales: 'sales-search' };
 
 /**
@@ -527,11 +1077,34 @@ async function sendCapture(message) {
   if (!draft) return { ok: false, error: 'There is no reviewed capture to save.' };
   const path = INGEST_PATHS[draft.kind];
   if (!path) return { ok: false, error: 'Unknown capture type.' };
+  const problems = draftValidation({ ...draft, data: message.data || draft.data });
+  if (problems.length) return { ok: false, code: 'invalid_capture', error: `${problems.join(' ')} Open the page again and recapture, or fill the field in the review.` };
   let body;
   try {
     const payload = buildCapturePayload(draft, message.data || draft.data);
-    body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+    // The same capture carries the same clientRunId every time, so sending it again after a
+    // timeout is safe: the API replays what it recorded instead of saving it twice.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        body = await deps.skoutFetch(`${API}/ingest/${path}`, { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 });
+        break;
+      } catch (error) {
+        if (!(error?.transient || error?.timedOut) || attempt >= SAVE_ATTEMPTS) throw error;
+        await timing.delay(Math.min(15_000, 3_000 * attempt));
+      }
+    }
   } catch (error) {
+    if (error?.timedOut || error?.transient) {
+      // A timeout does not mean the capture failed: it may be saved, or still saving. The reviewed
+      // batch is kept, and Save again is safe (it is not saved twice).
+      return {
+        ok: false,
+        pending: true,
+        error: `Skout is taking longer than usual to confirm this save (${error.message}). Your reviewed capture is kept: choose Save again in a moment. It will not be saved twice.`,
+        code: 'save_unconfirmed',
+        run: null,
+      };
+    }
     // The API lists the fields that failed validation under details.fields.
     const issues = (error?.body?.details?.fields || []).slice(0, 5).map(issue => `${issue.path}: ${issue.message}`);
     return {
@@ -557,13 +1130,15 @@ async function sendCapture(message) {
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
   let autoContinued = false;
   if (draft.kind === 'company') {
-    autoContinued = await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged }, checkpoint, {
+    autoContinued = await runQueueBatchSaved(draft.meta?.companyId, { created: body.created, merged: body.merged, rejected: body.rejected }, checkpoint, {
       autoContinue: message.autoContinue === true, autoSave: message.autoSave === true, name: draft.data?.name, tabId: draft.tabId,
+      completeness: draftCompleteness({ ...draft, data: message.data || draft.data }),
     });
   }
   return {
     ok: true,
     autoContinued,
+    completeness: draftCompleteness({ ...draft, data: message.data || draft.data }),
     run,
     counts: { received: body.received, created: body.created, merged: body.merged, rejected: body.rejected },
     rejectedFields: body.rejectedFields || [],
@@ -728,7 +1303,7 @@ async function continueCaptureQueue(message) {
     tabId,
     kind: 'company',
     replaceDraft: message.replaceDraft === true,
-    options: { includeCompany: false, includePeople: true, resume: true },
+    options: message.options || { includeCompany: false, includePeople: true, resume: true },
   });
   return started.ok ? { ...started, tabId } : started;
 }
@@ -743,6 +1318,18 @@ const MAX_QUEUE_COMPANIES = 200;
 const RUN_QUEUE_GAP_MS = 3000;
 // A company read "until finished" stops after this many saved batches (250 people each).
 const MAX_BATCHES_PER_COMPANY = 40;
+// A queue waits this many times (with growing pauses) for a status check that cannot be confirmed.
+const MAX_STATUS_RETRIES = 6;
+// A company is tried again this many times after a failure that is likely to pass (slow LinkedIn, dropped network).
+export const MAX_ITEM_ATTEMPTS = 2;
+// An item that says it is being read, with nothing reporting for this long, is stuck.
+export const STUCK_GRACE_MS = 90 * 1000;
+export const QUEUE_RECOVERY_ALARM = 'skout-queue-recovery';
+
+const NOT_RECOVERABLE = /daily capture limit|restrict|warning|stopped capture|paused capture|not signed|sign in|permission|not allowed|not a linkedin company/i;
+const RECOVERABLE = /took too long|didn.t respond|did not respond|timed out|timeout|network|temporar|try again|receiving end|could not establish|failed to fetch|did not (?:finish )?load|\b50[234]\b/i;
+/** A failure that is likely to pass if tried again, as opposed to one that needs a person (a warning, a limit, no access). */
+export const isRecoverableFailure = (text) => RECOVERABLE.test(String(text || '')) && !NOT_RECOVERABLE.test(String(text || ''));
 
 async function getRunQueue() {
   return (await getStored(RUN_QUEUE_KEY)) || null;
@@ -778,6 +1365,8 @@ function reportRunQueue(queue) {
       companyPublicId: item.companyPublicId,
       companyName: item.name,
       status,
+      ...(item.attempts ? { attempts: Math.min(20, item.attempts) } : {}),
+      ...reportableSteps(item),
       ...(status === 'failed' && item.error ? { error: String(item.error).slice(0, 500) } : {}),
     };
   });
@@ -814,11 +1403,131 @@ async function dropCancelledJobs(ids) {
   if (queue.active) advanceSoon();
 }
 
+
+// ── Company workflow: company → job roles → employees → verification ──────────
+// A company in the queue goes through four steps in order and is finished only when each has run and the
+// workspace holds what was reported. Each step records its own status and counts on the queue item, which
+// is reported to the workspace after every change. A retry resumes at the first step that is not done.
+
+export const WORKFLOW_STEPS = ['company', 'jobs', 'people', 'verify'];
+export const WORKFLOW_LABELS = { company: 'Company profile', jobs: 'Job roles', people: 'Employees', verify: 'Verification' };
+
+export function setStepDetail(item, step, patch) {
+  item.stepDetail = { ...(item.stepDetail || {}), [step]: { ...(item.stepDetail?.[step] || {}), ...patch } };
+}
+/** The first step that has not finished (a partial or failed step is run again, resuming where it can). */
+export function nextUnfinishedStep(item) {
+  for (const step of WORKFLOW_STEPS) {
+    const status = item.stepDetail?.[step]?.status;
+    if (status !== 'done' && status !== 'skipped') return step;
+  }
+  return 'verify';
+}
+const stepNote = (item, text) => `${item.name || item.companyPublicId}: step ${WORKFLOW_STEPS.indexOf(item.step || 'company') + 1} of ${WORKFLOW_STEPS.length}, ${WORKFLOW_LABELS[item.step || 'company'].toLowerCase()}${text ? ` · ${text}` : ''}`;
+
+/** The step and per-step results as the workspace accepts them (bounded numbers and text, known fields only). */
+export function reportableSteps(item) {
+  if (!item.workflow) return {};
+  const num = value => (Number.isFinite(Number(value)) && value !== undefined && value !== null ? Math.max(0, Math.min(2_000_000_000, Math.round(Number(value)))) : undefined);
+  const stepDetail = {};
+  for (const step of WORKFLOW_STEPS) {
+    const entry = item.stepDetail?.[step];
+    if (!entry?.status) continue;
+    const out = { status: entry.status };
+    for (const key of ['found', 'captured', 'updated', 'duplicates', 'refused', 'failed']) if (num(entry[key]) !== undefined) out[key] = num(entry[key]);
+    if (entry.error) out.error = String(entry.error).slice(0, 500);
+    if (entry.note) out.note = String(entry.note).slice(0, 300);
+    stepDetail[step] = out;
+  }
+  return { step: WORKFLOW_STEPS.includes(item.step) ? item.step : 'company', stepDetail };
+}
+
+/** How a finished job scan maps to a step result. A scan that could not finish is partial and resumes on retry. */
+export function jobsStepFromScan(result) {
+  const scan = result.scan || {};
+  const counts = scan.counts || {};
+  const base = { found: scan.jobsFound ?? counts.found ?? 0, captured: Math.max(0, (scan.jobsFound ?? 0) - (counts.skipped || 0)), updated: scan.jobsUpdated, failed: counts.failed, scanStatus: scan.status };
+  if (!result.ok && !result.scan) return { status: 'failed', error: result.error || 'The job scan could not start.' };
+  if (result.pending) return { ...base, status: 'partial', note: 'The scan finished but its save was not confirmed. It is kept and can be saved again.' };
+  switch (scan.status) {
+    case 'completed_verified': return { ...base, status: 'done' };
+    case 'not_found': return { ...base, status: 'done', note: 'No open roles (confirmed by two scans).' };
+    case 'partial':
+    case 'verification_required': return { ...base, status: 'partial', note: counts.remaining ? `${counts.remaining} remaining; a retry resumes the scan.` : 'The list could not be fully verified; a retry resumes the scan.' };
+    default: return { ...base, status: scan.jobsFound ? 'partial' : 'failed', error: scan.error || result.error || `The job scan ended: ${scan.status || 'unknown'}.` };
+  }
+}
+
+/**
+ * A company the queue says is being read (or waiting for review) while nothing is reading it and no review
+ * is waiting: the service worker restarted, the tab navigated away, or the reader died. It goes back to
+ * waiting (and is tried again), or is marked failed with the reason after MAX_ITEM_ATTEMPTS, instead of
+ * showing "running" for ever. Returns whether the queue changed.
+ */
+export async function recoverStuckRunQueue(now = Date.now()) {
+  const queue = await getRunQueue();
+  const busy = (queue?.items || []).filter(item => item.status === 'running' || item.status === 'review');
+  if (!busy.length) return false;
+  if (await hasActiveCapture()) return false;
+  const draft = await getStored(CAPTURE_DRAFT_KEY);
+  // The last change to the queue was a moment ago: the reader may simply not have reported yet.
+  if (now - (queue.at || 0) < STUCK_GRACE_MS) return false;
+  let changed = false;
+  for (const item of busy) {
+    if (item.status === 'review' && draft) continue; // waiting for a person, with the batch still saved
+    item.attempts = (item.attempts || 0) + 1;
+    if (item.attempts > MAX_ITEM_ATTEMPTS) {
+      item.status = 'failed';
+      item.error = `The capture stopped reporting and did not recover after ${MAX_ITEM_ATTEMPTS} tries. Use Retry to start it again.`;
+    } else {
+      item.status = 'pending';
+    }
+    changed = true;
+  }
+  if (!changed) return false;
+  await setRunQueue({ ...queue, note: 'A capture that had stopped reporting was put back in the queue.' });
+  if (queue.active) advanceSoon();
+  return true;
+}
+
+/** What the workspace recorded for earlier steps, kept only for the steps and statuses this workflow knows. */
+function knownStepDetail(detail) {
+  const out = {};
+  for (const step of WORKFLOW_STEPS) {
+    const entry = detail?.[step];
+    if (entry && ['done', 'partial', 'failed', 'skipped'].includes(entry.status)) out[step] = { ...entry };
+  }
+  return out;
+}
+
+/** Puts a failed or skipped company back in the queue to be read again, from the page it stopped on. */
+async function retryRunQueueItem(message) {
+  const queue = await getRunQueue();
+  const item = queue?.items?.find(entry => entry.companyPublicId === message.companyPublicId);
+  if (!item) return { ok: false, error: 'That company is not in the queue.' };
+  if (!['failed', 'skipped'].includes(item.status)) return { ok: false, error: 'Only a failed or skipped company can be retried.' };
+  if (await getStored(CAPTURE_DRAFT_KEY)) return { ok: false, error: 'Save or discard the capture waiting for review first.' };
+  item.status = 'pending';
+  item.attempts = 0;
+  delete item.error;
+  delete item.emptyTries;
+  // A company workflow resumes at the first step that is not done; steps already finished are not repeated.
+  if (item.workflow) {
+    item.step = nextUnfinishedStep(item);
+    const detail = item.stepDetail?.[item.step];
+    if (detail?.status === 'failed') setStepDetail(item, item.step, { status: 'pending', error: undefined });
+  }
+  await setRunQueue({ ...queue, active: true, note: undefined });
+  advanceRunQueue().catch(() => {});
+  return { ok: true };
+}
+
 let advancing = false;
 async function advanceRunQueue() {
   if (advancing) return;
   advancing = true;
   try {
+    await recoverStuckRunQueue().catch(() => {});
     for (;;) {
       const queue = await getRunQueue();
       if (!queue?.active) return;
@@ -826,11 +1535,33 @@ async function advanceRunQueue() {
       if (queue.items.some(entry => ['running', 'review'].includes(entry.status))) return;
       const next = queue.items.find(entry => entry.status === 'pending');
       if (!next) return setRunQueue({ ...queue, active: false, note: 'Every selected company has been read.', finishedAt: Date.now() });
-      const blocked = await captureBlock();
-      if (blocked) return setRunQueue({ ...queue, active: false, note: blocked });
+      const block = await captureBlockDetail();
+      if (block.transient && (queue.statusRetries || 0) < MAX_STATUS_RETRIES) {
+        // A slow or restarting API is not a reason to stop the queue: wait, then try again.
+        const waitMs = Math.min(5 * 60_000, 20_000 * 2 ** (queue.statusRetries || 0));
+        await setRunQueue({ ...queue, statusRetries: (queue.statusRetries || 0) + 1, note: `Waiting for Skout to answer (retry in ${Math.round(waitMs / 1000)} s).` });
+        timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
+        return;
+      }
+      if (block.reason) return setRunQueue({ ...queue, active: false, note: block.reason });
+      if (queue.statusRetries) queue.statusRetries = 0;
+      if (next.workflow) next.step = WORKFLOW_STEPS.includes(next.step) ? next.step : 'company';
+      if (next.workflow && next.step === 'jobs') {
+        if ((await runJobsStep(queue, next)) === 'return') return;
+        continue;
+      }
+      if (next.workflow && next.step === 'verify') {
+        if ((await runVerifyStep(queue, next)) === 'return') return;
+        continue;
+      }
       next.status = 'running';
+      if (next.workflow) {
+        setStepDetail(next, next.step, { status: 'running' });
+        queue.note = stepNote(next);
+      }
       await setRunQueue(queue);
-      const result = await continueCaptureQueue({ companyId: next.companyPublicId, tabId: queue.tabId });
+      const stepOptions = next.workflow && next.step === 'company' ? { includeCompany: true, includePeople: false, includeJobs: false } : undefined;
+      const result = await continueCaptureQueue({ companyId: next.companyPublicId, tabId: queue.tabId, ...(stepOptions ? { options: stepOptions } : {}) });
       const latest = (await getRunQueue()) || queue;
       const current = latest.items.find(entry => entry.companyPublicId === next.companyPublicId);
       if (result.ok) {
@@ -842,9 +1573,19 @@ async function advanceRunQueue() {
         current.status = 'pending';
         return setRunQueue({ ...latest, active: false, note: result.error });
       }
+      if (current && isRecoverableFailure(result.error) && (current.attempts || 0) < MAX_ITEM_ATTEMPTS) {
+        // Likely to pass if tried again (a slow page, a dropped connection): wait, then retry instead of failing.
+        current.attempts = (current.attempts || 0) + 1;
+        current.status = 'pending';
+        const waitMs = Math.min(5 * 60_000, 15_000 * 2 ** current.attempts);
+        await setRunQueue({ ...latest, note: `${current.name || current.companyPublicId}: ${String(result.error).slice(0, 120)} Trying again in ${Math.round(waitMs / 1000)} s (attempt ${current.attempts + 1} of ${MAX_ITEM_ATTEMPTS + 1}).` });
+        timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
+        return;
+      }
       if (current) {
         current.status = 'failed';
         current.error = String(result.error || 'The company could not be read.').slice(0, 300);
+        if (current.workflow) setStepDetail(current, current.step || 'company', { status: 'failed', error: current.error });
       }
       await setRunQueue(latest);
       await timing.delay(1500);
@@ -852,6 +1593,98 @@ async function advanceRunQueue() {
   } finally {
     advancing = false;
   }
+}
+
+
+/** Step 2: the company's job roles, scanned and saved through the same job scan the panel's button runs. */
+async function runJobsStep(queue, item) {
+  if (queue.includeJobs === false) {
+    setStepDetail(item, 'jobs', { status: 'skipped', note: 'Job roles were not requested for this queue.' });
+    item.step = 'people';
+    await setRunQueue(queue);
+    return 'continue';
+  }
+  item.status = 'running';
+  setStepDetail(item, 'jobs', { status: 'running' });
+  await setRunQueue({ ...queue, note: stepNote(item) });
+  const result = await runJobScan({ tabId: queue.tabId ?? -1, companyId: item.companyPublicId, name: item.name, resume: true });
+  const latest = await getRunQueue();
+  const current = latest?.items?.find(entry => entry.companyPublicId === item.companyPublicId);
+  // Stopped or cancelled while it ran: the scan kept its progress (a checkpoint), the queue does not move on.
+  if (!current || current.status !== 'running') return 'return';
+  const step = jobsStepFromScan(result);
+  if (step.status === 'failed' && isRecoverableFailure(step.error) && (current.attempts || 0) < MAX_ITEM_ATTEMPTS) {
+    current.attempts = (current.attempts || 0) + 1;
+    current.status = 'pending';
+    setStepDetail(current, 'jobs', { status: 'pending', error: step.error });
+    const waitMs = Math.min(5 * 60_000, 15_000 * 2 ** current.attempts);
+    await setRunQueue({ ...latest, note: `${current.name}: job roles ${String(step.error).slice(0, 100)} Trying again in ${Math.round(waitMs / 1000)} s.` });
+    timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
+    return 'return';
+  }
+  // Job roles that could not be read do not stop the employees: the step records what happened and the
+  // company finishes as partial, with a retry that resumes the scan.
+  setStepDetail(current, 'jobs', { ...step, error: step.status === 'failed' || step.status === 'partial' ? step.error : undefined });
+  current.step = 'people';
+  current.status = 'pending';
+  current.attempts = 0;
+  await setRunQueue(latest);
+  return 'continue';
+}
+
+/**
+ * Step 4: asks the workspace what it holds for this company and finishes the job on that, not on what the
+ * earlier steps reported. A company is done only when its profile is saved; job roles or people reported as
+ * saved that the workspace does not hold are a failed verification.
+ */
+async function runVerifyStep(queue, item) {
+  item.status = 'running';
+  setStepDetail(item, 'verify', { status: 'running' });
+  await setRunQueue({ ...queue, note: stepNote(item) });
+  let body;
+  let failure;
+  try {
+    body = await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(item.companyPublicId)}/verify`);
+  } catch (error) {
+    failure = error?.message || 'The workspace could not be asked.';
+  }
+  const latest = await getRunQueue();
+  const current = latest?.items?.find(entry => entry.companyPublicId === item.companyPublicId);
+  if (!current || current.status !== 'running') return 'return';
+  if (failure && isRecoverableFailure(failure) && (current.attempts || 0) < MAX_ITEM_ATTEMPTS) {
+    current.attempts = (current.attempts || 0) + 1;
+    current.status = 'pending';
+    const waitMs = Math.min(5 * 60_000, 15_000 * 2 ** current.attempts);
+    await setRunQueue({ ...latest, note: `${current.name}: verification ${failure.slice(0, 100)} Trying again in ${Math.round(waitMs / 1000)} s.` });
+    timing.delay(waitMs).then(advanceRunQueue).catch(() => {});
+    return 'return';
+  }
+  const jobs = current.stepDetail?.jobs;
+  const people = current.stepDetail?.people;
+  const problems = [];
+  if (failure) problems.push(`Verification could not be completed: ${failure}`);
+  else {
+    if (!body.companyCaptured) problems.push('The company profile is not in the workspace.');
+    if ((jobs?.captured || 0) > 0 && body.jobs === 0) problems.push('Job roles were reported saved but the workspace holds none.');
+    if ((people?.captured || 0) > 0 && body.people === 0) problems.push('People were reported saved but the workspace holds none for this company.');
+  }
+  setStepDetail(current, 'verify', {
+    status: problems.length ? 'failed' : 'done', found: body?.jobs, captured: body?.people,
+    ...(problems.length ? { error: problems.join(' ') } : { note: `The workspace holds ${body.jobs} open job role${body.jobs === 1 ? '' : 's'} and ${body.people} ${body.people === 1 ? 'person' : 'people'} for this company.` }),
+  });
+  current.step = 'verify';
+  if (problems.length) {
+    current.status = 'failed';
+    current.error = problems.join(' ').slice(0, 300);
+  } else if (people?.status === 'failed') {
+    current.status = 'failed';
+    current.error = String(people.error || 'The employees could not be read.').slice(0, 300);
+  } else {
+    current.status = 'done';
+    current.moreRemain = people?.status === 'partial';
+  }
+  await setRunQueue(latest);
+  return 'continue';
 }
 
 const advanceSoon = () => void timing.delay(RUN_QUEUE_GAP_MS).then(advanceRunQueue).catch(() => {});
@@ -864,7 +1697,7 @@ async function listRequestedJobs() {
     const local = new Set((queue?.items || []).filter(entry => ['pending', 'running', 'review'].includes(entry.status)).map(entry => entry.companyPublicId));
     const jobs = (body?.items || [])
       .filter(item => COMPANY_ID.test(item.companyPublicId || '') && !local.has(item.companyPublicId))
-      .map(item => ({ companyPublicId: item.companyPublicId, name: item.companyName || item.companyPublicId }));
+      .map(item => ({ companyPublicId: item.companyPublicId, name: item.companyName || item.companyPublicId, ...(item.stepDetail ? { stepDetail: item.stepDetail } : {}) }));
     return { ok: true, jobs };
   } catch (error) {
     return { ok: false, error: error?.message || 'Requested jobs could not be loaded.' };
@@ -884,9 +1717,13 @@ async function startRunQueue(message) {
     seen.add(id);
     items.push({
       companyPublicId: id, name: String(company?.name || id).slice(0, 200), status: 'pending',
-      ...(message.untilComplete === true ? { untilComplete: true } : {}),
+      // A company runs the whole workflow (profile, job roles, employees, verification) unless asked for people only.
+      ...(message.workflow === false ? {} : { workflow: true, step: 'company', stepDetail: knownStepDetail(company?.stepDetail), untilComplete: true }),
+      ...(message.workflow === false && message.untilComplete === true ? { untilComplete: true } : {}),
     });
   }
+  // A company the workspace already holds steps for (a retry from the Capture queue) resumes at its first unfinished step.
+  for (const item of items) if (item.workflow) item.step = nextUnfinishedStep(item);
   if (!items.length) return { ok: false, error: 'Select at least one company.' };
   if (adding) {
     // A company asked for while a queue runs joins it, unless it is already waiting or being read.
@@ -897,12 +1734,13 @@ async function startRunQueue(message) {
     await setRunQueue({
       ...existing, active: true, note: undefined, items: [...kept, ...fresh],
       ...(typeof message.autoSave === 'boolean' ? { autoSave: message.autoSave } : {}),
+      ...(typeof message.includeJobs === 'boolean' ? { includeJobs: message.includeJobs } : {}),
     });
     advanceRunQueue().catch(() => {});
     return { ok: true, count: fresh.length, added: true };
   }
   if (items.length > MAX_QUEUE_COMPANIES) return { ok: false, error: `A queue holds at most ${MAX_QUEUE_COMPANIES} companies. Select fewer.` };
-  await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now(), autoSave: message.autoSave === true });
+  await setRunQueue({ active: true, tabId: null, items, startedAt: Date.now(), autoSave: message.autoSave === true, includeJobs: message.includeJobs !== false });
   advanceRunQueue().catch(() => {});
   return { ok: true, count: items.length };
 }
@@ -914,6 +1752,8 @@ async function stopRunQueue() {
   const running = queue.items.find(entry => entry.status === 'running');
   if (running) running.status = 'pending';
   await setRunQueue({ ...queue, active: false, note: 'Queue paused. Choose Resume to continue.' });
+  // A job scan the queue is running stops gracefully: what it read is kept as a checkpoint and resumes later.
+  for (const task of jobReads.values()) cancelTask(task);
   const progress = await getStored(CAPTURE_PROGRESS_KEY);
   const tabId = queue.tabId ?? progress?.tabId;
   if (tabId != null) {
@@ -960,6 +1800,8 @@ async function runQueueEmptyBatch(draft) {
   const queue = await getRunQueue();
   const item = queue?.items?.find(entry => entry.status === 'running' && entry.companyPublicId === draft.meta.companyId);
   if (!item) return false;
+  // The company step reads the company's own page: it has no people, and is reviewed and saved as it is.
+  if (item.workflow && item.step === 'company') return false;
   // Everyone on those pages is already saved: move past them instead of calling the company empty.
   if (Number(draft.meta?.stats?.discovered) > 0 && draft.meta?.checkpointToken) {
     const commit = await commitCompanyPeopleCapture({ companyId: item.companyPublicId, token: draft.meta.checkpointToken });
@@ -969,6 +1811,7 @@ async function runQueueEmptyBatch(draft) {
     item.emptyTries = 0;
     item.status = moreRemain && item.untilComplete && item.batches < MAX_BATCHES_PER_COMPANY ? 'pending' : 'done';
     item.moreRemain = moreRemain && item.status === 'done';
+    if (item.workflow && item.status === 'done') finishPeopleStep(item);
     await setRunQueue(queue);
     if (queue.active) advanceSoon();
     return true;
@@ -982,6 +1825,7 @@ async function runQueueEmptyBatch(draft) {
   } else {
     item.status = 'failed';
     item.error = 'LinkedIn showed no people for this company (tried twice). Open its People page on LinkedIn to check, then retry.';
+    if (item.workflow) setStepDetail(item, 'people', { status: 'failed', error: item.error });
   }
   await setRunQueue(queue);
   if (queue.active) advanceSoon();
@@ -1002,6 +1846,7 @@ async function autoSaveBatch(companyId) {
   }
   item.status = 'failed';
   item.error = String(result.error || 'The batch could not be saved.').slice(0, 300);
+  if (item.workflow) setStepDetail(item, item.step || 'company', { status: 'failed', error: item.error });
   await chrome.storage.local.remove(CAPTURE_DRAFT_KEY);
   await setRunQueue(queue);
   if (queue.active) advanceSoon();
@@ -1036,15 +1881,47 @@ async function runQueueBatchSaved(companyId, counts, checkpoint, extra = {}) {
     item = { companyPublicId: companyId, name: String(extra.name || companyId).slice(0, 200), status: 'running', untilComplete: true, batches: 0, saved: 0 };
     queue = { active: true, tabId: extra.tabId ?? null, items: [item], startedAt: Date.now(), autoSave: extra.autoSave === true };
   }
+  // The workflow's first step saved the company's own profile: on to its job roles.
+  if (item.workflow && item.step === 'company') {
+    // A company saved with sections missing is partial, and says what is missing; the workflow still moves on.
+    const completeness = extra.completeness;
+    const partial = completeness?.level === 'partial';
+    setStepDetail(item, 'company', {
+      status: partial ? 'partial' : 'done', captured: 1,
+      ...(partial ? { note: `Saved with missing data: ${[...completeness.incomplete, ...completeness.missing].join(', ') || 'see the verification'}.` } : {}),
+    });
+    item.step = 'jobs';
+    item.status = 'pending';
+    item.attempts = 0;
+    await setRunQueue(queue);
+    if (queue.active) advanceSoon();
+    return false;
+  }
   item.batches = (item.batches || 0) + 1;
   item.saved = (item.saved || 0) + savedNow;
+  item.duplicates = (item.duplicates || 0) + (counts?.merged || 0);
+  item.refused = (item.refused || 0) + (counts?.rejected || 0);
   // No new people in a batch means more reading would only repeat itself.
   const again = item.untilComplete === true && moreRemain && savedNow > 0 && item.batches < MAX_BATCHES_PER_COMPANY;
   item.status = again ? 'pending' : 'done';
   item.moreRemain = moreRemain && !again;
+  if (item.workflow) {
+    if (again) setStepDetail(item, 'people', { status: 'running', captured: item.saved, duplicates: item.duplicates, refused: item.refused, note: `${item.batches} batch${item.batches === 1 ? '' : 'es'} saved so far` });
+    else finishPeopleStep(item);
+  }
   await setRunQueue(queue);
   if (queue.active) advanceSoon();
   return again;
+}
+
+/** The employees step is over: partial when LinkedIn shows more people than the batch limit allowed, else done; then verification. */
+function finishPeopleStep(item) {
+  setStepDetail(item, 'people', {
+    status: item.moreRemain ? 'partial' : 'done', captured: item.saved || 0, duplicates: item.duplicates || 0, refused: item.refused || 0,
+    ...(item.moreRemain ? { note: 'More people remain than the batch limit allowed; retry continues where it stopped.' } : {}),
+  });
+  item.step = 'verify';
+  item.status = 'pending';
 }
 
 /** The reviewed batch was discarded: skip that company and move on. */
@@ -1065,6 +1942,7 @@ async function runQueueReadEnded(message) {
   if (message.isError) {
     item.status = 'failed';
     item.error = String(message.text || 'The company could not be read.').slice(0, 300);
+    if (item.workflow) setStepDetail(item, item.step || 'company', { status: 'failed', error: item.error });
   } else {
     item.status = 'skipped';
   }
@@ -1136,6 +2014,21 @@ export function handleCaptureMessage(message, sender) {
       return fromExtensionPage(sender) ? autoCaptureStatus() : undefined;
     case 'capture-auto-start':
       return fromExtensionPage(sender) ? startAutoCapture(message) : undefined;
+    case 'capture-jobs-scan':
+      return fromExtensionPage(sender) ? runJobScan(message) : undefined;
+    case 'capture-jobs-stop':
+      return fromExtensionPage(sender) ? endJobScan('stop') : undefined;
+    case 'capture-jobs-quit':
+      return fromExtensionPage(sender) ? endJobScan('quit') : undefined;
+    case 'capture-jobs-active':
+      return fromExtensionPage(sender) ? Promise.resolve({ ok: true, active: activeJobScanInfo() }) : undefined;
+    case 'capture-jobs-retry-save':
+      return fromExtensionPage(sender) ? retryJobScanSave() : undefined;
+    case 'capture-job-scans-requested':
+      return fromExtensionPage(sender) ? listRequestedJobScans() : undefined;
+    case 'SCAN_COMPANY_JOBS':
+      // From the company capture on a LinkedIn tab: scan, and hand the scan to the review (saved with the company).
+      return sender.tab?.id == null ? undefined : collectJobScan({ owner: sender.tab.id, companyId: String(message.companyId || ''), memberId: message.memberId, publicName: message.name }).then(scan => ({ ok: true, scan }));
     case 'capture-requested':
       return fromExtensionPage(sender) ? listRequestedJobs() : undefined;
     case 'capture-queue-start':
@@ -1146,6 +2039,8 @@ export function handleCaptureMessage(message, sender) {
       return fromExtensionPage(sender) ? resumeRunQueue() : undefined;
     case 'capture-queue-clear':
       return fromExtensionPage(sender) ? clearRunQueue() : undefined;
+    case 'capture-queue-retry':
+      return fromExtensionPage(sender) ? retryRunQueueItem(message) : undefined;
     case 'capture-continue':
       return fromExtensionPage(sender) ? continueCaptureQueue(message) : undefined;
     case 'capture-ack-halt':
@@ -1186,6 +2081,12 @@ export function handleCaptureMessage(message, sender) {
 /** Wires the capture coordinator into the service worker. `skoutFetch` is the Bearer-token client. */
 export function registerCaptureBackground({ skoutFetch }) {
   deps.skoutFetch = skoutFetch;
+  // The service worker may have been restarted while a company was being read: pick the queue back up.
+  recoverStuckRunQueue().catch(() => {});
+  try {
+    chrome.alarms?.create(QUEUE_RECOVERY_ALARM, { periodInMinutes: 2 });
+    chrome.alarms?.onAlarm?.addListener(alarm => { if (alarm.name === QUEUE_RECOVERY_ALARM) recoverStuckRunQueue().catch(() => {}); });
+  } catch { /* alarms are not available (tests) */ }
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return false;
     const result = handleCaptureMessage(message, sender);
@@ -1208,9 +2109,12 @@ export function registerCaptureBackground({ skoutFetch }) {
 }
 
 /** The dashboard's Resume / Retry button: read this company's people until it is finished. */
-export function resumeJobFromWeb(companyId, name) {
-  if (!COMPANY_ID.test(companyId || '')) return Promise.resolve({ ok: false, error: 'Not a LinkedIn company.' });
-  return startRunQueue({ companies: [{ companyPublicId: companyId, name: String(name || companyId) }], untilComplete: true });
+export async function resumeJobFromWeb(companyId, name) {
+  if (!COMPANY_ID.test(companyId || '')) return { ok: false, error: 'Not a LinkedIn company.' };
+  // Steps the workspace already holds as done are not repeated.
+  let stepDetail;
+  try { stepDetail = (await deps.skoutFetch(`${API}/capture/queue/${encodeURIComponent(companyId)}`))?.item?.stepDetail; } catch { /* a fresh run */ }
+  return startRunQueue({ companies: [{ companyPublicId: companyId, name: String(name || companyId), ...(stepDetail ? { stepDetail } : {}) }], untilComplete: true });
 }
 
-export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch };
+export const __test = { commitCompanyPeopleCapture, getCompanyPeopleState, captureBlock, captureBlockDetail, resetStatusCache: () => { lastConfirmedStatus = null; }, companyReadUrl, deps, listCaptureCompanies, getRunQueue, advanceRunQueue, readCompanyPeopleSearch, recoverStuckRunQueue, retryRunQueueItem };

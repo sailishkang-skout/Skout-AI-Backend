@@ -47,13 +47,15 @@ describe("capture compliance guardrails", () => {
       expect(source, file).not.toMatch(/\.submit\s*\(|requestSubmit|\.value\s*=[^=]|dispatchEvent|KeyboardEvent|InputEvent|execCommand/);
       expect(source, file).not.toMatch(/messaging|\/msg\/|invite|connect-button|InMail/i);
     }
-    // Every click a reader makes is one of: a profile's own "show more
+    // Every click a reader makes is one of: "Show more" on a company's jobs list or a job's description, a profile's own "show more
     // skills", this profile's own "Contact info" link (when LinkedIn did not open the overlay
     // from its URL), or opening the lead actions menu to read the link LinkedIn shows there.
     const clicks = captureScripts.flatMap((file) =>
       [...readSource(file).matchAll(/(\w+)(?:\(\))?\.click\(\)/g)].map((match) => `${file}:${match[1]}`)
     );
     expect(clicks.sort()).toEqual([
+      "capture/company-jobs.js:expand",
+      "capture/company-jobs.js:more",
       "capture/person-capture.js:contactInfoLink",
       "capture/person-capture.js:showMore",
       "capture/sales-lead-link-reader.js:button",
