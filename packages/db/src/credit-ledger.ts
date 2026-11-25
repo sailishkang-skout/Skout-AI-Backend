@@ -38,6 +38,10 @@ export interface PostCreditInput {
   /** Source label, e.g. search, razorpay_purchase, provision, admin_topup. */
   action: string;
   referenceId?: string | null;
+  /** Credit category; public API charges use "data" (CRED-5). */
+  category?: string | null;
+  /** Public API key that spent the credits (PAPI-011). Null for in-app use. */
+  apiKeyId?: string | null;
   reason?: string | null;
   actor?: { type: "user" | "system" | "integration"; id: string | null };
   idempotencyKey?: string | null;
@@ -124,6 +128,8 @@ export async function postCreditTransaction(db: Db, input: PostCreditInput): Pro
         kind: input.kind,
         action: input.action,
         referenceId: input.referenceId ?? null,
+        category: input.category ?? null,
+        apiKeyId: input.apiKeyId ?? null,
         balanceAfter: next,
         reason: input.reason?.trim() || null,
         actorType: input.actor?.type ?? "system",

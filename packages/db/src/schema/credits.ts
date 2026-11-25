@@ -1,4 +1,6 @@
-import { bigint, integer, jsonb, pgTable, text, timestamp, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { bigint, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { apiKeys } from "./public-api.js";
 import { workspaces } from "./workspaces.js";
 
 export const creditBalances = pgTable("credit_balances", {
@@ -26,7 +28,7 @@ export const creditTransactions = pgTable("credit_transactions", {
   kind: text("kind").notNull(),
   /** Free-form source label kept from before COPS-04, e.g. search, razorpay_purchase, admin_topup. */
   action: text("action").notNull(),
-  /** Reserved for credit categories (open question for Product). */
+  /** Credit category; public API charges use "data" (CRED-5). */
   category: text("category"),
   referenceId: text("reference_id"),
   balanceAfter: integer("balance_after"),
@@ -38,6 +40,12 @@ export const creditTransactions = pgTable("credit_transactions", {
   correlationId: text("correlation_id"),
   /** The row this entry corrects; corrections never edit the original. */
   compensatesId: uuid("compensates_id").references((): AnyPgColumn => creditTransactions.id),
+  /**
+   * The public API key that spent these credits (PAPI-011, D3, CRED-5). Null for in-app use.
+   * No ON DELETE action on purpose: SET NULL would UPDATE a ledger row, which the append-only
+   * trigger rejects. Keys are revoked, never deleted, except when the whole workspace goes.
+   */
+  apiKeyId: uuid("api_key_id").references(() => apiKeys.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -51,3 +59,38 @@ export const creditReconciliationRuns = pgTable("credit_reconciliation_runs", {
   mismatches: jsonb("mismatches").notNull().default([]),
   triggeredBy: text("triggered_by").notNull().default("schedule"),
 });
+
+/**
+ * Credit reservations for public API calls (PAPI-011, CRED-2). A hold is taken for the most a call
+ * can cost, then committed (the actual charge goes to the ledger) or released. The balance check
+ * subtracts active holds. A sweeper releases holds past `expires_at` (15 minutes).
+ *
+ * Constraints in SQL (migration 0165): amount > 0; status is held | committed | released;
+ * one hold per (workspace, request).
+ */
+export const creditHolds = pgTable(
+  "credit_holds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    apiKeyId: uuid("api_key_id")
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: "cascade" }),
+    /** The public API request id (X-Request-Id). */
+    requestId: text("request_id").notNull(),
+    amount: integer("amount").notNull(),
+    /** held | committed | released */
+    status: text("status").notNull().default("held"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** When the hold was committed or released. */
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("credit_holds_workspace_request_uq").on(t.workspaceId, t.requestId),
+    index("credit_holds_active_workspace_idx").on(t.workspaceId).where(sql`status = 'held'`),
+    index("credit_holds_active_expiry_idx").on(t.expiresAt).where(sql`status = 'held'`),
+  ]
+);
