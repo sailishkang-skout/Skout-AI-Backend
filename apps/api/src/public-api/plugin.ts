@@ -4,6 +4,7 @@ import { availableCredits } from "../services/api-credits.service.js";
 import { setPublicApiSecurityHeaders } from "../routes/public-api.routes.js";
 import { PublicApiError, isPublicApiErrorCode, publicApiError, publicRequestId, type PublicApiErrorCode } from "./errors.js";
 import { runPipeline, type PublicApiDeps, type PublicEndpoint } from "./pipeline.js";
+import { assertEndpointScope, PUBLIC_API_SCOPE_MAP } from "./scopes.js";
 
 /** 1 MB request body limit (CONV-10, PRD §9.5). */
 export const PUBLIC_API_BODY_LIMIT = 1_048_576;
@@ -11,6 +12,8 @@ export const PUBLIC_API_BODY_LIMIT = 1_048_576;
 export interface PublicApiPluginOptions {
   deps: PublicApiDeps;
   endpoints: PublicEndpoint[];
+  /** The scope map endpoints are checked against; tests pass their own for dummy endpoints. */
+  scopeMap?: Record<string, string>;
 }
 
 /** Maps any error to a public API error code and message, never leaking internals (PRD §9.5). */
@@ -38,6 +41,19 @@ function toPublicError(err: unknown): { code: PublicApiErrorCode; message: strin
  */
 export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPluginOptions) {
   const { deps } = opts;
+
+  // An empty body with Content-Type: application/json (common on DELETE and GET) means "no body",
+  // not invalid JSON. Scoped to the public API routes.
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string", bodyLimit: PUBLIC_API_BODY_LIMIT }, (_req, body, done) => {
+    const text = typeof body === "string" ? body : body.toString("utf8");
+    if (text.trim() === "") return done(null, undefined);
+    try {
+      done(null, JSON.parse(text));
+    } catch {
+      done(new PublicApiError("invalid_request", "The request body is not valid JSON."), undefined);
+    }
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     (request as FastifyRequest & { publicStartedAt?: number }).publicStartedAt = Date.now();
@@ -110,6 +126,8 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
   app.get("/health", async () => ({ status: "ok", service: "skout-public-api", version: "v1" }));
 
   for (const ep of opts.endpoints) {
+    // PAPI-045: an endpoint whose scope isn't in the static map doesn't start.
+    assertEndpointScope(ep, opts.scopeMap ?? PUBLIC_API_SCOPE_MAP);
     app.route({
       method: ep.method,
       url: ep.path,

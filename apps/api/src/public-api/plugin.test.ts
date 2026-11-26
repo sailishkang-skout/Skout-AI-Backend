@@ -104,7 +104,8 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
       rateLimit: rateLimit ?? (async () => (rateOk ? { ok: true } : { ok: false, retryAfterSeconds: 7 })),
       logRequest: async (e) => void logs.push(e),
     };
-    await app.register(publicApiPlugin, { prefix: "/api/public/v1", deps, endpoints: [dummy, freeGet, leaky] });
+    await app.register(publicApiPlugin, { prefix: "/api/public/v1", deps, scopeMap: { "POST /dummy/lookup": "people:read", "GET /dummy/free": "any", "POST /dummy/leaky": "people:read" },
+      endpoints: [dummy, freeGet, leaky] });
     await app.ready();
     apps.push(app);
     return app;

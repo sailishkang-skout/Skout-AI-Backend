@@ -100,6 +100,7 @@ maybe("public API request log (PAPI-044)", () => {
         ids: createPublicIdCodec(PEPPER),
         logRequest: createRequestLogWriter(db),
       },
+      scopeMap: { "POST /dummy/lookup": "people:read", "POST /dummy/search": "people:read" },
       endpoints: [lookup, search],
     });
     await app.ready();
