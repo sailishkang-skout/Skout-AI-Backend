@@ -9,6 +9,7 @@ import { vendorProspectId } from "../../services/vendor-search.service.js";
 import { PublicApiError } from "../errors.js";
 import type { PublicIdCodec } from "../ids.js";
 import type { EndpointContext, PublicEndpoint } from "../pipeline.js";
+import { companyPublicId } from "./companies.js";
 
 /**
  * GET /people/{id} and POST /people/match (PAPI-052, public API PRD §7.3, §8).
@@ -41,7 +42,7 @@ export function toPersonProfile(doc: ProspectDocument, ids: PublicIdCodec): Pers
     department: blank(doc.department),
     headline: blank((doc as { headline?: string }).headline),
     company: {
-      id: ids.encode("company", doc.companyId),
+      id: companyPublicId(ids, doc.companyDomain, doc.companyId),
       name: blank(doc.companyName),
       domain: blank(doc.companyDomain),
       industry: blank(doc.industry),

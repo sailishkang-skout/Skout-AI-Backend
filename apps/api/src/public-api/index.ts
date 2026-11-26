@@ -3,6 +3,7 @@ import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createPeopleSearchEndpoint } from "./endpoints/people-search.js";
 import { createGetPersonEndpoint, createMatchPersonEndpoint } from "./endpoints/people.js";
+import { createGetCompanyEndpoint, createMatchCompanyEndpoint } from "./endpoints/companies.js";
 import { getRedis, isRedisAvailable } from "../lib/redis.js";
 import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.js";
 import { ApiPricingService } from "../services/api-pricing.service.js";
@@ -17,7 +18,13 @@ import type { PublicApiDeps, PublicEndpoint } from "./pipeline.js";
 
 /** The public API's endpoints (Phase 5 adds them here). */
 export function createPublicEndpoints(deps: { env: Env; db: Db }): PublicEndpoint[] {
-  return [createPeopleSearchEndpoint(deps), createGetPersonEndpoint(deps), createMatchPersonEndpoint(deps)] as unknown as PublicEndpoint[];
+  return [
+    createPeopleSearchEndpoint(deps),
+    createGetPersonEndpoint(deps),
+    createMatchPersonEndpoint(deps),
+    createMatchCompanyEndpoint(deps),
+    createGetCompanyEndpoint(deps),
+  ] as unknown as PublicEndpoint[];
 }
 
 /** Registers the public API at /api/public/v1 with the app's database, Redis and config (PAPI-040). */

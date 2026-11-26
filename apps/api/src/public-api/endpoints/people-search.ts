@@ -9,6 +9,7 @@ import { getCachedDatum, recordChargedDatum } from "../../services/api-datum-cac
 import { PublicApiError } from "../errors.js";
 import type { PublicIdCodec } from "../ids.js";
 import type { PublicEndpoint } from "../pipeline.js";
+import { companyPublicId } from "./companies.js";
 
 /**
  * POST /people/search (PAPI-051, public API PRD §7.3, §8.1, D6).
@@ -151,7 +152,7 @@ export function createPeopleSearchEndpoint(deps: { env: Env; db: Db }): PublicEn
         title: blank(r.title),
         seniority: blank(r.seniority),
         company: {
-          id: ids.encode("company", r.companyId),
+          id: companyPublicId(ids, r.companyDomain, r.companyId),
           name: blank(r.companyName),
           domain: blank(r.companyDomain),
           industry: blank(r.industry),
