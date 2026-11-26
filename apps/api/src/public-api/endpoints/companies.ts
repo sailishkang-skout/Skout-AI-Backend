@@ -7,6 +7,8 @@ import type { Env } from "../../config/env.js";
 import { openSearchConfigFromEnv } from "../../lib/opensearch-config.js";
 import { getCachedDatum, recordChargedDatum } from "../../services/api-datum-cache.service.js";
 import { getCompany as getResearchCompany } from "../../services/enrichment/research.service.js";
+import { companyIdsForDomain, companyInWorkspace, listCompanyJobs } from "../../services/enrichment/company-jobs.service.js";
+import { createHash } from "node:crypto";
 import { PublicApiError } from "../errors.js";
 import type { PublicIdCodec } from "../ids.js";
 import type { EndpointContext, PublicEndpoint } from "../pipeline.js";
@@ -222,5 +224,131 @@ export function createGetCompanyEndpoint(deps: { env: Env; db: Db }): PublicEndp
       throw new PublicApiError("not_found", "No company matches.");
     },
     fixture: () => fixtureCompany(),
+  };
+}
+
+// --- GET /companies/{id}/jobs (PAPI-054) ---------------------------------------------
+
+/**
+ * The company's latest open job roles, as the workspace's own captures found them (Latest Job Roles,
+ * ENR-02). Priced companies.jobs, charged only when roles come back; the same set of roles again
+ * within 30 days is free (CRED-4), while a changed list is new data and is charged.
+ */
+export interface PublicJobRole {
+  title: string;
+  department: string | null;
+  location: string | null;
+  country: string | null;
+  employment_type: string | null;
+  workplace_type: string | null;
+  description: string | null;
+  posted_at: string | null;
+  job_url: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  is_new: boolean;
+}
+
+export interface CompanyJobsPage {
+  company_id: string;
+  jobs: PublicJobRole[];
+  total_open: number;
+  last_scanned_at: string | null;
+}
+
+const jobsInput = z
+  .object({
+    id: z.string().min(1).max(600),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+  })
+  .strict();
+
+type JobRow = Awaited<ReturnType<typeof listCompanyJobs>>["jobs"][number];
+
+const toPublicJob = (j: JobRow): PublicJobRole => ({
+  title: j.title,
+  department: blank(j.department),
+  location: blank(j.location),
+  country: blank(j.country),
+  employment_type: blank(j.employmentType),
+  workplace_type: blank(j.workplaceType),
+  description: blank(j.description)?.slice(0, 4000) ?? null,
+  posted_at: j.postedAt,
+  job_url: blank(j.jobUrl),
+  first_seen_at: j.firstDetectedAt,
+  last_seen_at: j.lastSeenAt,
+  is_new: j.isNew,
+});
+
+/** A fingerprint of the roles returned, so the same list within 30 days is recognised as a repeat. */
+const jobsFingerprint = (jobs: JobRow[]) =>
+  createHash("sha256")
+    .update(jobs.map((j) => j.id).sort().join(","))
+    .digest("hex");
+
+export function createCompanyJobsEndpoint(deps: { env: Env; db: Db }): PublicEndpoint<typeof jobsInput, CompanyJobsPage> {
+  return {
+    method: "GET",
+    path: "/companies/:id/jobs",
+    scope: "jobs:read",
+    operation: "companies.jobs",
+    input: jobsInput,
+    maxCost: (_i, prices) => prices["companies.jobs"].credits,
+    async handle(ctx) {
+      const internal = ctx.ids.decode("company", ctx.input.id);
+      let companyIds: string[] = [];
+      let subject = "";
+      if (internal?.startsWith("domain:")) {
+        const domain = internal.slice(7);
+        companyIds = await companyIdsForDomain(deps.db, ctx.workspaceId, domain);
+        subject = `company:${domain}`;
+      } else if (internal?.startsWith("ws:") && (await companyInWorkspace(deps.db, ctx.workspaceId, internal.slice(3)).catch(() => false))) {
+        companyIds = [internal.slice(3)];
+        subject = `company:ws:${internal.slice(3)}`;
+      }
+      // Jobs come from the workspace's own captures: a company it never captured has none to give.
+      if (companyIds.length === 0) throw new PublicApiError("not_found", "No company matches.");
+
+      const lists = await Promise.all(companyIds.map((id) => listCompanyJobs(deps.db, ctx.workspaceId, id, { limit: ctx.input.limit })));
+      const all = lists
+        .flatMap((l) => l.jobs)
+        .sort((a, b) => (b.postedAt ?? b.firstDetectedAt).localeCompare(a.postedAt ?? a.firstDetectedAt))
+        .slice(0, ctx.input.limit);
+      const scanned = lists.map((l) => l.lastScan?.completedAt ?? l.lastScan?.createdAt ?? null).filter((v): v is string => Boolean(v)).sort().pop() ?? null;
+      const data: CompanyJobsPage = {
+        company_id: ctx.input.id,
+        jobs: all.map(toPublicJob),
+        total_open: lists.reduce((n, l) => n + l.total, 0),
+        last_scanned_at: scanned,
+      };
+      if (all.length === 0) return { data, charge: 0 };
+
+      const fingerprint = jobsFingerprint(all);
+      const cached = await getCachedDatum<{ fingerprint: string }>(deps.db, ctx.workspaceId, subject, "company_jobs");
+      if (cached?.fingerprint === fingerprint) return { data, charge: 0 };
+      await recordChargedDatum(deps.db, ctx.workspaceId, subject, "company_jobs", { fingerprint });
+      return { data, charge: ctx.prices["companies.jobs"].credits };
+    },
+    fixture: () => ({
+      company_id: "com_test_analytical",
+      jobs: [
+        {
+          title: "Senior Backend Engineer",
+          department: "Engineering",
+          location: "London, England, United Kingdom",
+          country: "GB",
+          employment_type: "full_time",
+          workplace_type: "hybrid",
+          description: null,
+          posted_at: null,
+          job_url: null,
+          first_seen_at: "2026-01-01T00:00:00.000Z",
+          last_seen_at: "2026-01-01T00:00:00.000Z",
+          is_new: false,
+        },
+      ],
+      total_open: 1,
+      last_scanned_at: "2026-01-01T00:00:00.000Z",
+    }),
   };
 }

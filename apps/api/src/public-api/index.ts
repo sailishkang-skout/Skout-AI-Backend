@@ -3,7 +3,7 @@ import type { Db } from "@skout/db";
 import type { Env } from "../config/env.js";
 import { createPeopleSearchEndpoint } from "./endpoints/people-search.js";
 import { createGetPersonEndpoint, createMatchPersonEndpoint } from "./endpoints/people.js";
-import { createGetCompanyEndpoint, createMatchCompanyEndpoint } from "./endpoints/companies.js";
+import { createCompanyJobsEndpoint, createGetCompanyEndpoint, createMatchCompanyEndpoint } from "./endpoints/companies.js";
 import { getRedis, isRedisAvailable } from "../lib/redis.js";
 import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.js";
 import { ApiPricingService } from "../services/api-pricing.service.js";
@@ -24,6 +24,7 @@ export function createPublicEndpoints(deps: { env: Env; db: Db }): PublicEndpoin
     createMatchPersonEndpoint(deps),
     createMatchCompanyEndpoint(deps),
     createGetCompanyEndpoint(deps),
+    createCompanyJobsEndpoint(deps),
   ] as unknown as PublicEndpoint[];
 }
 

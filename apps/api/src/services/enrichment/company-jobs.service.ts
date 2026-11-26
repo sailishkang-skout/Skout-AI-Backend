@@ -2,7 +2,8 @@
  * §5.2 / §7.1 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) — see
  * docs/adr/0003-read-model-exceptions.md. ENR-02 Latest Job Roles.
  *   - Tables touched directly: companies (owned by apps/crm)
- *     - read only (the company's name, for a requested job rescan)
+ *     - read only (the company's name, for a requested job rescan; the workspace's companies at a
+ *       domain, for the public API's GET /companies/{id}/jobs, PAPI-054)
  *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
  *   - Reason: a job scan is attached to the company the capture created through
  *     ingestCompanyCapture; the name is joined with the capture identity key (the LinkedIn company
@@ -302,6 +303,33 @@ export async function companyIdForPublicId(db: Db | Tx, workspaceId: string, pub
     .where(and(eq(i.workspaceId, workspaceId), eq(i.entityType, "company"), eq(i.canonicalKey, `company:${normalizeLinkedinId(publicId)}`)))
     .limit(1);
   return row?.id ?? null;
+}
+
+/**
+ * The workspace's companies at a domain (normalized: no scheme, no www, no path), for the public API,
+ * whose company ids carry the domain (PAPI-053/054). Read only.
+ */
+export async function companyIdsForDomain(db: Db, workspaceId: string, domain: string): Promise<string[]> {
+  const c = schema.companies;
+  const rows = await db
+    .select({ id: c.id })
+    .from(c)
+    .where(
+      and(
+        eq(c.workspaceId, workspaceId),
+        isNull(c.deletedAt),
+        sql`split_part(regexp_replace(lower(trim(${c.domain})), '^(https?://)?(www\\.)?', ''), '/', 1) = ${domain}`
+      )
+    )
+    .limit(20);
+  return rows.map((r) => r.id);
+}
+
+/** Whether a company belongs to the workspace (not deleted). */
+export async function companyInWorkspace(db: Db, workspaceId: string, companyId: string): Promise<boolean> {
+  const c = schema.companies;
+  const [row] = await db.select({ id: c.id }).from(c).where(and(eq(c.workspaceId, workspaceId), eq(c.id, companyId), isNull(c.deletedAt))).limit(1);
+  return Boolean(row);
 }
 
 /**
