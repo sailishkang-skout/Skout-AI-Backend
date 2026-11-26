@@ -43,6 +43,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
     (request as FastifyRequest & { publicStartedAt?: number }).publicStartedAt = Date.now();
     const path = request.url.split("?")[0]!;
     if (!deps.enabled && !path.endsWith("/health")) {
+      request.publicErrorCode = "not_found";
       const { status, body } = publicApiError("not_found", "The public API is not available yet.", publicRequestId(request.id));
       return reply.code(status).send(body);
     }
@@ -61,14 +62,15 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
   app.addHook("onResponse", async (request, reply) => {
     if (!deps.logRequest) return;
     const started = (request as FastifyRequest & { publicStartedAt?: number }).publicStartedAt ?? Date.now();
-    const errorCode = (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode ?? null;
+    const errorCode = request.publicErrorCode ?? null;
     try {
       await deps.logRequest({
         requestId: publicRequestId(request.id),
         workspaceId: request.publicApiKey?.workspaceId ?? null,
         apiKeyId: request.publicApiKey?.id ?? null,
         method: request.method,
-        endpoint: request.publicApi?.endpoint ?? request.routeOptions?.url?.replace(/^\/api\/public\/v1/, "") ?? "unknown",
+        // The route pattern, never the raw URL (ids and query strings stay out of the log).
+        endpoint: request.publicApi?.endpoint ?? (request.routeOptions?.url ? request.routeOptions.url.replace(/^\/api\/public\/v1/, "") || "/" : "unmatched"),
         statusCode: reply.statusCode,
         errorCode,
         creditsCharged: request.publicApi?.creditsCharged ?? 0,
@@ -85,7 +87,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
   app.setErrorHandler(async (err, request: FastifyRequest, reply: FastifyReply) => {
     const e = toPublicError(err);
     if (e.code === "internal_error") request.log.error({ err }, "public API request failed");
-    (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode = e.code;
+    request.publicErrorCode = e.code;
     const { body } = publicApiError(e.code, e.message, publicRequestId(request.id));
     if (e.details && Object.keys(e.details).length > 0 && e.code !== "internal_error") {
       Object.assign(body.error, { details: e.details });
@@ -99,7 +101,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
   });
 
   app.setNotFoundHandler(async (request, reply) => {
-    (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode = "not_found";
+    request.publicErrorCode = "not_found";
     const { status, body } = publicApiError("not_found", `No endpoint ${request.method} ${request.url.split("?")[0]}.`, publicRequestId(request.id));
     return reply.code(status).send(body);
   });

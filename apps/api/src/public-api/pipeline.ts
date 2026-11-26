@@ -53,6 +53,11 @@ export interface PublicEndpoint<S extends z.ZodTypeAny = z.ZodTypeAny, O = unkno
   input: S;
   /** Most the call can cost, from the current price list; reserved before the handler runs. */
   maxCost: (input: z.infer<S>, prices: PriceList) => number;
+  /**
+   * Prices recorded on the request log (CRED-12); defaults to [operation]. Search lists both
+   * search.index_page and search.vendor_result.
+   */
+  priceOperations?: ApiPriceOperation[];
   /** Require Idempotency-Key (CONV-2). Defaults to true for billable POSTs. */
   idempotent?: boolean;
   /** Batch endpoints get the lower per-minute rate limit (RL-2). */
@@ -236,7 +241,8 @@ async function execute(
 
   // Price.
   const prices = (await deps.pricing.priceList(key.workspaceId)) as PriceList;
-  state.priceApplied = ep.operation ? Object.fromEntries(Object.values(prices).map((p) => [p.operation, p.credits])) : null;
+  const logged = ep.priceOperations ?? (ep.operation ? [ep.operation] : []);
+  state.priceApplied = logged.length ? Object.fromEntries(logged.map((op) => [op, prices[op].credits])) : null;
   const max = Math.max(0, Math.trunc(ep.maxCost(input, prices)));
 
   // Reserve (402 insufficient_credits / 429 cap_reached before any work).

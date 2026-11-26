@@ -62,6 +62,7 @@ export function ipAllowed(ip: string, allowlist: string[]): boolean {
 }
 
 function fail(reply: FastifyReply, request: FastifyRequest, code: PublicApiErrorCode, message: string) {
+  request.publicErrorCode = code;
   const { status, body } = publicApiError(code, message, publicRequestId(request.id));
   return reply.code(status).header("cache-control", "no-store").send(body);
 }

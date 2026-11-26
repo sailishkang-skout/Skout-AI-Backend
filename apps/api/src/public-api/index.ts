@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { createPublicIdCodec, publicIdSecret } from "./ids.js";
 import { createMemoryRateLimiter, createRedisRateLimiter } from "../lib/public-rate-limit.js";
 import { createRateLimitStep } from "./rate-limit-step.js";
+import { createRequestLogWriter } from "./request-log.js";
 import type { PublicApiDeps, PublicEndpoint } from "./pipeline.js";
 
 /** The public API's endpoints (Phase 5 adds them here). */
@@ -35,6 +36,7 @@ export async function registerPublicApi(app: FastifyInstance, endpoints: PublicE
     // With the API on, API_KEY_PEPPER is required at boot, so a stable secret always exists. A
     // throwaway one is only used while the API is off and no pepper is configured.
     ids: createPublicIdCodec(publicIdSecret(app.config) ?? randomBytes(32).toString("base64")),
+    logRequest: createRequestLogWriter(app.db),
     rateLimit: createRateLimitStep({
       limiter: redis ? createRedisRateLimiter(redis) : createMemoryRateLimiter(),
       base: {

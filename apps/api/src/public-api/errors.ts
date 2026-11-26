@@ -24,6 +24,13 @@ export const PUBLIC_API_ERROR_CODES = {
 
 export type PublicApiErrorCode = keyof typeof PUBLIC_API_ERROR_CODES;
 
+declare module "fastify" {
+  interface FastifyRequest {
+    /** The public API error code sent for this request, for the request log (PAPI-044). */
+    publicErrorCode?: PublicApiErrorCode;
+  }
+}
+
 export const PUBLIC_API_DOCS_ERRORS_URL = "https://www.skoutai.io/docs/api/errors";
 
 export interface PublicApiErrorBody {
