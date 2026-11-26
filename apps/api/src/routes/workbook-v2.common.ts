@@ -21,7 +21,7 @@ export const WORKBOOK_RUN_PERMISSION = "enrichment.run";
  * anything that executes a column needs `enrichment.run`.
  */
 export type WorkbookPermission = "enrichment:read" | "enrichment:capture" | typeof WORKBOOK_RUN_PERMISSION;
-export type Outcome = { status: number; body: unknown };
+export type Outcome = { status: number; body: unknown; headers?: Record<string, string> };
 export type WorkbookAuth = { db: Db; actor: WorkbookActor };
 
 export function workbookRouteHelpers(app: FastifyInstance) {
@@ -43,6 +43,7 @@ export function workbookRouteHelpers(app: FastifyInstance) {
   const handle = (run: (request: FastifyRequest) => Promise<Outcome>) => async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const out = await run(request);
+      if (out.headers) reply.headers(out.headers);
       return reply.status(out.status).send(out.body);
     } catch (error) {
       return sendError(request, reply, error);

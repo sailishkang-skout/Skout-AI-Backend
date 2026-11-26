@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014) and activity (WB2-016)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016) and CSV import (WB2-020)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -227,4 +227,66 @@ Call these from `services/workbook-activity.service.ts`. Each returns `{ recorde
 | `recordExport(db, actor, workbookId, { exportId, format, destination, status, rows? })` | An export starts, completes, fails or is cancelled |
 
 **Billing requirement.** Every credit ledger entry a run creates must set `referenceId` to `workbookRunLedgerReference(workbookId, runId, rowId)`: `workbook:<workbookId>:run:<runId>[:row:<rowId>]`. `actualCredits` is the net of those entries and of entries that correct them (`compensates_id`), read from the ledger each time. A charge without that reference shows as costing nothing. The ledger has no index on `reference_id` or `compensates_id`, so this read grows with the workspace's ledger; the billing owner may want one.
+
+## CSV import
+
+Three steps: send the file, confirm how it maps, follow it. Nothing is added to the workbook before the confirm.
+
+| Method and path | Permission | Body | Success | Errors besides 401/403 |
+|---|---|---|---|---|
+| `POST /:id/imports` | `enrichment:capture` | the file, with `Content-Type: text/csv` and `X-File-Name` (percent-encoded) | `201 { data: Import }` with `preview` | `404`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_FILE_TYPE`, `422 INVALID_CSV` / `TOO_MANY_ROWS`, `429 TOO_MANY_PENDING_IMPORTS` |
+| `POST /:id/imports/:importId/confirm` | `enrichment:capture` | `{ columns, dedupe }` | `200` finished (up to 1,000 rows) or `202` queued | `404`, `409 IMPORT_STATE_CONFLICT`, `422 INVALID_IMPORT_MAPPING` / `ROW_LIMIT_EXCEEDED`, `503 IMPORT_UNAVAILABLE` |
+| `GET /:id/imports` | `enrichment:read` | | `200 { data: Import[] }`, the latest 20, without previews | `404` |
+| `GET /:id/imports/:importId` | `enrichment:read` | | `200 { data: Import }` | `404` |
+| `DELETE /:id/imports/:importId` | `enrichment:capture` | | `200`, cancels one not yet confirmed | `404`, `409` |
+| `GET /:id/imports/:importId/report` | `enrichment:read` | | the skipped-rows CSV | `404 NOT_FOUND` / `REPORT_NOT_AVAILABLE` |
+
+```ts
+Import = { id, workbookId, status, fileName, fileBytes,
+           counts: { total, processed, imported, duplicates, skipped, failed },
+           progress /* 0-100, processed / total */, background, error: { code, message } | null,
+           report: { available, rows },
+           preview /* while awaiting_confirmation */: {
+             delimiter, headers: [{ index, name, filled, fits /* types every value fits */ }],
+             rows /* first 20 */: [{ line, values, problem? }],
+             suggestions: [{ header, target: { columnId } | { newColumn: { name, dataType } } | null }] } | null,
+           mapping /* once confirmed */, createdAt, confirmedAt, finishedAt }
+status = awaiting_confirmation | queued | processing | completed | failed | cancelled
+```
+
+Confirm:
+```json
+{ "columns": [ { "header": 0, "columnId": "…" },
+               { "header": 2, "newColumn": { "name": "Site", "dataType": "url" } } ],
+  "dedupe": { "key": "email", "header": 0 } }
+```
+`header` is the position of a file column, from 0; columns not listed are not imported. `dedupe.key` is `email`, `linkedin_url`, `domain` or `none`. `dedupe.header` may be left out when exactly one mapped column has the key's type; a `text` column (or `url`, for LinkedIn and domain) can hold a key when named. A refused mapping changes nothing and lists every problem in `details.errors[{ path, code, message }]`: two file columns into one column, a non-input column, a new column whose name is taken, no usable key column, and so on.
+
+### File rules
+- `.csv`, up to 50 MB (52,428,800 bytes), 100,000 data rows and 500 columns. UTF-8, with or without a byte-order mark. The separator (comma, semicolon or tab) is read from the header line. The first line names the columns.
+- The content is checked, whatever the sender calls it: Excel, PDF, compressed, binary, HTML and non-UTF-8 files are refused.
+- A misplaced or unclosed quote refuses the whole file, naming the line, because the rows after it cannot be told apart reliably.
+- Nothing in a file is evaluated. Blank lines are ignored (in a one-column file, that includes an empty value).
+
+### What happens to each row
+| Outcome | When | Counted as |
+|---|---|---|
+| Imported | Every mapped value fits its column's type | `imported` |
+| Duplicate | Its key is already in the key column of the workbook, or in an earlier imported row of the file | `duplicates` |
+| Invalid value | A mapped value does not fit its column (or is a key that cannot be compared) | `failed` |
+| Malformed row | Wrong number of values (extra empty ones are ignored) | `failed` |
+| Over the row limit | The workbook is full | `failed` |
+| Skipped | Every mapped column is empty | `skipped` |
+
+A row whose key is empty is imported. Keys ignore case and spacing; domains ignore scheme, `www.` and path; LinkedIn addresses ignore scheme, sub-domain, query and a trailing slash or language suffix. Existing rows are never changed. Imported rows have `source = { type: "csv", fileName, importId, importedAt }`.
+
+Every row not imported is in the report: line in the file, result, reason and the original values. Values that a spreadsheet would run as a formula are prefixed with `'`. Reports are kept for 30 days (the exports bucket's lifecycle).
+
+### Processing and storage
+- Imports over 1,000 rows are queued on BullMQ (`skout-workbook-import`), run by a worker in the API process, 5 attempts with backoff. Each chunk of up to 1,000 rows is one transaction that adds rows, records issues and advances `processed`, so a retry resumes after the last whole chunk. The workbook is locked only for a chunk.
+- A mapped column deleted or retyped, a deleted workbook or a missing file ends the import as `failed` without retrying. Rows already added stay.
+- The uploaded file is stored in `EXPORTS_BUCKET` under `workbook-imports/` (a local `.workbook-imports/` folder outside production) and removed when the import completes, fails or is cancelled. A sweep every 5 minutes cancels imports not confirmed within 24 hours, re-queues ones with no progress for 10 minutes, fails them after 6 hours, and finishes any leftover cleanup. The bucket's 30-day expiry is the backstop.
+- Production needs `EXPORTS_BUCKET` and Redis; without storage the routes answer `503`, without Redis large imports answer `503` and nothing changes.
+- One `rows.added` activity entry (`source: "csv"`) is written when an import ends having added rows; new columns are recorded as `column.added`.
+- At most 10 unfinished imports per workspace.
 

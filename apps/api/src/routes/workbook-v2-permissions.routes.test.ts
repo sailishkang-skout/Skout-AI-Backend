@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { createDb, schema } from "@skout/db";
 import { invalidateWorkspaceAccess } from "@skout/auth";
@@ -29,6 +32,12 @@ const ROUTES: Record<string, Access> = {
   "GET /workbooks-v2/:id/rows": "view",
   "POST /workbooks-v2/:id/rows/query": "view",
   "GET /workbooks-v2/:id/activity": "view",
+  "GET /workbooks-v2/:id/imports": "view",
+  "GET /workbooks-v2/:id/imports/:importId": "view",
+  "GET /workbooks-v2/:id/imports/:importId/report": "view",
+  "POST /workbooks-v2/:id/imports": "edit",
+  "POST /workbooks-v2/:id/imports/:importId/confirm": "edit",
+  "DELETE /workbooks-v2/:id/imports/:importId": "edit",
   "POST /workbooks-v2": "edit",
   "PATCH /workbooks-v2/:id": "edit",
   "POST /workbooks-v2/:id/duplicate": "edit",
@@ -122,6 +131,23 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
       ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
     });
 
+  const uploadCsv = (u: User, workbookId: string, content: string) =>
+    app.inject({ method: "POST", url: `${URL_BASE}/${workbookId}/imports`, remoteAddress: u.ip, headers: { ...u.headers, "content-type": "text/csv", "x-file-name": "perm.csv" }, payload: content });
+
+  /** A finished import with a report, one to confirm and one to cancel. Adds no rows. */
+  async function importsFor(owner: User, b: Book) {
+    const make = async (content: string) => {
+      const res = await uploadCsv(owner, b.id, content);
+      expect(res.statusCode, res.body).toBe(201);
+      return res.json().data.id as string;
+    };
+    const done = await make("a,b\n,\n");
+    const confirmed = await call(owner, "POST", `/${b.id}/imports/${done}/confirm`, { columns: [{ header: 0, columnId: b.input }], dedupe: { key: "none" } });
+    expect(confirmed.json().data.report.available, confirmed.body).toBe(true);
+    return { done, waiting: await make("a\n1\n"), unwanted: await make("a\n1\n") };
+  }
+  type Imports = Awaited<ReturnType<typeof importsFor>>;
+
   interface Book {
     id: string;
     input: string;
@@ -197,12 +223,19 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     }
   }
 
+  const previousImportDir = process.env.WORKBOOK_IMPORTS_LOCAL_DIR;
+  let importDir: string;
   beforeAll(async () => {
-    app = await buildApp({ ...base, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EARLY_ACCESS_GATE_ENABLED: "true", RATE_LIMIT_MAX: 10_000, PLATFORM_ADMIN_EMAILS: [] });
+    importDir = await mkdtemp(path.join(os.tmpdir(), "wb2-perm-imports-"));
+    process.env.WORKBOOK_IMPORTS_LOCAL_DIR = importDir;
+    app = await buildApp({ ...base, CLERK_SECRET_KEY: undefined, LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EARLY_ACCESS_GATE_ENABLED: "true", RATE_LIMIT_MAX: 10_000, PLATFORM_ADMIN_EMAILS: [], EXPORTS_BUCKET: undefined });
   });
   afterAll(async () => {
     await app.close();
     await sql.end();
+    if (previousImportDir === undefined) delete process.env.WORKBOOK_IMPORTS_LOCAL_DIR;
+    else process.env.WORKBOOK_IMPORTS_LOCAL_DIR = previousImportDir;
+    await rm(importDir, { recursive: true, force: true });
   });
 
   // ── The permission itself ───────────────────────────────────────────────────
@@ -414,7 +447,7 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
 
   describe("viewing and editing without enrichment.run", () => {
     /** One working request for every route, in an order that keeps each one possible. */
-    function requests(b: Book): Array<[string, Method, string, unknown?]> {
+    function requests(b: Book, imports: Imports): Array<[string, Method, string, unknown?]> {
       return [
         ["GET /workbooks-v2/status", "GET", "/status"],
         ["GET /workbooks-v2", "GET", ""],
@@ -422,6 +455,13 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
         ["GET /workbooks-v2/:id/rows", "GET", `/${b.id}/rows`],
         ["POST /workbooks-v2/:id/rows/query", "POST", `/${b.id}/rows/query`, { search: "Acme" }],
         ["GET /workbooks-v2/:id/activity", "GET", `/${b.id}/activity`],
+        ["GET /workbooks-v2/:id/imports", "GET", `/${b.id}/imports`],
+        ["GET /workbooks-v2/:id/imports/:importId", "GET", `/${b.id}/imports/${imports.done}`],
+        ["GET /workbooks-v2/:id/imports/:importId/report", "GET", `/${b.id}/imports/${imports.done}/report`],
+        // Sent as a file, not JSON.
+        ["POST /workbooks-v2/:id/imports", "POST", `/${b.id}/imports`],
+        ["POST /workbooks-v2/:id/imports/:importId/confirm", "POST", `/${b.id}/imports/${imports.waiting}/confirm`, { columns: [{ header: 0, columnId: b.input }], dedupe: { key: "none" } }],
+        ["DELETE /workbooks-v2/:id/imports/:importId", "DELETE", `/${b.id}/imports/${imports.unwanted}`],
         ["POST /workbooks-v2", "POST", "", { name: "Mine" }],
         ["PATCH /workbooks-v2/:id", "PATCH", `/${b.id}`, { name: "Renamed" }],
         ["POST /workbooks-v2/:id/duplicate", "POST", `/${b.id}/duplicate`, { includeRows: false }],
@@ -441,12 +481,12 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
       ];
     }
 
-    async function sweep(u: User, b: Book) {
+    async function sweep(owner: User, u: User, b: Book) {
       const results: Record<string, number> = {};
-      for (const [route, method, path, body] of requests(b)) {
+      for (const [route, method, path, body] of requests(b, await importsFor(owner, b))) {
         // The reorder list depends on what exists by then.
         const payload = route.endsWith("/columns/reorder") ? { columnIds: (await db.select().from(workbookColumns).where(eq(workbookColumns.workbookId, b.id))).sort((a, z) => a.position - z.position).map((c) => c.id) } : body;
-        results[route] = (await call(u, method, path, payload)).statusCode;
+        results[route] = (route === "POST /workbooks-v2/:id/imports" ? await uploadCsv(u, b.id, "a\n1\n") : await call(u, method, path, payload)).statusCode;
       }
       return results;
     }
@@ -456,7 +496,8 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
 
     it("sends one request to every route", async () => {
       const owner = await user();
-      expect(requests(await book(owner)).map(([route]) => route).sort()).toEqual(Object.keys(ROUTES).sort());
+      const b = await book(owner);
+      expect(requests(b, await importsFor(owner, b)).map(([route]) => route).sort()).toEqual(Object.keys(ROUTES).sort());
     });
 
     it("lets a member view and edit everything, cells and formulas included, and refuses only runs and pushes", async () => {
@@ -464,7 +505,7 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
       const b = await book(owner);
       const member = await colleague(owner, "member");
       const before = await footprint(owner.workspaceId, b.id);
-      expect(simplify(await sweep(member, b))).toEqual(expected({ view: "ok", edit: "ok", run: 403 }));
+      expect(simplify(await sweep(owner, member, b))).toEqual(expected({ view: "ok", edit: "ok", run: 403 }));
       const cells = await db.select().from(workbookCells).where(and(eq(workbookCells.workbookId, b.id), inArray(workbookCells.columnId, [b.input])));
       expect(cells.map((c) => c.value)).toContain("new");
       const [formula] = await db.select().from(workbookColumns).where(eq(workbookColumns.id, b.formula));
@@ -477,21 +518,21 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     it("keeps an admin's access to everything", async () => {
       const owner = await user();
       const b = await book(owner);
-      expect(simplify(await sweep(await colleague(owner, "admin"), b))).toEqual(expected({ view: "ok", edit: "ok", run: 501 }));
+      expect(simplify(await sweep(owner, await colleague(owner, "admin"), b))).toEqual(expected({ view: "ok", edit: "ok", run: 501 }));
     });
 
     it("gives a view-only role reading and nothing else", async () => {
       const owner = await user();
       const b = await book(owner);
       const viewer = await colleague(owner, ["enrichment:read"]);
-      expect(simplify(await sweep(viewer, b))).toEqual(expected({ view: "ok", edit: 403, run: 403 }));
+      expect(simplify(await sweep(owner, viewer, b))).toEqual(expected({ view: "ok", edit: 403, run: 403 }));
     });
 
     it("does not let enrichment.run alone view or edit", async () => {
       const owner = await user();
       const b = await book(owner);
       const runner = await colleague(owner, [RUN]);
-      const results = simplify(await sweep(runner, b));
+      const results = simplify(await sweep(owner, runner, b));
       delete results["GET /workbooks-v2/status"]; // only says the feature is on
       const want = expected({ view: 403, edit: 403, run: 501 });
       delete want["GET /workbooks-v2/status"];

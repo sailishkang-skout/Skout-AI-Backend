@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from "fastify";
 import { createDb, schema } from "@skout/db";
@@ -8,6 +11,7 @@ import { buildTestAuthEnv, buildTestAuthToken, ensureTestAuthHarness, grantSyste
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { isPublicRoute } from "../plugins/auth.js";
+import { importStorage, reportKey, uploadKey, withTempFile } from "../services/workbook-import-storage.js";
 
 /**
  * WB2-015, PRD SEC-1: nobody can see or touch another workspace's workbooks through any Workbooks V2 route.
@@ -27,8 +31,9 @@ import { isPublicRoute } from "../plugins/auth.js";
  *  - a `workspaceId` in a body or query: 422, the field is refused;
  *  - an `x-workspace-id` the caller does not belong to: 403 from sign-in, before any workbook is looked up.
  *
- * There are no run-history, import, export or webhook routes yet. B has such records so their ids can be watched, and
- * the first test fails as soon as any route is registered without a case here. B also has activity log entries.
+ * There are no run-history, export or webhook routes yet. B has such records so their ids can be watched, and the
+ * first test fails as soon as any route is registered without a case here. B also has activity log entries, a finished
+ * CSV import with a report and one waiting to be confirmed.
  */
 const base = loadEnv();
 const hasDatabase = Boolean(base.DATABASE_URL);
@@ -62,6 +67,8 @@ interface Req {
   /** After /api/v1/workbooks-v2. */
   path: string;
   body?: unknown;
+  /** A file sent as the body, instead of JSON. */
+  raw?: string;
   headers?: Record<string, string>;
 }
 
@@ -84,7 +91,10 @@ interface Ids {
   sequence: string;
   list: string;
   run: string;
+  /** A finished import with a report. */
   import: string;
+  /** An import waiting to be confirmed, with its file. */
+  waiting: string;
   view: string;
   webhook: string;
   /** An entry in the workbook's activity log. */
@@ -105,7 +115,7 @@ function ghostIds(): Ids {
   const id = () => randomUUID();
   return {
     workspace: id(), workbook: id(), deleted: id(), input: id(), spare: id(), formula: id(), enrichment: id(), ai: id(), action: id(), crm: id(),
-    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), view: id(), webhook: id(), activity: id(),
+    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), view: id(), webhook: id(), activity: id(),
     duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(),
   };
 }
@@ -128,6 +138,12 @@ const duplicateRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.wor
 const rowRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows`, body: { cells: { [ids.input]: "keyed" } }, headers: { "idempotency-key": ids.rowKey } });
 const bulkRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows/bulk`, body: { rows: [{ cells: { [ids.input]: "keyed" } }] }, headers: { "idempotency-key": ids.bulkKey } });
 const columnRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/columns`, body: textColumn, headers: { "idempotency-key": ids.columnKey } });
+const uploadRequest = (workbook: string, query = ""): Req => ({ method: "POST", path: `/${workbook}/imports${query}`, raw: "Name\ninjected\n", headers: { "content-type": "text/csv", "x-file-name": "x.csv" } });
+const confirmRequest = (workbook: string, importId: string, columnId: string): Req => ({
+  method: "POST",
+  path: `/${workbook}/imports/${importId}/confirm`,
+  body: { columns: [{ header: 0, columnId }], dedupe: { key: "none" } },
+});
 
 /** Requests naming a workbook, row or column of another workspace where the API looks it up: always 404. */
 function notFoundCases(): Case[] {
@@ -212,6 +228,25 @@ function notFoundCases(): Case[] {
   on(activity, "read their activity log", (_, t) => ({ method: "GET", path: `/${t.workbook}/activity` }));
   on(activity, "page through their activity log", (_, t) => ({ method: "GET", path: `/${t.workbook}/activity?limit=1` }));
 
+  on("POST /workbooks-v2/:id/imports", "upload a file into their workbook", (_, t) => uploadRequest(t.workbook));
+  on("GET /workbooks-v2/:id/imports", "list their imports", (_, t) => ({ method: "GET", path: `/${t.workbook}/imports` }));
+  const oneImport = "GET /workbooks-v2/:id/imports/:importId";
+  on(oneImport, "read their import's preview", (_, t) => ({ method: "GET", path: `/${t.workbook}/imports/${t.waiting}` }));
+  on(oneImport, "read their import through my workbook", (m, t) => ({ method: "GET", path: `/${m.workbook}/imports/${t.waiting}` }));
+  on(oneImport, "read my import inside their workbook", (m, t) => ({ method: "GET", path: `/${t.workbook}/imports/${m.waiting}` }));
+  const reportRoute = "GET /workbooks-v2/:id/imports/:importId/report";
+  on(reportRoute, "download their report", (_, t) => ({ method: "GET", path: `/${t.workbook}/imports/${t.import}/report` }));
+  on(reportRoute, "download their report through my workbook", (m, t) => ({ method: "GET", path: `/${m.workbook}/imports/${t.import}/report` }));
+  on(reportRoute, "download my report inside their workbook", (m, t) => ({ method: "GET", path: `/${t.workbook}/imports/${m.import}/report` }));
+  const confirmRoute = "POST /workbooks-v2/:id/imports/:importId/confirm";
+  on(confirmRoute, "confirm their import", (_, t) => confirmRequest(t.workbook, t.waiting, t.input));
+  on(confirmRoute, "confirm their import into my workbook", (m, t) => confirmRequest(m.workbook, t.waiting, m.input));
+  on(confirmRoute, "confirm my import inside their workbook", (m, t) => confirmRequest(t.workbook, m.waiting, m.input));
+  const cancelRoute = "DELETE /workbooks-v2/:id/imports/:importId";
+  on(cancelRoute, "cancel their import", (_, t) => ({ method: "DELETE", path: `/${t.workbook}/imports/${t.waiting}` }));
+  on(cancelRoute, "cancel their import through my workbook", (m, t) => ({ method: "DELETE", path: `/${m.workbook}/imports/${t.waiting}` }));
+  on(cancelRoute, "cancel my import inside their workbook", (m, t) => ({ method: "DELETE", path: `/${t.workbook}/imports/${m.waiting}` }));
+
   // Runs and CRM pushes: there is no engine yet, so an owner's valid request answers 501.
   for (const [route, path, column] of [
     ["POST /workbooks-v2/:id/runs", "runs", "enrichment"],
@@ -275,6 +310,8 @@ function referenceCases(): Array<Case & { status: number; code: string }> {
   config("PATCH /workbooks-v2/:id/columns/:columnId", "repoint my formula at their column", (m, t) => ({ method: "PATCH", path: `/${m.workbook}/columns/${m.formula}`, body: { config: formula(t.input) } }));
   config("PATCH /workbooks-v2/:id/columns/:columnId", "repoint my action at their list", (m, t) => ({ method: "PATCH", path: `/${m.workbook}/columns/${m.action}`, body: { config: { listId: t.list } } }));
 
+  on(422, "INVALID_IMPORT_MAPPING")("POST /workbooks-v2/:id/imports/:importId/confirm", "import my file into their column", (m, t) => confirmRequest(m.workbook, m.waiting, t.input));
+
   const swapped = (m: Ids, t: Ids) => allColumns(m).map((id) => (id === m.spare ? t.spare : id));
   conflict("POST /workbooks-v2/:id/columns/reorder", "order their column into my workbook", (m, t) => ({ method: "POST", path: `/${m.workbook}/columns/reorder`, body: { columnIds: swapped(m, t) } }));
   conflict("POST /workbooks-v2/:id/columns/reorder", "claim their column was in my previous order", (m, t) => ({
@@ -295,6 +332,13 @@ const workspaceClaims: Case[] = [
   { route: "POST /workbooks-v2/:id/rows", name: "add a row as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/rows`, body: { workspaceId: t.workspace } }) },
   { route: "POST /workbooks-v2/:id/columns", name: "add a column as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/columns`, body: { ...textColumn, workspaceId: t.workspace } }) },
   { route: "GET /workbooks-v2/:id/activity", name: "read activity as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/activity?workspaceId=${t.workspace}` }) },
+  { route: "GET /workbooks-v2/:id/imports", name: "list imports as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/imports?workspaceId=${t.workspace}` }) },
+  { route: "POST /workbooks-v2/:id/imports", name: "upload as their workspace", send: (m, t) => uploadRequest(m.workbook, `?workspaceId=${t.workspace}`) },
+  {
+    route: "POST /workbooks-v2/:id/imports/:importId/confirm",
+    name: "confirm as their workspace",
+    send: (m, t) => ({ method: "POST", path: `/${m.workbook}/imports/${m.waiting}/confirm`, body: { columns: [{ header: 0, columnId: m.input }], dedupe: { key: "none" }, workspaceId: t.workspace } }),
+  },
   { route: "POST /workbooks-v2/:id/runs", name: "run as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/runs`, body: { columnId: m.enrichment, workspaceId: t.workspace } }) },
 ];
 
@@ -318,6 +362,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
   let db: ReturnType<typeof createDb>["db"];
   let sql: ReturnType<typeof createDb>["sql"];
   let app: FastifyInstance;
+  let config: Parameters<typeof buildApp>[0];
+  let importDir: string;
+  const previousImportDir = process.env.WORKBOOK_IMPORTS_LOCAL_DIR;
   const registered = new Set<string>();
   const publicRoutes: string[] = [];
   const created: string[] = [];
@@ -351,7 +398,7 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
       url: `${PREFIX}/workbooks-v2${req.path}`,
       remoteAddress: `10.${(requests >> 16) & 255}.${(requests >> 8) & 255}.${requests & 255}`,
       headers: { ...auth, ...(req.body === undefined ? {} : { "content-type": "application/json" }), ...req.headers, ...headers },
-      ...(req.body === undefined ? {} : { payload: JSON.stringify(req.body) }),
+      ...(req.raw !== undefined ? { payload: req.raw } : req.body === undefined ? {} : { payload: JSON.stringify(req.body) }),
     });
   }
 
@@ -406,7 +453,27 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
       ]);
     }
     await db.insert(workbookRuns).values({ id: ids.run, workbookId: ids.workbook, columnId: ids.enrichment, scope: "all", status: "completed", rowFilter: { note: marker }, startedBy: userId });
-    await db.insert(workbookImports).values({ id: ids.import, workbookId: ids.workbook, sourceType: "csv", errorReportFile: `${marker}.csv` });
+    const files = importStorage(config)!;
+    const store = async (key: string, content: string) =>
+      withTempFile(async (file) => {
+        await writeFile(file, content);
+        await files.put(key, file);
+      });
+    const report = reportKey(ids.workspace, ids.import);
+    await store(report, `"Line in file","Result","Reason","Name"\r\n"2","Skipped","${marker}","${marker}"\r\n`);
+    const upload = uploadKey(ids.workspace, ids.waiting);
+    await store(upload, `Name\n${marker} uploaded\n`);
+    await db.insert(workbookImports).values([
+      {
+        id: ids.import, workbookId: ids.workbook, sourceType: "csv", status: "completed", fileName: `${marker}.csv`, errorReportFile: report,
+        counts: { total: 1, processed: 1, imported: 0, duplicates: 0, skipped: 1, failed: 0 }, finishedAt: new Date(),
+      },
+      {
+        id: ids.waiting, workbookId: ids.workbook, sourceType: "csv", status: "awaiting_confirmation", createdBy: userId, fileName: `${marker}.csv`, fileKey: upload,
+        counts: { total: 1, processed: 0, imported: 0, duplicates: 0, skipped: 0, failed: 0 },
+        preview: { delimiter: ",", headers: [{ index: 0, name: "Name", fits: ["text"], filled: 1 }], rows: [{ line: 2, values: [`${marker} uploaded`] }], suggestions: [] },
+      },
+    ]);
     await db.insert(workbookViews).values({ id: ids.view, workbookId: ids.workbook, name: marker, hiddenColumns: [ids.spare] });
     await db.insert(workbookWebhooks).values({ id: ids.webhook, workbookId: ids.workbook, tokenHash: `${marker}-token-hash` });
     // One log entry on each workbook, so a log that mixed workbooks up would show it.
@@ -431,6 +498,7 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         'cells', (select jsonb_agg(x order by x.row_id, x.column_id) from workbook_cells x where x.workbook_id in (select id from books)),
         'runs', (select jsonb_agg(x order by x.id) from workbook_runs x where x.workbook_id in (select id from books)),
         'imports', (select jsonb_agg(x order by x.id) from workbook_imports x where x.workbook_id in (select id from books)),
+        'importIssues', (select jsonb_agg(x order by x.import_id, x.record) from workbook_import_issues x join workbook_imports i on i.id = x.import_id where i.workbook_id in (select id from books)),
         'views', (select jsonb_agg(x order by x.id) from workbook_views x where x.workbook_id in (select id from books)),
         'webhooks', (select jsonb_agg(x order by x.id) from workbook_webhooks x where x.workbook_id in (select id from books)),
         'audit', (select jsonb_agg(x order by x.id) from audit_logs x where x.workspace_id = ${w}),
@@ -494,7 +562,10 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
       });
     subscribe("fastify.initialization", collect);
     try {
-      app = await buildApp({ ...base, ...buildTestAuthEnv(), LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EARLY_ACCESS_GATE_ENABLED: "true", RATE_LIMIT_MAX: 100_000, PLATFORM_ADMIN_EMAILS: [] });
+      importDir = await mkdtemp(path.join(os.tmpdir(), "wb2-isolation-imports-"));
+      process.env.WORKBOOK_IMPORTS_LOCAL_DIR = importDir;
+      config = { ...base, ...buildTestAuthEnv(), LOG_LEVEL: "fatal", OPENSEARCH_URL: undefined, EARLY_ACCESS_GATE_ENABLED: "true", RATE_LIMIT_MAX: 100_000, PLATFORM_ADMIN_EMAILS: [], EXPORTS_BUCKET: undefined };
+      app = await buildApp(config);
       await app.ready();
     } finally {
       unsubscribe("fastify.initialization", collect);
@@ -522,6 +593,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     }
     await app?.close();
     await sql?.end();
+    if (previousImportDir === undefined) delete process.env.WORKBOOK_IMPORTS_LOCAL_DIR;
+    else process.env.WORKBOOK_IMPORTS_LOCAL_DIR = previousImportDir;
+    if (importDir) await rm(importDir, { recursive: true, force: true });
   });
 
   // ── The suite itself ────────────────────────────────────────────────────────
@@ -676,6 +750,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
       }
       const log = await read({ method: "GET", path: `${mine}/activity?limit=100` });
       expect(log.data.map((e: { id: string }) => e.id)).toEqual([A.ids.activity]);
+
+      const imported = await read({ method: "GET", path: `${mine}/imports` });
+      expect(imported.data.map((i: { id: string }) => i.id).sort()).toEqual([A.ids.import, A.ids.waiting].sort());
 
       const theirText = await send(A, { method: "POST", path: `${mine}/rows/query`, body: { search: B.marker } });
       expect(theirText.json().window).toMatchObject({ matched: 0, returned: 0, total: 3 });

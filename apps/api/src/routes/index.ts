@@ -55,6 +55,7 @@ import { workbookV2RowRoutes } from "./workbook-v2-rows.routes.js";
 import { workbookV2ColumnRoutes } from "./workbook-v2-columns.routes.js";
 import { workbookV2RunRoutes } from "./workbook-v2-runs.routes.js";
 import { workbookV2ActivityRoutes } from "./workbook-v2-activity.routes.js";
+import { workbookV2ImportRoutes } from "./workbook-v2-imports.routes.js";
 import { reportRoutes } from "./report.routes.js";
 import { modelPerformanceRoutes } from "./model-performance.routes.js";
 import { evidenceRoutes } from "./evidence.routes.js";
@@ -188,6 +189,7 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(workbookV2ColumnRoutes);
     await v1.register(workbookV2RunRoutes);
     await v1.register(workbookV2ActivityRoutes);
+    await v1.register(workbookV2ImportRoutes);
     await v1.register(reportRoutes);
     await v1.register(modelPerformanceRoutes);
     await v1.register(evidenceRoutes);

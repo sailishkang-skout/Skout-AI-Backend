@@ -213,6 +213,12 @@ export const workbookRuns = pgTable(
   ]
 );
 
+export const WORKBOOK_IMPORT_STATUSES = ["awaiting_confirmation", "queued", "processing", "completed", "failed", "cancelled"] as const;
+export type WorkbookImportStatus = (typeof WORKBOOK_IMPORT_STATUSES)[number];
+
+export const WORKBOOK_IMPORT_ISSUE_KINDS = ["duplicate", "invalid", "malformed", "skipped", "over_limit"] as const;
+export type WorkbookImportIssueKind = (typeof WORKBOOK_IMPORT_ISSUE_KINDS)[number];
+
 export const workbookImports = pgTable(
   "workbook_imports",
   {
@@ -222,16 +228,56 @@ export const workbookImports = pgTable(
       .references(() => workbooks.id, { onDelete: "cascade" }),
     /** csv, list, smart_list, search, paste, a CRM, apollo, google_sheets or webhook. */
     sourceType: text("source_type").notNull(),
+    /** For a file import, one of WORKBOOK_IMPORT_STATUSES. */
     status: text("status").notNull().default("pending"),
-    /** { added, duplicates, skipped } */
+    /** { total, processed, imported, duplicates, skipped, failed } */
     counts: jsonb("counts").$type<Record<string, number>>().notNull().default({}),
     /** Storage reference of the downloadable skipped-rows report. */
     errorReportFile: text("error_report_file"),
+    /** Who started it; after confirmation, who confirmed it. */
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    fileName: text("file_name"),
+    fileBytes: integer("file_bytes"),
+    /** SERVER ONLY: where the uploaded file is stored. Null once it has been deleted. */
+    fileKey: text("file_key"),
+    /** What is shown before confirming: headers, the first rows and suggestions. Cleared afterwards. */
+    preview: jsonb("preview").$type<Record<string, unknown>>(),
+    /** The confirmed column mapping and deduplication key. */
+    plan: jsonb("plan").$type<Record<string, unknown>>(),
+    /** { code, message } for an import that failed or was cancelled. Safe to show. */
+    error: jsonb("error").$type<{ code: string; message: string }>(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [index("workbook_imports_workbook_created_idx").on(t.workbookId, t.createdAt)]
+  (t) => [
+    index("workbook_imports_workbook_created_idx").on(t.workbookId, t.createdAt),
+    // For the sweep that finds unfinished, abandoned and not-yet-cleaned-up imports.
+    index("workbook_imports_unfinished_idx").on(t.status, t.updatedAt).where(sql`${t.finishedAt} IS NULL OR ${t.fileKey} IS NOT NULL`),
+  ]
+);
+
+/**
+ * Rows an import did not add, with why. Held only until the import finishes and its report file is written from
+ * them; reached through the import, so through its workbook's workspace.
+ */
+export const workbookImportIssues = pgTable(
+  "workbook_import_issues",
+  {
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => workbookImports.id, { onDelete: "cascade" }),
+    /** Data row number in the file, from 1. */
+    record: integer("record").notNull(),
+    /** Line of the file the row starts on. */
+    line: integer("line").notNull(),
+    kind: text("kind").$type<WorkbookImportIssueKind>().notNull(),
+    reason: text("reason").notNull(),
+    /** The row's values as they were in the file. */
+    values: jsonb("values").$type<string[]>().notNull(),
+  },
+  (t) => [primaryKey({ name: "workbook_import_issues_pkey", columns: [t.importId, t.record] })]
 );
 
 export const workbookViews = pgTable(

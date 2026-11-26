@@ -1226,6 +1226,13 @@
       "when": 1798390800000,
       "tag": "0178_workbook_run_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1798390900000,
+      "tag": "0179_workbook_v2_csv_import",
+      "breakpoints": true
     }
   ]
 }

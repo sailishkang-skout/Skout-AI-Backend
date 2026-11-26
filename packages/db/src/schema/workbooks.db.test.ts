@@ -6,6 +6,7 @@ import {
   publicWorkbookCellColumns,
   workbookCells,
   workbookColumns,
+  workbookImportIssues,
   workbookImports,
   workbookRows,
   workbookRuns,
@@ -22,8 +23,8 @@ import {
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 
-const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks];
-const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks"];
+const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks, workbookImportIssues];
+const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks", "workbook_import_issues"];
 const LEGACY = ["enrichment_workbooks", "enrichment_workbook_runs", "workbook_column_definitions", "workbook_column_values"];
 
 maybe("Workbooks V2 schema (Postgres)", () => {
@@ -75,7 +76,7 @@ maybe("Workbooks V2 schema (Postgres)", () => {
   });
 
   describe("the migrated tables match the Drizzle definitions", () => {
-    it("creates all eight tables", async () => {
+    it("creates every table", async () => {
       const found = await sql`select table_name from information_schema.tables where table_schema = 'public' and table_name = any(${NAMES})`;
       expect(found.map((r) => r.table_name).sort()).toEqual([...NAMES].sort());
     });
@@ -303,11 +304,15 @@ maybe("Workbooks V2 schema (Postgres)", () => {
       const ws = await workspace(label);
       const s = await seed(ws, owner);
       await db.insert(workbookRuns).values({ workbookId: s.wb.id, columnId: s.cols[0]!.id, scope: "all", startedBy: owner });
-      await db.insert(workbookImports).values({ workbookId: s.wb.id, sourceType: "csv" });
+      const [imported] = await db.insert(workbookImports).values({ workbookId: s.wb.id, sourceType: "csv" }).returning();
+      await db.insert(workbookImportIssues).values({ importId: imported!.id, record: 1, line: 2, kind: "invalid", reason: "r", values: ["v"] });
       await db.insert(workbookViews).values({ workbookId: s.wb.id, name: "v" });
       await db.insert(workbookWebhooks).values({ workbookId: s.wb.id, tokenHash: `${label}-${stamp}` });
       return { ...s, ws, owner };
     }
+
+    const issuesOf = async (workbookId: string) =>
+      Number((await sql`select count(*)::int as n from workbook_import_issues x join workbook_imports i on i.id = x.import_id where i.workbook_id = ${workbookId}`)[0]!.n);
 
     it("deleting a workbook removes everything under it and nothing else", async () => {
       const gone = await full("c-wb");
@@ -317,6 +322,8 @@ maybe("Workbooks V2 schema (Postgres)", () => {
         expect(await countFor(t, gone.wb.id), t).toBe(0);
         expect(await countFor(t, kept.wb.id), t).toBeGreaterThan(0);
       }
+      expect(Number((await sql`select count(*)::int as n from workbook_import_issues x where not exists (select 1 from workbook_imports i where i.id = x.import_id)`)[0]!.n)).toBe(0);
+      expect(await issuesOf(kept.wb.id)).toBe(1);
     });
 
     it("deleting a column removes its cells and runs only", async () => {
