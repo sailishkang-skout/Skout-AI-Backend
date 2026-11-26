@@ -57,6 +57,15 @@ const UNSCOPED: Record<string, string> = {
   cops_analytics_feed_checkpoints: "platform-wide warehouse feed cursor per sink, no tenant data (COPS-13)",
   scrape_jobs: "platform scraping queue",
   signals: "corpus-level signals, joined to a workspace through the prospect",
+  // Workbooks V2 (WB2-010): reached only through their workbook, which carries workspace_id. Composite
+  // foreign keys stop a cell or run from joining the rows or columns of two different workbooks.
+  workbook_columns: "child of workbooks",
+  workbook_rows: "child of workbooks",
+  workbook_cells: "child of workbooks (through workbook_rows and workbook_columns)",
+  workbook_runs: "child of workbooks",
+  workbook_imports: "child of workbooks",
+  workbook_views: "child of workbooks",
+  workbook_webhooks: "child of workbooks; an inbound token resolves to a workbook, then its workspace",
 };
 
 maybe("tenant scoping guard (COPS-07)", () => {
@@ -68,6 +77,11 @@ maybe("tenant scoping guard (COPS-07)", () => {
         from information_schema.tables t
         where t.table_schema = 'public' and t.table_type = 'BASE TABLE'
           and t.table_name not like '\_\_drizzle%' and t.table_name not like 'drizzle%'
+          -- partitions have their parent's columns; the parent is what gets checked
+          and not exists (
+            select 1 from pg_class p join pg_namespace n on n.oid = p.relnamespace
+            where n.nspname = t.table_schema and p.relname = t.table_name and p.relispartition
+          )
           and not exists (
             select 1 from information_schema.columns c
             where c.table_schema = 'public' and c.table_name = t.table_name
