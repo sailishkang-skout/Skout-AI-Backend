@@ -4,6 +4,8 @@ import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.
 import { ApiPricingService } from "../services/api-pricing.service.js";
 import { PUBLIC_API_PREFIX } from "../routes/public-api.routes.js";
 import { publicApiPlugin } from "./plugin.js";
+import { createMemoryRateLimiter, createRedisRateLimiter } from "../lib/public-rate-limit.js";
+import { createRateLimitStep } from "./rate-limit-step.js";
 import type { PublicApiDeps, PublicEndpoint } from "./pipeline.js";
 
 /** The public API's endpoints (Phase 5 adds them here). */
@@ -28,6 +30,15 @@ export async function registerPublicApi(app: FastifyInstance, endpoints: PublicE
       searchDailyQuota: app.config.PUBLIC_API_SEARCH_DAILY_QUOTA,
     },
     enabled: app.config.PUBLIC_API_ENABLED === "true",
+    rateLimit: createRateLimitStep({
+      limiter: redis ? createRedisRateLimiter(redis) : createMemoryRateLimiter(),
+      base: {
+        perSecond: app.config.PUBLIC_API_RATE_PER_SECOND,
+        perMinute: app.config.PUBLIC_API_RATE_PER_MINUTE,
+        batchPerMinute: app.config.PUBLIC_API_BATCH_RATE_PER_MINUTE,
+      },
+      db: app.db,
+    }),
   };
   await app.register(publicApiPlugin, { prefix: PUBLIC_API_PREFIX, deps, endpoints });
 }

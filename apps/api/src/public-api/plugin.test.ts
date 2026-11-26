@@ -12,6 +12,8 @@ import { createPublicApiKey } from "../services/public-api-keys.service.js";
 import { availableCredits } from "../services/api-credits.service.js";
 import { publicApiPlugin } from "./plugin.js";
 import type { PublicApiDeps, PublicEndpoint, RequestLogEntry } from "./pipeline.js";
+import { createRateLimitStep } from "./rate-limit-step.js";
+import { createMemoryRateLimiter } from "../lib/public-rate-limit.js";
 
 /** PAPI-040: the public API plugin and its shared pipeline, with a dummy endpoint, on real Postgres. */
 const url = process.env.COPS_TEST_DATABASE_URL;
@@ -65,7 +67,7 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     fixture: () => ({ ok: true }),
   };
 
-  async function makeApp(enabled: boolean) {
+  async function makeApp(enabled: boolean, rateLimit?: PublicApiDeps["rateLimit"]) {
     const app = Fastify();
     app.decorate("config", {
       API_KEY_PEPPER: PEPPER,
@@ -83,7 +85,7 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
       limitDefaults: { verifyDailyQuota: 5000, searchDailyQuota: 10000 },
       enabled,
       timeoutMs: 300,
-      rateLimit: async () => (rateOk ? { ok: true } : { ok: false, retryAfterSeconds: 7 }),
+      rateLimit: rateLimit ?? (async () => (rateOk ? { ok: true } : { ok: false, retryAfterSeconds: 7 })),
       logRequest: async (e) => void logs.push(e),
     };
     await app.register(publicApiPlugin, { prefix: "/api/public/v1", deps, endpoints: [dummy, freeGet] });
@@ -261,6 +263,26 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     expect(res.headers["x-credits-charged"]).toBe("0");
     expect(calls).toBe(0);
     expect((await availableCredits(db, ws)).balance).toBe(before);
+  });
+
+  it("sets RateLimit-* headers on every call and Retry-After once a key is over its limit (PAPI-041)", async () => {
+    const limited = await makeApp(true, createRateLimitStep({ limiter: createMemoryRateLimiter(), base: { perSecond: 100, perMinute: 3, batchPerMinute: 1 }, db }));
+    const get = () => limited.inject({ method: "GET", url: "/api/public/v1/dummy/free", headers: { authorization: `Bearer ${liveKey}` } });
+    const seen = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await get();
+      expect(r.statusCode).toBe(200);
+      seen.push(r.headers["ratelimit-remaining"]);
+      expect(r.headers["ratelimit-limit"]).toBe("3");
+      expect(Number(r.headers["ratelimit-reset"])).toBeGreaterThan(0);
+    }
+    expect(seen).toEqual(["2", "1", "0"]);
+    const over = await get();
+    expect(over.statusCode).toBe(429);
+    expect(over.json().error.code).toBe("rate_limited");
+    expect(Number(over.headers["retry-after"])).toBeGreaterThan(0);
+    expect(over.headers["ratelimit-remaining"]).toBe("0");
+    expect(over.headers["x-credits-charged"]).toBe("0");
   });
 
   it("answers unknown paths with not_found, and only the health check while the flag is off", async () => {

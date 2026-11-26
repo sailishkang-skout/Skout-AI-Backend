@@ -49,12 +49,22 @@ export interface PublicEndpoint<S extends z.ZodTypeAny = z.ZodTypeAny, O = unkno
   input: S;
   /** Most the call can cost, from the current price list; reserved before the handler runs. */
   maxCost: (input: z.infer<S>, prices: PriceList) => number;
+  /** Batch endpoints get the lower per-minute rate limit (RL-2). */
+  batch?: boolean;
   /** Daily count quota the call uses, taken up front (RL-5, RL-6). */
   quota?: { kind: QuotaKind; units: (input: z.infer<S>) => number };
   /** Live keys: the real work. */
   handle: (ctx: EndpointContext<z.infer<S>>) => Promise<EndpointResult<O>>;
   /** Test keys (CRED-10): deterministic fixture data, never touches the wallet. */
   fixture: (input: z.infer<S>) => O;
+}
+
+export interface RateLimitStepResult {
+  ok: boolean;
+  /** Seconds to wait when refused (Retry-After). */
+  retryAfterSeconds?: number;
+  /** RateLimit-Limit / -Remaining / -Reset (CONV-5), set on every response. */
+  headers?: Record<string, string>;
 }
 
 export interface RequestLogEntry {
@@ -82,7 +92,7 @@ export interface PublicApiDeps {
   /** Per-request time limit, default 30 s (PRD §9.5). */
   timeoutMs?: number;
   /** Rate limit step (PAPI-041). Absent = no limit at this layer. */
-  rateLimit?: (request: FastifyRequest, endpoint: PublicEndpoint) => Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }>;
+  rateLimit?: (request: FastifyRequest, endpoint: PublicEndpoint) => Promise<RateLimitStepResult>;
   /** Log step (PAPI-044): one entry per request, including rejected ones. */
   logRequest?: (entry: RequestLogEntry) => Promise<void>;
 }
@@ -150,8 +160,9 @@ export async function runPipeline(deps: PublicApiDeps, ep: PublicEndpoint, reque
   // Rate limit.
   if (deps.rateLimit) {
     const r = await deps.rateLimit(request, ep);
+    for (const [h, v] of Object.entries(r.headers ?? {})) reply.header(h, v);
     if (!r.ok) {
-      reply.header("retry-after", String(r.retryAfterSeconds));
+      reply.header("retry-after", String(r.retryAfterSeconds ?? 1));
       throw new PublicApiError("rate_limited", "Too many requests. Slow down and retry after the Retry-After interval.");
     }
   }
