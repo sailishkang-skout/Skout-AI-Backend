@@ -31,7 +31,7 @@ export function workbookRouteHelpers(app: FastifyInstance) {
     const workspaceId = requireWorkspaceId(request);
     if (!request.userId) throw new HttpError("unauthorized", 401);
     await assertPermission(app.db, workspaceId, request.userId, permission);
-    return { db: app.db, actor: { workspaceId, userId: UUID.test(request.userId) ? request.userId : null } };
+    return { db: app.db, actor: { workspaceId, userId: UUID.test(request.userId) ? request.userId : null, requestId: request.id } };
   }
 
   function sendError(request: FastifyRequest, reply: FastifyReply, error: unknown) {

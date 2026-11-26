@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { schema, scopedById, scopedTo, type Db } from "@skout/db";
-import { recordPrivilegedAction } from "@skout/auth";
 import { createLogger } from "@skout/observability";
 import { EntitlementsService } from "./entitlements.service.js";
+import { recordWorkbookActivity, type ActivityActor } from "./workbook-activity-log.js";
 
 /**
  * Workbooks V2 CRUD (WB2-011). Every function takes the workspace id from the authenticated session and
@@ -37,6 +37,7 @@ export type WorkbookV2ErrorCode =
   | "COLUMN_ORDER_CONFLICT"
   | "COLUMN_ORDER_INVALID"
   | "COLUMN_NOT_RUNNABLE"
+  | "INVALID_ACTIVITY"
   | "NOT_IMPLEMENTED";
 
 export class WorkbookV2Error extends Error {
@@ -53,11 +54,8 @@ export class WorkbookV2Error extends Error {
 
 const notFound = () => new WorkbookV2Error("NOT_FOUND", 404, "Workbook not found");
 
-export interface WorkbookActor {
-  workspaceId: string;
-  /** Null for callers that are not a user row (they cannot be recorded as a creator). */
-  userId: string | null;
-}
+/** `userId` is null for callers that are not a user row (they cannot be recorded as a creator). */
+export type WorkbookActor = ActivityActor;
 
 export interface WorkbookSummary {
   id: string;
@@ -296,6 +294,17 @@ export async function duplicateWorkbook(db: Db, actor: WorkbookActor, sourceId: 
       }
 
       if (rows > 0) await copyRowsAndCells(tx, source.id, copy!.id, columnIds);
+
+      // The copy's history starts with what it was given.
+      for (const c of [...columns].sort((a, b) => a.position - b.position)) {
+        await recordWorkbookActivity(tx, actor, copy!.id, {
+          action: "workbook.column.added",
+          after: { columnId: columnIds.get(c.id)!, columnName: c.name, columnType: c.type, operation: c.operation, copiedFromWorkbookId: source.id },
+        });
+      }
+      if (rows > 0) {
+        await recordWorkbookActivity(tx, actor, copy!.id, { action: "workbook.rows.added", after: { source: "duplicate", rows, rowCount: rows, copiedFromWorkbookId: source.id } });
+      }
       return copy!;
     },
     { isolationLevel: "repeatable read" }
@@ -344,14 +353,7 @@ export async function deleteWorkbook(db: Db, actor: WorkbookActor, id: string) {
     const [row] = await tx.update(workbooks).set({ deletedAt: sql`now()` }).where(live(actor.workspaceId, id)).returning();
     if (!row) throw notFound();
     const result = { id: row.id, deletedAt: row.deletedAt!.toISOString(), restorableUntil: restorableUntil(row.deletedAt!) };
-    await recordPrivilegedAction(tx, {
-      workspaceId: actor.workspaceId,
-      actorId: actor.userId ?? undefined,
-      action: "workbook.delete",
-      entityType: "workbook",
-      entityId: row.id,
-      afterState: { name: row.name, deletedAt: result.deletedAt },
-    });
+    await recordWorkbookActivity(tx, actor, row.id, { action: "workbook.delete", after: { name: row.name, deletedAt: result.deletedAt } });
     return result;
   });
 }
@@ -380,14 +382,7 @@ export async function restoreWorkbook(db: Db, actor: WorkbookActor, id: string):
         restorableUntil: restorableUntil(before.deletedAt),
       });
     }
-    await recordPrivilegedAction(tx, {
-      workspaceId: actor.workspaceId,
-      actorId: actor.userId ?? undefined,
-      action: "workbook.restore",
-      entityType: "workbook",
-      entityId: row.id,
-      beforeState: { deletedAt: before.deletedAt.toISOString() },
-    });
+    await recordWorkbookActivity(tx, actor, row.id, { action: "workbook.restore", before: { deletedAt: before.deletedAt.toISOString() } });
     return row;
   });
   return detail(db, restored);

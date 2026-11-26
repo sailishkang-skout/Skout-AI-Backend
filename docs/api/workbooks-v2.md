@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013) and permissions (WB2-014)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014) and activity (WB2-016)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -183,4 +183,48 @@ Whatever runs these later must still enforce what saving cannot: webhook address
 
 ### Giving a member the permission
 Built-in roles: change the person's team role to admin (which also grants everything else an admin can do) and back again to remove it. Custom roles (`/cops/roles`) can carry `enrichment.run`, but in production those routes are open only to Skout's internal workspace, so **customer workspaces cannot grant it to a single member**.
+
+## Activity
+
+`GET /:id/activity?limit=&cursor=` returns what happened to one workbook, newest first. Needs `enrichment:read`.
+
+```ts
+200 { data: Event[], nextCursor: string | null }
+Event = { id, type, occurredAt, actor: { id, name, email } | null, details }
+```
+
+`limit` is 1–100 (default 25). Pass `nextCursor` back as `cursor` until it is `null`. `422` for any other parameter or an altered cursor; `404` for a workbook that is unknown, deleted or another workspace's.
+
+| `type` | `details` |
+|---|---|
+| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request |
+| `rows.deleted` | `rows`, `rowCount` |
+| `column.added` | `columnId`, `columnName`, `columnType`, `operation`, `copiedFromWorkbookId?` |
+| `column.updated` | `columnId`, `columnName`, `renamedFrom?`, `settingsChanged?` (setting names), `dataType?: { from, to }` |
+| `column.hidden` / `shown` / `frozen` / `unfrozen` | `columnId`, `columnName` |
+| `column.resized` | `columnId`, `columnName`, `width: { from, to }` |
+| `columns.reordered` | `columns: [{ columnId, columnName, from, to }]`, moved columns only |
+| `column.deleted` | `columnId`, `columnName`, `columnType`, `operation` |
+| `workbook.deleted` / `workbook.restored` | `name` / none (deleted workbooks show their log again once restored) |
+| `run.started` | `runId`, `columnId`, `columnName`, `scope`, `rows`, `maxCredits`, `actualCredits: null` |
+| `run.finished` | the same without `scope`, plus `status` (`completed`, `failed`, `cancelled`, `interrupted`) and `actualCredits` |
+| `export` | `exportId`, `format`, `destination` (`download`, `email`), `status`, `rows` (`null` unless started or completed) |
+| `crm_push` | `runId`, `columnId`, `columnName`, `provider`, `status`, `attempted`, `succeeded`, `failed`, `skipped` |
+
+**Nothing emits `run.*`, `export` or `crm_push` yet**: Workbooks V2 has no run engine, export or CRM push.
+
+### How it is stored
+In the existing `audit_logs` table (`entity_type = "workbook"`), so the CustomerOps audit view shows the same entries. Each entry is written in the transaction that makes the change: a refused or failed request records nothing, and a change that cannot be recorded is not saved. A retried request with the same `Idempotency-Key` is recorded once; an edit or reorder that changes nothing is not recorded. Settings are named, never quoted, and cell values, row source details and addresses are never stored. Cell edits are not recorded. Entries written in one request may carry the same time.
+
+### For the run, export and CRM push tickets
+Call these from `services/workbook-activity.service.ts`. Each returns `{ recorded }` and records a step once.
+
+| Call | When |
+|---|---|
+| `recordRunStarted(db, workspaceId, runId, { rows })` | A run is accepted; pass the accepting transaction as `db`. The maximum cost is the run's `max_credits`, the person its `started_by` |
+| `recordRunFinished(db, workspaceId, runId, { status, attempt? })` | It stops. `failed` only when it will not be retried; `interrupted` with the job's attempt number when it may resume. The first final status stands |
+| `recordCrmPush(db, workspaceId, runId, { status, attempt?, attempted, succeeded, failed, skipped })` | A Push to CRM run stops |
+| `recordExport(db, actor, workbookId, { exportId, format, destination, status, rows? })` | An export starts, completes, fails or is cancelled |
+
+**Billing requirement.** Every credit ledger entry a run creates must set `referenceId` to `workbookRunLedgerReference(workbookId, runId, rowId)`: `workbook:<workbookId>:run:<runId>[:row:<rowId>]`. `actualCredits` is the net of those entries and of entries that correct them (`compensates_id`), read from the ledger each time. A charge without that reference shows as costing nothing. The ledger has no index on `reference_id` or `compensates_id`, so this read grows with the workspace's ledger; the billing owner may want one.
 

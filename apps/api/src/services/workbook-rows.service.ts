@@ -1,8 +1,8 @@
 import { and, count, eq, inArray, max, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
-import { recordPrivilegedAction } from "@skout/auth";
 import { WorkbookV2Error, findLiveWorkbook, getWorkspaceRowLimit, lockLiveWorkbook, type WorkbookActor } from "./workbook-v2.service.js";
 import { inputDataType, normalizeInputValue, type NormalizedCell } from "./workbook-cell-values.js";
+import { recordWorkbookActivity } from "./workbook-activity-log.js";
 import { queryRowIds, type RowQuery } from "./workbook-rows.query.js";
 
 /**
@@ -19,6 +19,8 @@ export const MAX_ROWS_PER_REQUEST = 1_000;
 export const MAX_ROWS_PER_DELETE = 10_000;
 const CELL_INSERT_CHUNK = 4_000;
 const MAX_REPORTED_ERRORS = 100;
+/** A request naming more kinds of source than this has the smallest ones counted together. */
+const MAX_SOURCES_PER_REQUEST = 20;
 
 export interface NewRow {
   cells?: Record<string, unknown>;
@@ -180,6 +182,19 @@ export interface AddedRows {
   invalidCells: Array<{ rowId: number; columnId: string; errorCode: string }>;
 }
 
+/** How many of the rows came from each source (PRD WB-5: "rows added (source, count)"), largest first. */
+export function rowsBySource(rows: NewRow[]): Array<{ source: string; rows: number }> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const source = row.source?.type ?? "manual";
+    counts.set(source, (counts.get(source) ?? 0) + 1);
+  }
+  const all = [...counts].map(([source, count]) => ({ source, rows: count })).sort((a, b) => b.rows - a.rows);
+  if (all.length <= MAX_SOURCES_PER_REQUEST) return all;
+  const kept = all.slice(0, MAX_SOURCES_PER_REQUEST - 1);
+  return [...kept, { source: "other", rows: rows.length - kept.reduce((sum, s) => sum + s.rows, 0) }];
+}
+
 /** Rows by id, in that order. The caller must already have checked the workbook belongs to the workspace. */
 export const getRows = (db: Db, workbookId: string, ids: number[]) => loadRows(db, workbookId, ids);
 
@@ -222,6 +237,9 @@ export async function addRows(db: Db, actor: WorkbookActor, workbookId: string, 
 
     const rowCount = existing + input.length;
     await touchWorkbook(tx, workbookId, rowCount);
+    for (const added of rowsBySource(input)) {
+      await recordWorkbookActivity(tx, actor, workbookId, { action: "workbook.rows.added", after: { ...added, rowCount } });
+    }
     return {
       added: input.length,
       rowCount,
@@ -287,13 +305,9 @@ export async function deleteRows(db: Db, actor: WorkbookActor, workbookId: strin
     }
     const rowCount = await countRows(tx, workbookId);
     await touchWorkbook(tx, workbookId, rowCount);
-    await recordPrivilegedAction(tx, {
-      workspaceId: actor.workspaceId,
-      actorId: actor.userId ?? undefined,
+    await recordWorkbookActivity(tx, actor, workbookId, {
       action: "workbook.rows.delete",
-      entityType: "workbook",
-      entityId: workbookId,
-      afterState: { deleted: gone.length, rowCount, rowIds: wanted.slice(0, MAX_REPORTED_ERRORS) },
+      after: { deleted: gone.length, rowCount, rowIds: wanted.slice(0, MAX_REPORTED_ERRORS) },
     });
     return { deleted: gone.length, rowCount };
   });

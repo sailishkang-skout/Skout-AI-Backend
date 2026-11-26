@@ -28,7 +28,7 @@ import { isPublicRoute } from "../plugins/auth.js";
  *  - an `x-workspace-id` the caller does not belong to: 403 from sign-in, before any workbook is looked up.
  *
  * There are no run-history, import, export or webhook routes yet. B has such records so their ids can be watched, and
- * the first test fails as soon as any route is registered without a case here.
+ * the first test fails as soon as any route is registered without a case here. B also has activity log entries.
  */
 const base = loadEnv();
 const hasDatabase = Boolean(base.DATABASE_URL);
@@ -53,6 +53,7 @@ const {
   lists,
   crmConnections,
   workspaceIntegrations,
+  auditLogs,
 } = schema;
 
 type Method = "GET" | "HEAD" | "POST" | "PATCH" | "DELETE";
@@ -86,6 +87,8 @@ interface Ids {
   import: string;
   view: string;
   webhook: string;
+  /** An entry in the workbook's activity log. */
+  activity: string;
   /** Idempotency keys this workspace has already used. */
   duplicateKey: string;
   rowKey: string;
@@ -102,7 +105,7 @@ function ghostIds(): Ids {
   const id = () => randomUUID();
   return {
     workspace: id(), workbook: id(), deleted: id(), input: id(), spare: id(), formula: id(), enrichment: id(), ai: id(), action: id(), crm: id(),
-    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), view: id(), webhook: id(),
+    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), view: id(), webhook: id(), activity: id(),
     duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(),
   };
 }
@@ -205,6 +208,10 @@ function notFoundCases(): Case[] {
   on(deleteColumn, "delete my column inside their workbook", (m, t) => ({ method: "DELETE", path: `/${t.workbook}/columns/${m.spare}` }));
   on(deleteColumn, "delete their column through my workbook", (m, t) => ({ method: "DELETE", path: `/${m.workbook}/columns/${t.spare}` }));
 
+  const activity = "GET /workbooks-v2/:id/activity";
+  on(activity, "read their activity log", (_, t) => ({ method: "GET", path: `/${t.workbook}/activity` }));
+  on(activity, "page through their activity log", (_, t) => ({ method: "GET", path: `/${t.workbook}/activity?limit=1` }));
+
   // Runs and CRM pushes: there is no engine yet, so an owner's valid request answers 501.
   for (const [route, path, column] of [
     ["POST /workbooks-v2/:id/runs", "runs", "enrichment"],
@@ -287,6 +294,7 @@ const workspaceClaims: Case[] = [
   { route: "POST /workbooks-v2/:id/rows/query", name: "query as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/rows/query`, body: { workspaceId: t.workspace } }) },
   { route: "POST /workbooks-v2/:id/rows", name: "add a row as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/rows`, body: { workspaceId: t.workspace } }) },
   { route: "POST /workbooks-v2/:id/columns", name: "add a column as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/columns`, body: { ...textColumn, workspaceId: t.workspace } }) },
+  { route: "GET /workbooks-v2/:id/activity", name: "read activity as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/activity?workspaceId=${t.workspace}` }) },
   { route: "POST /workbooks-v2/:id/runs", name: "run as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/runs`, body: { columnId: m.enrichment, workspaceId: t.workspace } }) },
 ];
 
@@ -401,6 +409,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     await db.insert(workbookImports).values({ id: ids.import, workbookId: ids.workbook, sourceType: "csv", errorReportFile: `${marker}.csv` });
     await db.insert(workbookViews).values({ id: ids.view, workbookId: ids.workbook, name: marker, hiddenColumns: [ids.spare] });
     await db.insert(workbookWebhooks).values({ id: ids.webhook, workbookId: ids.workbook, tokenHash: `${marker}-token-hash` });
+    // One log entry on each workbook, so a log that mixed workbooks up would show it.
+    const entry = (entityId: string) => ({ workspaceId: ids.workspace, actorId: userId, action: "workbook.rows.added", entityType: "workbook", entityId, afterState: { source: marker, rows: 3, rowCount: 3 } });
+    await db.insert(auditLogs).values([{ id: ids.activity, ...entry(ids.workbook) }, entry(ids.deleted)]);
 
     const resources = Object.entries(ids)
       .filter(([key]) => !key.endsWith("Key"))
@@ -663,6 +674,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         expect(result.window, JSON.stringify(req.body)).toMatchObject({ matched: 3, total: 3, returned: 3 });
         expect(result.data.map((r: { id: number }) => r.id)).toEqual(myRows);
       }
+      const log = await read({ method: "GET", path: `${mine}/activity?limit=100` });
+      expect(log.data.map((e: { id: string }) => e.id)).toEqual([A.ids.activity]);
+
       const theirText = await send(A, { method: "POST", path: `${mine}/rows/query`, body: { search: B.marker } });
       expect(theirText.json().window).toMatchObject({ matched: 0, returned: 0, total: 3 });
 

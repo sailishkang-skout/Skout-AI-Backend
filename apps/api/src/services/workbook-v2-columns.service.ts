@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { schema, scopedById, scopedTo, type Db } from "@skout/db";
-import { recordPrivilegedAction } from "@skout/auth";
 import { WorkbookV2Error, lockLiveWorkbook, type WorkbookActor, type WorkbookColumnDto } from "./workbook-v2.service.js";
 import { inputDataType, normalizeInputValue, type InputDataType } from "./workbook-cell-values.js";
+import { recordWorkbookActivity, type ActivityEntry } from "./workbook-activity-log.js";
 import {
   hasReferenceCycle,
   mentions,
@@ -184,6 +184,41 @@ async function writeOrder(tx: Db, workbookId: string, order: Array<{ id: string 
 
 const touchWorkbook = (tx: Db, workbookId: string) => tx.update(workbooks).set({ updatedAt: sql`now()` }).where(eq(workbooks.id, workbookId));
 
+/** JSON with object keys sorted, so a value read back from the database compares equal to the same value written. */
+const canonical = (value: unknown) =>
+  JSON.stringify(value, (_key, v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v));
+
+/**
+ * One activity entry for each thing a column edit actually changed; saving the same values again records nothing.
+ * Settings are named, never quoted: a value can be a webhook address carrying a secret.
+ */
+function columnChanges(before: ColumnRecord, patch: ColumnPatch, config: Record<string, unknown> | undefined): ActivityEntry[] {
+  const columnName = patch.name ?? before.name;
+  const column = { columnId: before.id, columnName };
+  const entries: ActivityEntry[] = [];
+
+  const settingsChanged = config
+    ? [...new Set([...Object.keys(before.config), ...Object.keys(config)])].filter((key) => canonical(before.config[key]) !== canonical(config[key])).sort()
+    : [];
+  const renamed = columnName !== before.name;
+  if (renamed || settingsChanged.length) {
+    const [from, to] = [inputDataType(before.config), inputDataType(config ?? before.config)];
+    entries.push({
+      action: "workbook.column.updated",
+      after: {
+        ...column,
+        ...(renamed ? { renamedFrom: before.name } : {}),
+        ...(settingsChanged.length ? { settingsChanged } : {}),
+        ...(before.type === "input" && from !== to ? { dataType: { from, to } } : {}),
+      },
+    });
+  }
+  if (patch.hidden !== undefined && patch.hidden !== before.hidden) entries.push({ action: patch.hidden ? "workbook.column.hidden" : "workbook.column.shown", after: column });
+  if (patch.frozen !== undefined && patch.frozen !== before.frozen) entries.push({ action: patch.frozen ? "workbook.column.frozen" : "workbook.column.unfrozen", after: column });
+  if (patch.width !== undefined && patch.width !== before.width) entries.push({ action: "workbook.column.resized", after: { ...column, width: { from: before.width, to: patch.width } } });
+  return entries;
+}
+
 /** One transaction holding the workbook's lock, with its columns in order. */
 function withColumns<T>(db: Db, actor: WorkbookActor, workbookId: string, run: (tx: Db, columns: ColumnRecord[]) => Promise<T>): Promise<T> {
   return db.transaction(async (rawTx) => {
@@ -229,6 +264,10 @@ export async function addColumn(db: Db, actor: WorkbookActor, workbookId: string
     });
     await writeOrder(tx, workbookId, order);
     await touchWorkbook(tx, workbookId);
+    await recordWorkbookActivity(tx, actor, workbookId, {
+      action: "workbook.column.added",
+      after: { columnId: id, columnName: input.name, columnType: input.type, operation: checked.operation, position },
+    });
     return change(tx, workbookId, id);
   });
 }
@@ -293,6 +332,7 @@ export async function updateColumn(db: Db, actor: WorkbookActor, workbookId: str
       await writeOrder(tx, workbookId, rest);
     }
     await touchWorkbook(tx, workbookId);
+    for (const entry of columnChanges(column, patch, config)) await recordWorkbookActivity(tx, actor, workbookId, entry);
     return change(tx, workbookId, column.id);
   });
 }
@@ -321,6 +361,8 @@ export async function reorderColumns(
     assertFrozenFirst(order);
     await writeOrder(tx, workbookId, order);
     await touchWorkbook(tx, workbookId);
+    const moved = order.map((c, to) => ({ columnId: c.id, columnName: c.name, from: current.indexOf(c.id), to })).filter((c) => c.from !== c.to);
+    if (moved.length) await recordWorkbookActivity(tx, actor, workbookId, { action: "workbook.columns.reordered", after: { columns: moved } });
     return (await columnsInOrder(tx, workbookId)).map(toDto);
   });
 }
@@ -360,13 +402,9 @@ export async function deleteColumn(db: Db, actor: WorkbookActor, workbookId: str
     }
 
     await touchWorkbook(tx, workbookId);
-    await recordPrivilegedAction(tx, {
-      workspaceId: actor.workspaceId,
-      actorId: actor.userId ?? undefined,
+    await recordWorkbookActivity(tx, actor, workbookId, {
       action: "workbook.column.delete",
-      entityType: "workbook",
-      entityId: workbookId,
-      beforeState: { columnId: column.id, name: column.name, type: column.type, operation: column.operation },
+      before: { columnId: column.id, name: column.name, type: column.type, operation: column.operation },
     });
     return { id: column.id, columns: (await columnsInOrder(tx, workbookId)).map(toDto) };
   });
