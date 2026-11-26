@@ -2,6 +2,7 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { CreditLedgerError, postCreditTransaction, schema, type Db } from "@skout/db";
 import type { ApiPriceOperation } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
+import { assertCreditCaps, type CreditCaps } from "./api-limits.service.js";
 
 const { creditBalances, creditHolds } = schema;
 
@@ -76,7 +77,14 @@ export async function availableCredits(db: Db, workspaceId: string, now = new Da
  */
 export async function reserve(
   db: Db,
-  input: { workspaceId: string; apiKeyId: string; requestId: string; max: number },
+  input: {
+    workspaceId: string;
+    apiKeyId: string;
+    requestId: string;
+    max: number;
+    /** Per-key and workspace credit caps (PAPI-033); checked under the wallet lock. */
+    caps?: CreditCaps;
+  },
   now = new Date()
 ): Promise<ReservedHold> {
   if (!Number.isInteger(input.max) || input.max < 0) throw new HttpError("A reservation is a whole number of credits", 500);
@@ -90,6 +98,7 @@ export async function reserve(
       .where(and(eq(creditHolds.workspaceId, input.workspaceId), eq(creditHolds.requestId, input.requestId)))
       .limit(1);
     if (prior) return { holdId: prior.id, amount: prior.amount, existing: true };
+    if (input.caps) await assertCreditCaps(tx, { workspaceId: input.workspaceId, apiKeyId: input.apiKeyId, max: input.max, caps: input.caps }, now);
     const available = balance - (await activeHoldTotal(tx, input.workspaceId, now));
     if (available < input.max) throw new InsufficientApiCreditsError(Math.max(0, available), input.max);
     const [hold] = await tx
