@@ -12,7 +12,7 @@ import { createPublicApiKey, PUBLIC_API_SCOPES, type PublicApiScope } from "../s
 import { publicApiPlugin } from "./plugin.js";
 import { createPublicIdCodec } from "./ids.js";
 import { assertEndpointScope, PUBLIC_API_SCOPE_MAP, scopeKey } from "./scopes.js";
-import { PUBLIC_API_ENDPOINTS } from "./index.js";
+import { createPublicEndpoints } from "./index.js";
 import type { PublicEndpoint } from "./pipeline.js";
 
 describe("the static scope map (PAPI-045, PRD §7.3)", () => {
@@ -32,7 +32,7 @@ describe("the static scope map (PAPI-045, PRD §7.3)", () => {
   });
 
   it("covers every endpoint the API actually registers", () => {
-    for (const ep of PUBLIC_API_ENDPOINTS) expect(() => assertEndpointScope(ep)).not.toThrow();
+    for (const ep of createPublicEndpoints({ env: {} as never, db: {} as never })) expect(() => assertEndpointScope(ep)).not.toThrow();
   });
 });
 
@@ -51,7 +51,7 @@ maybe("every endpoint, with and without its scope (PAPI-045)", () => {
   let allScopes: string;
 
   // Real endpoints as they land in Phase 5; a stub for each mapped endpoint not built yet.
-  const real = new Map(PUBLIC_API_ENDPOINTS.map((ep) => [scopeKey(ep.method, ep.path), ep]));
+  const real = new Map(createPublicEndpoints({ env: {} as never, db: {} as never }).map((ep) => [scopeKey(ep.method, ep.path), ep]));
   const endpoints: PublicEndpoint[] = Object.entries(PUBLIC_API_SCOPE_MAP).map(([k, scope]) => {
     const existing = real.get(k);
     if (existing) return existing;

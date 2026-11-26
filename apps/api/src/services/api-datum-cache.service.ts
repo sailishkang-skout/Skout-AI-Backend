@@ -12,9 +12,16 @@ const { apiDatumCache } = schema;
  * The window runs from the last *charged* delivery; free repeats never extend it.
  */
 export const DATUM_CACHE_WINDOW_MS = 30 * 86_400_000;
-export type DatumType = "email" | "phone" | "person" | "company" | "company_jobs";
+export type DatumType = "email" | "phone" | "person" | "company" | "company_jobs" | "search_page";
 
-export async function getCachedDatum<T>(db: Db, workspaceId: string, subjectKey: string, type: DatumType, now = new Date()): Promise<T | null> {
+export async function getCachedDatum<T>(
+  db: Db,
+  workspaceId: string,
+  subjectKey: string,
+  type: DatumType,
+  now = new Date(),
+  windowMs = DATUM_CACHE_WINDOW_MS
+): Promise<T | null> {
   const [row] = await db
     .select({ value: apiDatumCache.value })
     .from(apiDatumCache)
@@ -23,7 +30,7 @@ export async function getCachedDatum<T>(db: Db, workspaceId: string, subjectKey:
         eq(apiDatumCache.workspaceId, workspaceId),
         eq(apiDatumCache.subjectKey, subjectKey),
         eq(apiDatumCache.datumType, type),
-        gt(apiDatumCache.deliveredAt, new Date(now.getTime() - DATUM_CACHE_WINDOW_MS))
+        gt(apiDatumCache.deliveredAt, new Date(now.getTime() - windowMs))
       )
     )
     .limit(1);

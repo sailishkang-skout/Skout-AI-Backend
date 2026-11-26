@@ -1,4 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import type { Db } from "@skout/db";
+import type { Env } from "../config/env.js";
+import { createPeopleSearchEndpoint } from "./endpoints/people-search.js";
 import { getRedis, isRedisAvailable } from "../lib/redis.js";
 import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.js";
 import { ApiPricingService } from "../services/api-pricing.service.js";
@@ -12,10 +15,12 @@ import { createRequestLogWriter } from "./request-log.js";
 import type { PublicApiDeps, PublicEndpoint } from "./pipeline.js";
 
 /** The public API's endpoints (Phase 5 adds them here). */
-export const PUBLIC_API_ENDPOINTS: PublicEndpoint[] = [];
+export function createPublicEndpoints(deps: { env: Env; db: Db }): PublicEndpoint[] {
+  return [createPeopleSearchEndpoint(deps) as unknown as PublicEndpoint];
+}
 
 /** Registers the public API at /api/public/v1 with the app's database, Redis and config (PAPI-040). */
-export async function registerPublicApi(app: FastifyInstance, endpoints: PublicEndpoint[] = PUBLIC_API_ENDPOINTS) {
+export async function registerPublicApi(app: FastifyInstance) {
   if (!app.db) {
     // Without a database only the health check can answer.
     await app.register(async (pub) => {
@@ -47,5 +52,5 @@ export async function registerPublicApi(app: FastifyInstance, endpoints: PublicE
       db: app.db,
     }),
   };
-  await app.register(publicApiPlugin, { prefix: PUBLIC_API_PREFIX, deps, endpoints });
+  await app.register(publicApiPlugin, { prefix: PUBLIC_API_PREFIX, deps, endpoints: createPublicEndpoints({ env: app.config, db: app.db }) });
 }

@@ -8,6 +8,8 @@ export const API_IDEMPOTENCY_RETENTION_HOURS = 24;
 export const API_REQUEST_LOG_MONTHS_AHEAD = 3;
 /** CRED-4: a datum is free again for 30 days; older cache rows are no longer useful. */
 export const API_DATUM_CACHE_DAYS = 30;
+/** PAPI-051: a repeated public API search page is free for 24 hours. */
+export const API_SEARCH_PAGE_CACHE_HOURS = 24;
 
 export interface PublicApiMaintenanceResult {
   partitionsCreated: number;
@@ -36,7 +38,10 @@ export async function maintainPublicApiTables(db: Db, now: Date = new Date()): P
     sql`delete from api_idempotency where created_at < ${iso}::timestamptz - make_interval(hours => ${API_IDEMPOTENCY_RETENTION_HOURS}) returning 1`
   );
   const datum = await db.execute(
-    sql`delete from api_datum_cache where delivered_at < ${iso}::timestamptz - make_interval(days => ${API_DATUM_CACHE_DAYS}) returning 1`
+    sql`delete from api_datum_cache
+        where delivered_at < ${iso}::timestamptz - make_interval(days => ${API_DATUM_CACHE_DAYS})
+           or (datum_type = 'search_page' and delivered_at < ${iso}::timestamptz - make_interval(hours => ${API_SEARCH_PAGE_CACHE_HOURS}))
+        returning 1`
   );
   return {
     datumCachePurged: (datum as unknown as unknown[]).length,

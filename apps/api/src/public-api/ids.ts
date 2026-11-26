@@ -9,7 +9,7 @@ import { createCipheriv, createDecipheriv, createHmac, hkdfSync } from "node:cry
  * has the same public id, the id can be turned back into the internal one, and a tampered id or one
  * of another type fails to decode. Encoded as base64url.
  */
-export const PUBLIC_ID_PREFIX = { person: "per", company: "com", job: "job", webhook: "whk" } as const;
+export const PUBLIC_ID_PREFIX = { person: "per", company: "com", job: "job", webhook: "whk", cursor: "cur" } as const;
 export type PublicIdType = keyof typeof PUBLIC_ID_PREFIX;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

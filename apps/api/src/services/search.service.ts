@@ -26,9 +26,16 @@ import {
   type VendorCallRecorder,
 } from "./vendor-search.service.js";
 import { createProviderCostRecorder, type ProviderCall, type ProviderCostContext } from "./provider-cost.service.js";
+import { suppressedEmailsAmong } from "./suppression.service.js";
 
 /** Who a search runs for, so the vendor calls it triggers can be costed (PAPI-013). */
-export type SearchCostContext = Omit<ProviderCostContext, "source">;
+export type SearchCostContext = Omit<ProviderCostContext, "source"> & {
+  /**
+   * PAPI-051 (PRD §9.6): leave out people whose email this workspace has suppressed. Used by the
+   * public API; the app's own search is unchanged.
+   */
+  excludeSuppressed?: boolean;
+};
 import { 
   listSignalsForEntities, 
   computeSignalStackScore, 
@@ -269,6 +276,12 @@ async function releaseDeepFetch(env: Env, key: string): Promise<void> {
 export class SearchService {
   constructor(private readonly env: Env, private readonly db: Db) {}
 
+  /** Emails of documents seen in this search (summaries don't carry them), for the suppression filter. */
+  private readonly emailsByProspect = new Map<string, string>();
+  private rememberEmails(docs: { prospectId: string; email?: string }[]) {
+    for (const d of docs) if (d.email) this.emailsByProspect.set(d.prospectId, d.email);
+  }
+
   /**
    * §8.2 SS-04 — same per-hit signal-stack computation `searchProspects` already does for list
    * results, but for a single doc, so `timingScore` isn't silently undefined on detail/lookup
@@ -318,7 +331,8 @@ export class SearchService {
     if (enabledVendors(this.env).length > 0) {
       const calls: ProviderCall[] = [];
       try {
-        return await this.vendorBackedSearch(body, page, pageSize, cfg, (call) => calls.push(call));
+        const res = await this.vendorBackedSearch(body, page, pageSize, cfg, (call) => calls.push(call));
+        return ctx.excludeSuppressed && ctx.workspaceId ? await this.withoutSuppressed(res, ctx.workspaceId) : res;
       } finally {
         if (calls.length > 0) {
           await createProviderCostRecorder(this.db, this.env.PROVIDER_UNIT_COSTS_JSON)(calls, { source: "search", ...ctx });
@@ -429,6 +443,7 @@ export class SearchService {
     };
 
     let stored = await lookup();
+    this.rememberEmails(stored.hits);
     if (stored.hits.length >= pageSize) {
       return {
         results: stored.hits.map((h) => ({ ...mapDocToSummary(h), resultSource: "index" as const })),
@@ -464,6 +479,7 @@ export class SearchService {
     }
 
     const fresh = people.map(toProspectDocument);
+    this.rememberEmails(fresh);
     let hits = stored.hits;
     let total = Math.max(stored.total, outcome.total ?? 0);
     if (fresh.length > 0) {
@@ -472,6 +488,7 @@ export class SearchService {
           const r = await bulkCreateProspects(cfg, fresh);
           log.info("vendor prospects saved", { ...r, vendors: outcome.attempted, page });
           stored = await lookup(); // now includes the new docs, in stable order
+          this.rememberEmails(stored.hits);
           hits = stored.hits;
         } catch (err) {
           log.error("saving vendor prospects failed", err);
@@ -494,6 +511,21 @@ export class SearchService {
       cached: false,
       source: fresh.length > 0 ? "vendor" : "opensearch",
     };
+  }
+
+  /** Drops results whose email the workspace has suppressed, and recounts the sources. */
+  private async withoutSuppressed(res: SearchProspectsResponse, workspaceId: string): Promise<SearchProspectsResponse> {
+    const emails = new Map<string, string>();
+    for (const r of res.results) {
+      const email = (r as { email?: string }).email ?? this.emailsByProspect.get(r.prospectId);
+      if (email) emails.set(r.prospectId, email.toLowerCase());
+    }
+    if (emails.size === 0 || !this.db || typeof this.db.select !== "function") return res;
+    const suppressed = await suppressedEmailsAmong(this.db, workspaceId, [...emails.values()]);
+    if (suppressed.size === 0) return res;
+    const results = res.results.filter((r) => !suppressed.has(emails.get(r.prospectId) ?? ""));
+    const vendor = results.filter((r) => r.resultSource === "vendor").length;
+    return { ...res, results, sourceCounts: res.sourceCounts ? { index: results.length - vendor, vendor } : undefined };
   }
 
   async getProspectById(prospectId: string) {

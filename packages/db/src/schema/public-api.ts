@@ -243,7 +243,7 @@ export const apiDatumCache = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     /** Stable key of the person or company the datum is about, e.g. "person:<internal id>". */
     subjectKey: text("subject_key").notNull(),
-    /** email | phone | person | company | company_jobs */
+    /** email | phone | person | company | company_jobs | search_page */
     datumType: text("datum_type").notNull(),
     value: jsonb("value").notNull(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }).notNull().defaultNow(),

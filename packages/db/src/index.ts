@@ -35,5 +35,6 @@ export {
   API_IDEMPOTENCY_RETENTION_HOURS,
   API_REQUEST_LOG_MONTHS_AHEAD,
   API_DATUM_CACHE_DAYS,
+  API_SEARCH_PAGE_CACHE_HOURS,
   type PublicApiMaintenanceResult,
 } from "./public-api-maintenance.js";
