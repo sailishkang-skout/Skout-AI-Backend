@@ -13,6 +13,7 @@ import { availableCredits } from "../services/api-credits.service.js";
 import { publicApiPlugin } from "./plugin.js";
 import type { PublicApiDeps, PublicEndpoint, RequestLogEntry } from "./pipeline.js";
 import { createRateLimitStep } from "./rate-limit-step.js";
+import { claimIdempotencyKey, completeIdempotencyKey, requestHash } from "./idempotency.js";
 import { createMemoryRateLimiter } from "../lib/public-rate-limit.js";
 
 /** PAPI-040: the public API plugin and its shared pipeline, with a dummy endpoint, on real Postgres. */
@@ -99,7 +100,7 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     target.inject({
       method: "POST",
       url: path,
-      headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), "content-type": "application/json", ...headers },
+      headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), "content-type": "application/json", "idempotency-key": randomUUID(), ...headers },
       payload: typeof body === "string" ? body : JSON.stringify(body),
     });
   const ledger = () =>
@@ -263,6 +264,73 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     expect(res.headers["x-credits-charged"]).toBe("0");
     expect(calls).toBe(0);
     expect((await availableCredits(db, ws)).balance).toBe(before);
+  });
+
+  it("replays a retried request with the same Idempotency-Key and charges nothing new (PAPI-042)", async () => {
+    const idem = { "idempotency-key": `retry-${randomUUID()}` };
+    const first = await call(liveKey, { name: "Grace", results: 2 }, idem);
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["x-credits-charged"]).toBe("2");
+    const chargesBefore = (await ledger()).length;
+    const balance = (await availableCredits(db, ws)).balance;
+
+    // Same key, same body (keys in another order): the original response, free, handler not run again.
+    const again = await call(liveKey, { results: 2, name: "Grace" }, idem);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual(first.json());
+    expect(again.headers["idempotent-replayed"]).toBe("true");
+    expect(again.headers["x-credits-charged"]).toBe("0");
+    expect(again.headers["x-credits-remaining"]).toBe(String(balance));
+    expect(calls).toBe(1);
+    expect((await ledger()).length).toBe(chargesBefore);
+  });
+
+  it("refuses the same Idempotency-Key with a different body (409), and a missing or bad header (422)", async () => {
+    const idem = { "idempotency-key": `conflict-${randomUUID()}` };
+    expect((await call(liveKey, { name: "Ada" }, idem)).statusCode).toBe(200);
+    const conflict = await call(liveKey, { name: "Bob" }, idem);
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json().error).toMatchObject({ code: "idempotency_conflict", type: "invalid_request_error" });
+
+    const missing = await app.inject({
+      method: "POST",
+      url: "/api/public/v1/dummy/lookup",
+      headers: { authorization: `Bearer ${liveKey}`, "content-type": "application/json" },
+      payload: JSON.stringify({ name: "Ada" }),
+    });
+    expect(missing.statusCode).toBe(422);
+    expect(missing.json().error.message).toContain("Idempotency-Key");
+    expect((await call(liveKey, { name: "Ada" }, { "idempotency-key": "x".repeat(256) })).statusCode).toBe(422);
+    expect(calls).toBe(1);
+  });
+
+  it("lets a failed request be retried with the same key, and keeps keys per workspace", async () => {
+    const idem = { "idempotency-key": `fail-${randomUUID()}` };
+    expect((await call(liveKey, { name: "Ada", mode: "throw" }, idem)).statusCode).toBe(500);
+    const retry = await call(liveKey, { name: "Ada" }, idem);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.headers["idempotent-replayed"]).toBeUndefined();
+    // The same key string from another workspace is a different key.
+    const [row] = await db.select().from(schema.apiIdempotency).where(eq(schema.apiIdempotency.key, idem["idempotency-key"]));
+    expect(row).toMatchObject({ workspaceId: ws, statusCode: 200 });
+  });
+
+  it("answers 409 while the first request with a key is still running, and forgets keys after 24 hours", async () => {
+    const key = `window-${randomUUID()}`;
+    const hash = requestHash("POST", "/dummy/lookup", { name: "Ada" });
+    const t0 = new Date();
+    expect(await claimIdempotencyKey(db, { workspaceId: ws, header: key, hash }, t0)).toEqual({ kind: "new", key });
+    await expect(claimIdempotencyKey(db, { workspaceId: ws, header: key, hash }, t0)).rejects.toMatchObject({ code: "idempotency_conflict" });
+    await completeIdempotencyKey(db, ws, key, 200, { data: 1 });
+    expect(await claimIdempotencyKey(db, { workspaceId: ws, header: key, hash }, t0)).toMatchObject({ kind: "replay", status: 200, body: { data: 1 } });
+    // 24 hours later the key is free again, even for a different request.
+    const other = requestHash("POST", "/dummy/lookup", { name: "Bob" });
+    expect(await claimIdempotencyKey(db, { workspaceId: ws, header: key, hash: other }, new Date(t0.getTime() + 24 * 3_600_000 + 1000))).toEqual({ kind: "new", key });
+  });
+
+  it("doesn't need an Idempotency-Key on free GET endpoints", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/public/v1/dummy/free", headers: { authorization: `Bearer ${liveKey}` } });
+    expect(res.statusCode).toBe(200);
   });
 
   it("sets RateLimit-* headers on every call and Retry-After once a key is over its limit (PAPI-041)", async () => {

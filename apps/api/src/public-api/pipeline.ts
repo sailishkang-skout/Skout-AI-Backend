@@ -8,6 +8,7 @@ import { availableCredits, commit, release, reserve } from "../services/api-cred
 import { consumeQuota, limitsForKey, type ApiLimitDefaults } from "../services/api-limits.service.js";
 import type { PublicApiScope } from "../services/public-api-keys.service.js";
 import { PublicApiError } from "./errors.js";
+import { abandonIdempotencyKey, claimIdempotencyKey, completeIdempotencyKey, requestHash } from "./idempotency.js";
 
 /**
  * The shared public API pipeline (PAPI-040, public API PRD §6):
@@ -49,6 +50,8 @@ export interface PublicEndpoint<S extends z.ZodTypeAny = z.ZodTypeAny, O = unkno
   input: S;
   /** Most the call can cost, from the current price list; reserved before the handler runs. */
   maxCost: (input: z.infer<S>, prices: PriceList) => number;
+  /** Require Idempotency-Key (CONV-2). Defaults to true for billable POSTs. */
+  idempotent?: boolean;
   /** Batch endpoints get the lower per-minute rate limit (RL-2). */
   batch?: boolean;
   /** Daily count quota the call uses, taken up front (RL-5, RL-6). */
@@ -171,6 +174,43 @@ export async function runPipeline(deps: PublicApiDeps, ep: PublicEndpoint, reque
   const raw = ep.method === "POST" ? request.body : { ...(request.query as object), ...(request.params as object) };
   const input = parseInput(ep.input, ep.method === "POST" ? { ...((raw as object) ?? {}), ...(request.params as object) } : raw);
 
+  // Idempotency (CONV-2): billable POSTs need a key; a retry replays the stored response for free.
+  const idempotent = ep.idempotent ?? (ep.method === "POST" && ep.operation !== null);
+  if (!idempotent) return execute(deps, ep, request, reply, key, state, input);
+  const claim = await claimIdempotencyKey(deps.db, {
+    workspaceId: key.workspaceId,
+    header: request.headers["idempotency-key"],
+    hash: requestHash(ep.method, ep.path, input),
+  });
+  if (claim.kind === "replay") {
+    reply.header("idempotent-replayed", "true");
+    reply.header("x-credits-charged", "0");
+    if (key.type === "live") reply.header("x-credits-remaining", String((await availableCredits(deps.db, key.workspaceId)).balance));
+    reply.code(claim.status);
+    return claim.body;
+  }
+  try {
+    const body = await execute(deps, ep, request, reply, key, state, input);
+    await completeIdempotencyKey(deps.db, key.workspaceId, claim.key, reply.statusCode, body);
+    return body;
+  } catch (err) {
+    await abandonIdempotencyKey(deps.db, key.workspaceId, claim.key).catch(() => undefined);
+    throw err;
+  }
+}
+
+type PublicKey = NonNullable<FastifyRequest["publicApiKey"]>;
+
+/** Everything after validation: test-key fixtures, or quota → price → reserve → handler → commit. */
+async function execute(
+  deps: PublicApiDeps,
+  ep: PublicEndpoint,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  key: PublicKey,
+  state: PublicRequestState,
+  input: unknown
+): Promise<unknown> {
   // Test keys: fixture data, no quota, no wallet (CRED-10).
   if (key.type === "test") {
     reply.header("x-credits-charged", "0");
