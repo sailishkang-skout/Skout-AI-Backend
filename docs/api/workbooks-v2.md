@@ -1,6 +1,6 @@
-# Workbooks V2 API: workbooks (WB2-011) and rows (WB2-012)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012) and columns (WB2-013)
 
-Base path `/api/v1/workbooks-v2`. Columns (WB2-013) are not here yet.
+Base path `/api/v1/workbooks-v2`.
 
 **Access.** The workspace must have the `workbooks_v2` switch (`docs/ops/workbooks-v2-flag.md`), otherwise `403 feature_disabled`. Reading needs `enrichment:read`; creating or changing needs `enrichment:capture`. The workspace always comes from the signed-in session; request bodies with unknown fields (including `workspaceId`, `rowLimit`, `rowCount`) are rejected.
 
@@ -26,7 +26,7 @@ Workbook = Summary & { columns: { id, name, type, operation, config, position, w
 Errors use the standard envelope: `{ ok: false, code, error, message, statusCode, details, request_id, retryable }`.
 
 ## Idempotency
-`POST /`, `POST /:id/duplicate`, `POST /:id/rows` and `POST /:id/rows/bulk` accept an optional `Idempotency-Key` (8–128 characters). A repeat with the same key and body returns the first answer; the same key with a different body is `IDEMPOTENCY_KEY_REUSED`; one still running is `409`. Without the header, each request creates a new workbook or new rows.
+`POST /`, `POST /:id/duplicate`, `POST /:id/rows`, `POST /:id/rows/bulk` and `POST /:id/columns` accept an optional `Idempotency-Key` (8–128 characters). A repeat with the same key and body returns the first answer; the same key with a different body is `IDEMPOTENCY_KEY_REUSED`; one still running is `409`. Without the header, each request creates a new workbook, rows or column.
 
 ## Row limit
 Rows per workbook default to 100,000. CustomerOps changes it per workspace with the platform-managed entitlement `workbooks.row_limit` (a non-negative integer), through `PUT /api/v1/admin/workspaces/:workspaceId/entitlements/workbooks.row_limit` with `{ "value": 250000 }`; a workspace cannot set its own. Anything that adds rows must check `getWorkspaceRowLimit()` (`workbook-v2.service.ts`); the stored `workbooks.row_limit` is only the value at creation.
@@ -84,4 +84,78 @@ Window = { data: (Row & { index })[],
 - `search` (up to 200 characters): substring, ignoring case, of any text, number or true/false cell value. Object and list values are not searched. `%` and `_` are ordinary characters.
 
 Performance on 100,000 rows: [`workbooks-v2-rows-performance.md`](workbooks-v2-rows-performance.md).
+
+## Columns
+
+Columns are read with the workbook (`GET /:id`, in position order). Changing them needs `enrichment:capture`. Nothing here runs a column.
+
+| Method and path | Body | Success | Errors besides 401/403/422 validation |
+|---|---|---|---|
+| `POST /:id/columns` | `{ name, type, operation?, config?, position?, width?, hidden?, frozen? }` | `201 { data: Column, columns }` | `404`, `422 INVALID_COLUMN_CONFIG`, `COLUMN_ORDER_INVALID`, `COLUMN_LIMIT_EXCEEDED` (200 columns) |
+| `PATCH /:id/columns/:columnId` | at least one of `{ name, config, width, hidden, frozen }` | `200 { data: Column, columns }` | `404`, `422 INVALID_COLUMN_CONFIG`, `409 COLUMN_IN_USE` |
+| `POST /:id/columns/reorder` | `{ columnIds, previousColumnIds? }` | `200 { data: Column[] }` | `404`, `409 COLUMN_ORDER_CONFLICT`, `422 COLUMN_ORDER_INVALID` |
+| `DELETE /:id/columns/:columnId` | | `200 { data: { id }, columns }` | `404`, `409 COLUMN_IN_USE` |
+
+`Column = { id, name, type, operation, config, position, width, hidden, frozen }`. `columns` is every column in order, since one change can move others.
+
+### Behaviour
+- Positions are always 0, 1, 2 … **Frozen columns are first**, because the grid pins a leading block. Freezing moves a column to the end of that block; unfreezing moves it to just after the block. Adding or reordering across the edge is `COLUMN_ORDER_INVALID`.
+- `reorder` must list every column exactly once, otherwise `409` with the current order. Send `previousColumnIds` (the order the user started from) to also refuse overwriting someone else's reorder.
+- `width` is a whole number from 60 to 1000 (default 160). Hiding keeps the column's place, settings and cells.
+- `type` and `operation` cannot be changed. `config` is replaced as a whole and checked again.
+- Changing an input column's `dataType` re-reads its cells: values that fit are converted, others are kept and flagged `invalid_<type>`.
+- Deleting is permanent: it removes the column's cells and run history, removes it from saved views, and writes `workbook.column.delete` to the audit log. It is refused while any other column refers to it.
+- An edit that would break a column reading this one, directly or through formulas, is `409 COLUMN_IN_USE` with `details.dependents`.
+- Changes are one transaction each, holding the workbook's lock (row writes wait for them). On 100,000 rows, deleting a column took 1.5–2.5 s and changing a column's type 2.8–3.9 s (2 CPU database).
+- A member without `enrichment:capture` sees only the host of a webhook column's `url`.
+
+### References
+A column is referred to as `{ "columnId" }`. Company data, LinkedIn profile and AI "fields" columns return several values, so add `"field"`: `{ "columnId", "field": "headcount" }`. Prompts embed `{{<columnId>}}` or `{{<columnId>.<field>}}`; anything else inside `{{ }}` is refused. A reference must be to another column of the same workbook, not an action column, without forming a circle, and of a readable kind (for example a number column cannot feed "Verify email"; text is accepted wherever a text-like value is read).
+
+A **condition** ("Only run if") is `{ match: "all" | "any", rules: [1–10] }`, each rule `{ columnId, field?, op, value }` with `is_empty`, `has_value` (no value), `equals`, `not_equals`, `contains`, `not_contains`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`.
+
+### `config` by type
+Unknown keys are refused, so settings of one type never pass as another's.
+
+**`input`** (no operation): `{ dataType }` — `text` (default), `number`, `email`, `url`, `linkedin_url`, `domain`, `phone`, `date`, `checkbox`.
+
+**`enrichment`**: every operation takes `inputs`, and optionally `condition`, `maxCreditsPerRow` (0–1000) and `waterfall: { steps }` (default Skout data only). Steps are `{ source: "skout", enabled }` (exactly one) and `{ source: "own_key", provider, enabled }`; at least one is on, and the provider's key must be connected to the workspace.
+
+| `operation` | `inputs` | Extra | Own-key providers |
+|---|---|---|---|
+| `find_email` | `linkedinUrl`, and/or `companyDomain` with (`fullName` or `firstName` + `lastName`) | `quality: { mustBeValid = true, acceptCatchAll = false }` | `hunter` |
+| `verify_email` | `email` | | `hunter`, `millionverifier`, `zerobounce`, `neverbounce` |
+| `find_phone` | as `find_email` | `quality: { phoneTypes: ["mobile","direct"] }` | `datagma`, `kaspr`, `lusha`, `contactout` |
+| `company_data` | `companyDomain` and/or `companyName` | `fields`: `industry`, `headcount`, `location`, `revenueBand`, `linkedinUrl`, `description` (at least one) | `pdl` |
+| `linkedin_profile` | `linkedinUrl`, or a name with `companyName` or `companyDomain` | `fields`: `title`, `seniority`, `location`, `currentCompany`, `startDate` (default all) | none |
+| `company_domain` | `companyName` | | none |
+
+**`ai`** (no operation): `{ prompt (1–8000), output, webResearch = false, template?, condition? }`. `output` is `{ type: "text" | "number" | "yes_no" }`, `{ type: "category", options: [2–50] }` or `{ type: "fields", fields: [{ name, type: "text"|"number"|"yes_no", description? }] }`. `template`: `first_line`, `icp_fit`, `summarise_company`, `classify_industry`, `tech_stack` (a label; the prompt is what is stored).
+
+**`formula`** (no operation): `{ fn, … }`. Text in a formula is data; nothing is evaluated as code.
+
+| `fn` | Settings |
+|---|---|
+| `extract_domain` | `source` |
+| `split_name` | `source`, `part`: `first`\|`last` |
+| `join` | `parts` (references and `{ text }`, at least one reference), `separator = " "` |
+| `change_case` | `source`, `case`: `upper`\|`lower`\|`title`\|`sentence` |
+| `trim_clean` | `source` |
+| `find_replace` | `source`, `find`, `replace`, `matchCase = false` (plain text) |
+| `if_then_else` | `condition`, `then`, `else` (a reference or `{ value }`) |
+| `number_format` | `source`, `decimals = 2`, `thousandsSeparator = true`, `prefix`, `suffix` |
+| `date_part` | `source`, `part`: `year`\|`quarter`\|`month`\|`day`\|`weekday` |
+| `first_non_empty` | `sources` (2–20) |
+| `regex_extract` | `source`, `pattern` (≤ 200), `ignoreCase = false`, `group = 0` |
+
+**`action`**: each takes an optional `condition`.
+
+| `operation` | Settings |
+|---|---|
+| `add_to_sequence` | `sequenceId` (this workspace's), `emailColumn` |
+| `add_to_list` | `listId` (this workspace's) |
+| `push_to_crm` | `provider`: `hubspot`\|`salesforce`\|`pipedrive` (connected), `object`: `contact`\|`company`, `mapping: [{ crmField, columnId, field? }]` |
+| `send_to_webhook` | `url` (public HTTPS, no credentials), `columns: [reference]` |
+
+Whatever runs these later must still enforce what saving cannot: webhook addresses after DNS resolution (SEC-6), a time limit on regular expressions (SEC-10), suppression (SEC-8), and that targets and keys still exist.
 

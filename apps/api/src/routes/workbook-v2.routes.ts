@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { getMemberPermissions } from "@skout/auth";
 import {
   WORKBOOK_NAME_MAX,
   createWorkbook,
@@ -10,6 +11,7 @@ import {
   renameWorkbook,
   restoreWorkbook,
 } from "../services/workbook-v2.service.js";
+import { redactColumnForViewer } from "../services/workbook-v2-columns.service.js";
 import { workbookRouteHelpers } from "./workbook-v2.common.js";
 
 const name = z
@@ -62,7 +64,9 @@ export async function workbookV2Routes(app: FastifyInstance) {
     handle(async (request) => {
       const { db, actor } = await authorize(request, "enrichment:read");
       const { id } = idParams.parse(request.params);
-      return { status: 200, body: { data: await getWorkbook(db, actor.workspaceId, id) } };
+      const workbook = await getWorkbook(db, actor.workspaceId, id);
+      const canEdit = (await getMemberPermissions(db, actor.workspaceId, request.userId!)).includes("enrichment:capture");
+      return { status: 200, body: { data: canEdit ? workbook : { ...workbook, columns: workbook.columns.map(redactColumnForViewer) } } };
     })
   );
 

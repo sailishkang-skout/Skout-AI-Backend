@@ -30,7 +30,12 @@ export type WorkbookV2ErrorCode =
   | "WORKBOOK_NOT_DELETED"
   | "UNKNOWN_COLUMN"
   | "NOT_AN_INPUT_COLUMN"
-  | "INVALID_CELL_VALUE";
+  | "INVALID_CELL_VALUE"
+  | "INVALID_COLUMN_CONFIG"
+  | "COLUMN_IN_USE"
+  | "COLUMN_LIMIT_EXCEEDED"
+  | "COLUMN_ORDER_CONFLICT"
+  | "COLUMN_ORDER_INVALID";
 
 export class WorkbookV2Error extends Error {
   constructor(
