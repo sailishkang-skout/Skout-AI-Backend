@@ -6,6 +6,7 @@ import { createGetPersonEndpoint, createMatchPersonEndpoint } from "./endpoints/
 import { createCompanyJobsEndpoint, createGetCompanyEndpoint, createMatchCompanyEndpoint } from "./endpoints/companies.js";
 import { createEmailFindEndpoint, createPhoneFindEndpoint } from "./endpoints/contacts.js";
 import { createVerifyEmailBatchEndpoint, createVerifyEmailEndpoint } from "./endpoints/emails.js";
+import { createScoresEndpoint } from "./endpoints/scores.js";
 import { getRedis, isRedisAvailable } from "../lib/redis.js";
 import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.js";
 import { ApiPricingService } from "../services/api-pricing.service.js";
@@ -31,6 +32,7 @@ export function createPublicEndpoints(deps: { env: Env; db: Db }): PublicEndpoin
     createPhoneFindEndpoint(deps),
     createVerifyEmailEndpoint(deps),
     createVerifyEmailBatchEndpoint(deps),
+    createScoresEndpoint(deps),
   ] as unknown as PublicEndpoint[];
 }
 
