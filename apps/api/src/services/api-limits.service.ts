@@ -178,3 +178,65 @@ export async function consumeQuota(
   const r = await store.tryConsume(kind, keyId, units, limit, now);
   if (!r.ok) throw new QuotaReachedError(kind === "verify" ? "verify_daily" : "search_results_daily", limit, r.used, r.resetsAt);
 }
+
+// --- Usage (PAPI-061, GET /usage) ------------------------------------------------
+
+export interface LimitUsage {
+  limit: number;
+  used: number;
+  remaining: number;
+  resets_at: string;
+}
+
+export interface ApiUsage {
+  /** API spend (credits charged to API keys), committed only. */
+  spent: { key_today: number; key_this_month: number; workspace_api_today: number; workspace_api_this_month: number };
+  caps: { key_daily: LimitUsage | null; key_monthly: LimitUsage | null; workspace_monthly: LimitUsage | null };
+  quotas: { email_verifications_daily: LimitUsage; search_results_daily: LimitUsage };
+}
+
+const limitUsage = (limit: number, used: number, resetsAt: Date): LimitUsage => ({
+  limit,
+  used,
+  remaining: Math.max(0, limit - used),
+  resets_at: resetsAt.toISOString(),
+});
+
+/**
+ * What a key has used against its caps and quotas, and what the workspace spent through the API, in
+ * the current UTC day and month. Caps count credits held for in-flight requests too, as the caps
+ * themselves do (assertCreditCaps).
+ */
+export async function apiUsage(
+  db: Db,
+  store: QuotaStore,
+  key: { id: string; workspaceId: string },
+  limits: KeyLimits,
+  now = new Date()
+): Promise<ApiUsage> {
+  const keyLedger = and(eq(creditTransactions.apiKeyId, key.id));
+  const wsLedger = and(eq(creditTransactions.workspaceId, key.workspaceId), isNotNull(creditTransactions.apiKeyId));
+  const [keyToday, keyMonth, wsToday, wsMonth, keyHeld, wsHeld, verifyUsed, searchUsed] = await Promise.all([
+    spentSince(db, keyLedger, utcDayStart(now)),
+    spentSince(db, keyLedger, utcMonthStart(now)),
+    spentSince(db, wsLedger, utcDayStart(now)),
+    spentSince(db, wsLedger, utcMonthStart(now)),
+    heldNow(db, and(eq(creditHolds.workspaceId, key.workspaceId), eq(creditHolds.apiKeyId, key.id)), now),
+    heldNow(db, and(eq(creditHolds.workspaceId, key.workspaceId), isNotNull(creditHolds.apiKeyId)), now),
+    store.used("verify", key.id, now),
+    store.used("search_results", key.id, now),
+  ]);
+  const { caps } = limits;
+  return {
+    spent: { key_today: keyToday, key_this_month: keyMonth, workspace_api_today: wsToday, workspace_api_this_month: wsMonth },
+    caps: {
+      key_daily: caps.keyDaily != null ? limitUsage(caps.keyDaily, keyToday + keyHeld, nextUtcDayStart(now)) : null,
+      key_monthly: caps.keyMonthly != null ? limitUsage(caps.keyMonthly, keyMonth + keyHeld, nextUtcMonthStart(now)) : null,
+      workspace_monthly: caps.workspaceMonthly != null ? limitUsage(caps.workspaceMonthly, wsMonth + wsHeld, nextUtcMonthStart(now)) : null,
+    },
+    quotas: {
+      email_verifications_daily: limitUsage(limits.verifyDailyQuota, verifyUsed, nextUtcDayStart(now)),
+      search_results_daily: limitUsage(limits.searchDailyQuota, searchUsed, nextUtcDayStart(now)),
+    },
+  };
+}

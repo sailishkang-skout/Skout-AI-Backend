@@ -5,7 +5,7 @@ import type { ApiPriceOperation } from "@skout/shared";
 import type { ApiPricingService, ResolvedPrice } from "../services/api-pricing.service.js";
 import type { QuotaKind, QuotaStore } from "../lib/api-quota.js";
 import { availableCredits, commit, release, reserve } from "../services/api-credits.service.js";
-import { consumeQuota, limitsForKey, type ApiLimitDefaults } from "../services/api-limits.service.js";
+import { consumeQuota, limitsForKey, type ApiLimitDefaults, type KeyLimits } from "../services/api-limits.service.js";
 import type { PublicApiScope } from "../services/public-api-keys.service.js";
 import { PublicApiError } from "./errors.js";
 import { findInternalLeaks, type PublicIdCodec } from "./ids.js";
@@ -29,6 +29,9 @@ export interface EndpointContext<I> {
   signal: AbortSignal;
   /** The credit hold reserved for this call (null when nothing was reserved); batch jobs take it over. */
   holdId: string | null;
+  /** The key's caps and quotas, and the quota store (GET /usage reads them). */
+  limits: KeyLimits;
+  quotas: QuotaStore;
   /** Public id codec (CONV-8): encode every id the response carries, decode ids from the request. */
   ids: PublicIdCodec;
 }
@@ -274,7 +277,18 @@ async function execute(
   let result: EndpointResult<unknown>;
   try {
     result = await withTimeout(deps.timeoutMs ?? 30_000, (signal) =>
-      ep.handle({ input, requestId: String(request.id), workspaceId: key.workspaceId, apiKeyId: key.id, prices, signal, ids: deps.ids, holdId: hold.holdId })
+      ep.handle({
+        input,
+        requestId: String(request.id),
+        workspaceId: key.workspaceId,
+        apiKeyId: key.id,
+        prices,
+        signal,
+        ids: deps.ids,
+        holdId: hold.holdId,
+        limits,
+        quotas: deps.quotas,
+      })
     );
     // Never let an internal id or provider name out (CONV-8); checked before charging anything.
     assertNoLeaks(ep, result.data);
