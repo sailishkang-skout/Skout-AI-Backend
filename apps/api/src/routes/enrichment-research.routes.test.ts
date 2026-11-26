@@ -10,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { schema } from "@skout/db";
-import { and, eq, isNull, like } from "drizzle-orm";
+import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -398,6 +398,163 @@ describe("ENR-03 change detection", () => {
     // The "+ 1 more" event is no longer a job change at all.
     const [stored] = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.id, noise!.id));
     expect(stored!.isJobChange).toBe(false);
+  });
+
+  it("reviews a whole capture at once, and nothing else", async () => {
+    const entityId = randomUUID();
+    const neighbour = randomUUID();
+    const stamp = new Date().toISOString().slice(0, -1);
+    const event = (person: string, field: string, microseconds: string) => ({
+      workspaceId: OTHER_WORKSPACE,
+      entityType: "person" as const,
+      entityId: person,
+      field,
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: "Initech", title: `${field} ${microseconds}` }],
+      isJobChange: true,
+      detectedAt: sql`${`${stamp}${microseconds}Z`}::timestamptz`,
+    });
+    const insert = (...rows: Array<ReturnType<typeof event>>) => db().insert(schema.enrichmentChangeEvents).values(rows).returning();
+    try {
+      const capture = await insert(event(entityId, "currentCompanies", "001"), event(entityId, "headline", "001"), event(entityId, "title", "001"));
+      // Not part of that capture: the same person a microsecond later, and another person at the same instant.
+      await insert(event(entityId, "currentCompanies", "002"), event(neighbour, "currentCompanies", "001"));
+      const stored = async () => {
+        const rows = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+        return new Map(rows.map((row) => [row.id, row]));
+      };
+      const listed = async (status: string) => (await get(`/enrichment/job-changes?status=${status}`, outsider)).json();
+      const review = (id: string, headers = outsider) => post(`/enrichment/job-changes/${id}/review`, {}, headers);
+      const headline = capture.find((row) => row.field === "headline")!;
+      const ids = capture.map((row) => row.id);
+      expect((await listed("pending")).counts).toMatchObject({ pending: 3, reviewed: 0 });
+
+      // Another workspace cannot review it.
+      expect((await review(headline.id, owner)).statusCode).toBe(404);
+      expect([...(await stored()).values()].filter((row) => row.reviewedAt)).toEqual([]);
+
+      // Any row of the capture reviews all of it, and the answer is about the row that was asked for.
+      const res = await review(headline.id);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().jobChange).toMatchObject({ id: headline.id });
+      expect(res.json().jobChange.reviewedAt).toBeTruthy();
+      const after = await stored();
+      expect(new Set(ids.map((id) => `${after.get(id)!.reviewedAt?.toISOString()} ${after.get(id)!.reviewedBy}`)).size).toBe(1);
+      expect(ids.every((id) => after.get(id)!.reviewedAt && after.get(id)!.reviewedBy)).toBe(true);
+      expect([...after.values()].filter((row) => !ids.includes(row.id)).map((row) => row.reviewedAt)).toEqual([null, null]);
+      const pending = await listed("pending");
+      expect(pending.counts).toMatchObject({ pending: 2, reviewed: 1 });
+      expect(pending.jobChanges.map((change: { id: string }) => change.id)).not.toEqual(expect.arrayContaining([ids[0]]));
+
+      // Reviewing again changes nothing.
+      expect((await review(headline.id)).json().jobChange.reviewedAt).toBe(res.json().jobChange.reviewedAt);
+      expect(await stored()).toEqual(after);
+
+      // A capture reviewed row by row before this fix: asking again for the reviewed row finishes the rest,
+      // keeping who reviewed it first.
+      const earlier = new Date(Date.now() - 60_000);
+      await db().update(schema.enrichmentChangeEvents).set({ reviewedAt: null, reviewedBy: null }).where(eq(schema.enrichmentChangeEvents.entityId, entityId));
+      await db().update(schema.enrichmentChangeEvents).set({ reviewedAt: earlier }).where(eq(schema.enrichmentChangeEvents.id, ids[0]!));
+      const finish = await review(ids[0]!);
+      expect(finish.json().jobChange).toMatchObject({ id: ids[0], reviewedAt: earlier.toISOString() });
+      const done = await stored();
+      expect(done.get(ids[0]!)!.reviewedBy).toBeNull();
+      expect(ids.every((id) => done.get(id)!.reviewedAt)).toBe(true);
+    } finally {
+      await db().delete(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+    }
+  });
+
+  it("keeps two changes recorded within one millisecond, and still merges the rows of one capture", async () => {
+    const millisecond = new Date().toISOString().slice(0, -1); // "…T10:00:00.123"
+    const event = (entityId: string, company: string, microseconds: string) => ({
+      workspaceId: WORKSPACE,
+      entityType: "person" as const,
+      entityId,
+      field: "currentCompanies",
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: company, title: "Head of Revenue" }],
+      isJobChange: true,
+      detectedAt: sql`${`${millisecond}${microseconds}Z`}::timestamptz`,
+    });
+    const separate = randomUUID();
+    const [first] = await db().insert(schema.enrichmentChangeEvents).values(event(separate, "Initech", "001")).returning();
+    const [second] = await db().insert(schema.enrichmentChangeEvents).values(event(separate, "Umbrella", "002")).returning();
+    expect((await jobChangesFor(separate)).map((change) => change.id)).toEqual([second!.id, first!.id]);
+    // One capture writes its rows with one timestamp; they are listed once.
+    const together = randomUUID();
+    await db().insert(schema.enrichmentChangeEvents).values([event(together, "Initech", "003"), event(together, "Umbrella", "003")]);
+    expect(await jobChangesFor(together)).toHaveLength(1);
+  });
+
+  it("pages through every job change once, with totals and counts that match what is listed", async () => {
+    const ago = (days: number, seconds = 0) => new Date(Date.now() - days * 24 * 60 * 60 * 1000 - seconds * 1000);
+    const event = (company: string, detectedAt: Date, extra: Partial<typeof schema.enrichmentChangeEvents.$inferInsert> = {}) => ({
+      workspaceId: OTHER_WORKSPACE,
+      entityType: "person" as const,
+      entityId: randomUUID(),
+      field: "currentCompanies",
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: company, title: "Head of Revenue" }],
+      isJobChange: true,
+      detectedAt,
+      ...extra,
+    });
+    // One capture of one person that wrote three rows; the employer change is the one to show.
+    const entityId = randomUUID();
+    const capturedAt = ago(0, 5);
+    const sibling = (field: string) => event("Initech", capturedAt, { entityId, field, newValue: [{ name: "Initech", title: `from ${field}` }] });
+    // Two people recorded at the same instant.
+    const tie = ago(0, 8);
+    const rows = [
+      ...[1, 2, 3, 4].map((n) => event(`Recent ${n}`, ago(0, n))),
+      sibling("headline"),
+      sibling("currentCompanies"),
+      sibling("title"),
+      event("Tie A", tie),
+      event("Tie B", tie),
+      ...[1, 2, 3].map((n) => event(`Reviewed ${n}`, ago(1, n), { reviewedAt: new Date() })),
+      ...[1, 2, 3].map((n) => event(`Old ${n}`, ago(30, n))),
+    ];
+    await db().insert(schema.enrichmentChangeEvents).values(rows);
+    try {
+      const list = async (status: string, page: number, pageSize: number) => {
+        const res = await get(`/enrichment/job-changes?status=${status}&page=${page}&pageSize=${pageSize}`, outsider);
+        expect(res.statusCode, res.body).toBe(200);
+        return res.json() as { jobChanges: Array<Record<string, any>>; total: number; counts: Record<string, number> };
+      };
+      const everything = async (status: string, pageSize: number) => {
+        const seen: Array<Record<string, any>> = [];
+        const first = await list(status, 1, pageSize);
+        for (let page = 1; page <= Math.ceil(first.total / pageSize); page++) {
+          const body = await list(status, page, pageSize);
+          expect(body.jobChanges, `${status} page ${page}`).toHaveLength(Math.min(pageSize, first.total - (page - 1) * pageSize));
+          seen.push(...body.jobChanges);
+        }
+        expect((await list(status, Math.ceil(first.total / pageSize) + 1, pageSize)).jobChanges).toEqual([]);
+        return { seen, total: first.total, counts: first.counts };
+      };
+
+      for (const pageSize of [1, 4, 100]) {
+        const all = await everything("all", pageSize);
+        expect(all.total).toBe(13);
+        expect(new Set(all.seen.map((change) => change.id)).size).toBe(13);
+        const companies = all.seen.map((change) => change.to.company as string);
+        expect(companies.slice(0, 5)).toEqual(["Recent 1", "Recent 2", "Recent 3", "Recent 4", "Initech"]);
+        expect(companies.slice(5, 7).sort()).toEqual(["Tie A", "Tie B"]);
+        expect(companies.slice(7)).toEqual(["Reviewed 1", "Reviewed 2", "Reviewed 3", "Old 1", "Old 2", "Old 3"]);
+        expect(all.seen[4]!.to.title).toBe("from currentCompanies");
+        expect(all.counts).toEqual({ pending: 10, reviewed: 3, lastSevenDays: 10 });
+      }
+      expect((await everything("pending", 3)).total).toBe(10);
+      expect((await everything("reviewed", 2)).total).toBe(3);
+      expect((await get("/enrichment/overview", outsider)).json().jobChanges).toEqual({ pendingReview: 10 });
+    } finally {
+      await db().delete(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+    }
   });
 
   it("does not flag a job change when the current company and role are unchanged", async () => {

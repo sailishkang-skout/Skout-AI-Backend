@@ -9,7 +9,8 @@
  *     as ENR-01/ENR-02 (prospect-crm-link.service.ts, capture-ingest.service.ts).
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
@@ -727,28 +728,38 @@ export async function listJobChanges(
     ...(filters.status === "pending" ? [isNull(enrichmentChangeEvents.reviewedAt)] : []),
     ...(filters.status === "reviewed" ? [isNotNull(enrichmentChangeEvents.reviewedAt)] : [])
   );
-  const [totals] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(where);
+  // One capture can write several rows for a person, all with the same timestamp: they are one job change. They are
+  // merged here, before paging, so every page is full and nothing is skipped.
+  const merged = db
+    .selectDistinctOn([enrichmentChangeEvents.detectedAt, enrichmentChangeEvents.entityId], {
+      id: enrichmentChangeEvents.id,
+      detectedAt: enrichmentChangeEvents.detectedAt,
+      entityId: enrichmentChangeEvents.entityId,
+    })
+    .from(enrichmentChangeEvents)
+    .where(where)
+    // Of one capture's rows, the employer change is the one shown. The order starts as the page's does (newest first).
+    .orderBy(
+      desc(enrichmentChangeEvents.detectedAt),
+      enrichmentChangeEvents.entityId,
+      sql`${enrichmentChangeEvents.field} = 'currentCompanies' desc`,
+      enrichmentChangeEvents.id
+    )
+    .as("merged");
   const rows = await db
     .select({ change: enrichmentChangeEvents, snapshot: prospectActivations.snapshot })
-    .from(enrichmentChangeEvents)
+    .from(merged)
+    .innerJoin(enrichmentChangeEvents, eq(enrichmentChangeEvents.id, merged.id))
     .leftJoin(
       prospectActivations,
       and(eq(prospectActivations.workspaceId, enrichmentChangeEvents.workspaceId), eq(prospectActivations.prospectId, enrichmentChangeEvents.entityId))
     )
-    .where(where)
-    .orderBy(desc(enrichmentChangeEvents.detectedAt))
-    .limit(filters.pageSize * 5)
-    .offset((filters.page - 1) * filters.pageSize * 5);
-  // Deduplicate job changes: keep only the most recent change per person per detected time
-  const seen = new Set<string>();
-  const uniqueRows = rows.filter((row) => {
-    const key = `${row.change.entityId}-${row.change.detectedAt.getTime()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, filters.pageSize);
+    // The person settles ties, so a row cannot move between pages.
+    .orderBy(desc(merged.detectedAt), merged.entityId)
+    .limit(filters.pageSize)
+    .offset((filters.page - 1) * filters.pageSize);
   // Rows whose change event does not name the old company are filled from capture history.
-  const missingFrom = uniqueRows
+  const missingFrom = rows
     .filter(({ change }) => !roleOf(change.oldValue).company)
     .map(({ change }) => change.entityId);
   const history = missingFrom.length
@@ -763,7 +774,7 @@ export async function listJobChanges(
           )
         )
     : [];
-  const jobChanges = uniqueRows.map(({ change, snapshot }) => {
+  const jobChanges = rows.map(({ change, snapshot }) => {
     const person = (snapshot ?? {}) as Json;
     const recorded = roleOf(change.newValue);
     // A change that did not record the new role (Experience had not loaded) shows the latest
@@ -811,49 +822,89 @@ export async function listJobChanges(
       .where(and(eq(enrichmentChangeEvents.workspaceId, workspaceId), inArray(enrichmentChangeEvents.id, noise)));
     return listJobChanges(db, workspaceId, filters, attempt + 1);
   }
-  const base = and(eq(enrichmentChangeEvents.workspaceId, workspaceId), eq(enrichmentChangeEvents.isJobChange, true));
-  const [pending] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(and(base, isNull(enrichmentChangeEvents.reviewedAt)));
-  const [reviewed] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(and(base, isNotNull(enrichmentChangeEvents.reviewedAt)));
-  const [recent] = await db
-    .select({ total: count() })
-    .from(enrichmentChangeEvents)
-    .where(and(base, gte(enrichmentChangeEvents.detectedAt, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))));
+  const counts = await countJobChanges(db, workspaceId);
   return {
     jobChanges: jobChanges.filter((change) => change.kind !== "no_change"),
-    total: Number(totals?.total ?? 0),
+    total: counts[filters.status],
     page: filters.page,
     pageSize: filters.pageSize,
-    counts: { pending: Number(pending?.total ?? 0), reviewed: Number(reviewed?.total ?? 0), lastSevenDays: Number(recent?.total ?? 0) },
+    counts: { pending: counts.pending, reviewed: counts.reviewed, lastSevenDays: counts.lastSevenDays },
   };
 }
 
+/** Job changes as the list shows them: the rows one capture wrote for a person count once. */
+async function countJobChanges(db: Db, workspaceId: string) {
+  const captures = db
+    .select({
+      detectedAt: enrichmentChangeEvents.detectedAt,
+      pending: sql<boolean>`bool_or(${enrichmentChangeEvents.reviewedAt} is null)`.as("pending"),
+      reviewed: sql<boolean>`bool_or(${enrichmentChangeEvents.reviewedAt} is not null)`.as("reviewed"),
+    })
+    .from(enrichmentChangeEvents)
+    .where(and(eq(enrichmentChangeEvents.workspaceId, workspaceId), eq(enrichmentChangeEvents.isJobChange, true)))
+    .groupBy(enrichmentChangeEvents.entityId, enrichmentChangeEvents.detectedAt)
+    .as("captures");
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({
+      all: sql<number>`count(*)::int`,
+      pending: sql<number>`count(*) filter (where ${captures.pending})::int`,
+      reviewed: sql<number>`count(*) filter (where ${captures.reviewed})::int`,
+      lastSevenDays: sql<number>`count(*) filter (where ${gte(captures.detectedAt, weekAgo)})::int`,
+    })
+    .from(captures);
+  return {
+    all: Number(row?.all ?? 0),
+    pending: Number(row?.pending ?? 0),
+    reviewed: Number(row?.reviewed ?? 0),
+    lastSevenDays: Number(row?.lastSevenDays ?? 0),
+  };
+}
+
+/**
+ * Marks a job change as looked at. A job change is everything one capture wrote for a person (see listJobChanges), so
+ * all of those rows are marked together; any of their ids will do. Rows already reviewed keep who reviewed them.
+ */
 export async function reviewJobChange(db: Db, actor: CaptureActor, changeId: string) {
-  const [updated] = await db
+  const asked = alias(enrichmentChangeEvents, "asked");
+  await db
     .update(enrichmentChangeEvents)
     .set({ reviewedAt: new Date(), reviewedBy: actor.userId })
     .where(
       and(
-        eq(enrichmentChangeEvents.id, changeId),
         eq(enrichmentChangeEvents.workspaceId, actor.workspaceId),
         eq(enrichmentChangeEvents.isJobChange, true),
-        isNull(enrichmentChangeEvents.reviewedAt)
+        isNull(enrichmentChangeEvents.reviewedAt),
+        // Compared in the database, which keeps the timestamp's microseconds.
+        exists(
+          db
+            .select({ id: asked.id })
+            .from(asked)
+            .where(
+              and(
+                eq(asked.id, changeId),
+                eq(asked.workspaceId, actor.workspaceId),
+                eq(asked.isJobChange, true),
+                eq(asked.entityId, enrichmentChangeEvents.entityId),
+                eq(asked.detectedAt, enrichmentChangeEvents.detectedAt)
+              )
+            )
+        )
       )
-    )
-    .returning();
-  if (updated) return toChange(updated);
-  const [existing] = await db
+    );
+  const [change] = await db
     .select()
     .from(enrichmentChangeEvents)
     .where(and(eq(enrichmentChangeEvents.id, changeId), eq(enrichmentChangeEvents.workspaceId, actor.workspaceId), eq(enrichmentChangeEvents.isJobChange, true)))
     .limit(1);
-  return existing ? toChange(existing) : null;
+  return change ? toChange(change) : null;
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
 export async function getOverview(db: Db, workspaceId: string) {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const [[people], [companyTotals], [jobChanges], [runs]] = await Promise.all([
+  const [[people], [companyTotals], jobChanges, [runs]] = await Promise.all([
     peopleFrom(
       db.select({
         total: count(),
@@ -863,12 +914,7 @@ export async function getOverview(db: Db, workspaceId: string) {
       })
     ).where(eq(prospectActivations.workspaceId, workspaceId)),
     db.select({ total: count() }).from(companies).where(and(eq(companies.workspaceId, workspaceId), isNull(companies.deletedAt))),
-    db
-      .select({ pending: count() })
-      .from(enrichmentChangeEvents)
-      .where(
-        and(eq(enrichmentChangeEvents.workspaceId, workspaceId), eq(enrichmentChangeEvents.isJobChange, true), isNull(enrichmentChangeEvents.reviewedAt))
-      ),
+    countJobChanges(db, workspaceId),
     db
       .select({
         total: count(),
@@ -889,7 +935,7 @@ export async function getOverview(db: Db, workspaceId: string) {
       salesNavigatorOnly: Number(totals?.salesLeads ?? 0),
     },
     companies: { total: Number(companyTotals?.total ?? 0) },
-    jobChanges: { pendingReview: Number(jobChanges?.pending ?? 0) },
+    jobChanges: { pendingReview: jobChanges.pending },
     captures: { runsLast7Days: Number(runs?.total ?? 0), leadsLast7Days: Number(runs?.leads ?? 0) },
   };
 }
