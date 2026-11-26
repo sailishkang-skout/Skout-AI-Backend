@@ -323,8 +323,18 @@ export const searchProspectsRequestSchema = z.object({
   pageSize: z.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * Where a search result came from in this request (PAPI-050, public API PRD §8.1): "index" = already
+ * in Skout's own index (free to serve); "vendor" = bought from an external data vendor during this
+ * search. The public API prices search pages by this; the app's own search price is unchanged.
+ */
+export const searchResultSourceSchema = z.enum(["index", "vendor"]);
+export type SearchResultSource = z.infer<typeof searchResultSourceSchema>;
+
 export const searchProspectsResponseSchema = z.object({
-  results: z.array(prospectSummarySchema),
+  results: z.array(prospectSummarySchema.extend({ resultSource: searchResultSourceSchema.optional() })),
+  /** How many results on this page came from each source (vendor-backed search only). */
+  sourceCounts: z.object({ index: z.number().int().min(0), vendor: z.number().int().min(0) }).optional(),
   total: z.number(),
   page: z.number(),
   pageSize: z.number(),

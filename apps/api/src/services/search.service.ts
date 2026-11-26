@@ -430,7 +430,15 @@ export class SearchService {
 
     let stored = await lookup();
     if (stored.hits.length >= pageSize) {
-      return { results: stored.hits.map((h) => mapDocToSummary(h)), total: stored.total, page, pageSize, cached: false, source: "opensearch" };
+      return {
+        results: stored.hits.map((h) => ({ ...mapDocToSummary(h), resultSource: "index" as const })),
+        sourceCounts: { index: stored.hits.length, vendor: 0 },
+        total: stored.total,
+        page,
+        pageSize,
+        cached: false,
+        source: "opensearch",
+      };
     }
 
     const outcome = await searchVendors(this.env, filters, pageSize, page, onCall);
@@ -473,8 +481,13 @@ export class SearchService {
       total = Math.max(total, stored.total, hits.length);
     }
 
+    // PAPI-050: a result is "vendor" when a vendor call in this request returned it, else "index".
+    const fromVendors = new Set(fresh.map((d) => d.prospectId));
+    const results = hits.map((h) => ({ ...mapDocToSummary(h), resultSource: fromVendors.has(h.prospectId) ? ("vendor" as const) : ("index" as const) }));
+    const vendorCount = results.filter((r) => r.resultSource === "vendor").length;
     return {
-      results: hits.map((h) => mapDocToSummary(h)),
+      results,
+      sourceCounts: { index: results.length - vendorCount, vendor: vendorCount },
       total,
       page,
       pageSize,

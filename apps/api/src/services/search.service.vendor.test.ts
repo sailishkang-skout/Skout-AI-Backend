@@ -10,6 +10,7 @@ vi.mock("@skout/opensearch", async (orig) => ({
 }));
 
 import { SearchService } from "./search.service.js";
+import { vendorProspectId } from "./vendor-search.service.js";
 
 const env = {
   OPENSEARCH_URL: "https://os.test",
@@ -99,5 +100,50 @@ describe("SearchService vendor-backed search", () => {
       new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } })
     ).rejects.toMatchObject({ statusCode: 502, message: expect.not.stringMatching(/wiza|contactout/i) });
   });
-});
 
+  describe("tags each result with where it came from (PAPI-050)", () => {
+    const adaId = vendorProspectId({ vendor: "wiza", fullName: "Ada L", linkedinUrl: "https://linkedin.com/in/ada" });
+
+    it("index-only page: every result is index, no vendor call", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+      osSearch.mockResolvedValue({ hits: [doc(1), doc(2)], total: 40 });
+      const res = await new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 2, filters: { jobTitle: "CTO" } });
+      expect(res.results.map((r) => r.resultSource)).toEqual(["index", "index"]);
+      expect(res.sourceCounts).toEqual({ index: 2, vendor: 0 });
+      expect(res.source).toBe("opensearch");
+    });
+
+    it("fully vendor page: everything on the page was bought in this request", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => wizaResponse()));
+      osSearch.mockResolvedValueOnce({ hits: [], total: 0 }).mockResolvedValueOnce({ hits: [{ ...doc(0), prospectId: adaId, fullName: "Ada L" }], total: 1 });
+      bulkCreate.mockResolvedValue({ created: 1, existing: 0, failed: 0 });
+      const res = await new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } });
+      expect(res.results.map((r) => [r.prospectId, r.resultSource])).toEqual([[adaId, "vendor"]]);
+      expect(res.sourceCounts).toEqual({ index: 0, vendor: 1 });
+    });
+
+    it("mixed page: stored people are index, people the vendor returned now are vendor", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => wizaResponse()));
+      osSearch
+        .mockResolvedValueOnce({ hits: [doc(1)], total: 1 })
+        .mockResolvedValueOnce({ hits: [doc(1), { ...doc(0), prospectId: adaId, fullName: "Ada L" }], total: 2 });
+      bulkCreate.mockResolvedValue({ created: 1, existing: 0, failed: 0 });
+      const res = await new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } });
+      expect(res.results.map((r) => [r.prospectId, r.resultSource])).toEqual([
+        ["p1", "index"],
+        [adaId, "vendor"],
+      ]);
+      expect(res.sourceCounts).toEqual({ index: 1, vendor: 1 });
+      // The app's page-level answer is what it always was.
+      expect(res.source).toBe("vendor");
+    });
+
+    it("serves vendor results directly, still tagged, when they can't be saved to the index", async () => {
+      vi.stubGlobal("fetch", vi.fn(async () => wizaResponse()));
+      osSearch.mockResolvedValue({ hits: [], total: 0 });
+      bulkCreate.mockRejectedValue(new Error("index down"));
+      const res = await new SearchService(env, {} as never).searchProspects({ page: 1, pageSize: 25, filters: { jobTitle: "CTO" } });
+      expect(res.results.map((r) => r.resultSource)).toEqual(["vendor"]);
+    });
+  });
+});
