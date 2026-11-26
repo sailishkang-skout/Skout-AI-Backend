@@ -5,6 +5,7 @@ import { createDb, schema } from "@skout/db";
 import { invalidateWorkspaceAccess } from "@skout/auth";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
+import { withFailingCellInserts } from "../test/failing-cell-inserts.js";
 
 /** WB2-012: the Rows API through the real routes against a real database. */
 const base = loadEnv();
@@ -281,18 +282,12 @@ describe.skipIf(!hasDatabase)("Workbooks V2 rows routes", () => {
     it("rolls everything back when the database refuses part of the write", async () => {
       const u = await user();
       const b = await book(u);
-      const name = `wb2_rows_boom_${suffix}`;
-      await sql.unsafe(`create function ${name}() returns trigger language plpgsql as $$ begin if new.workbook_id = '${b.id}' then raise exception 'boom'; end if; return new; end $$`);
-      await sql.unsafe(`create trigger ${name} before insert on workbook_cells for each row execute function ${name}()`);
-      try {
+      await withFailingCellInserts(sql, `wb2_rows_boom_${suffix}`, `new.workbook_id = '${b.id}'`, async () => {
         const before = await snapshot(b);
         const res = await call(u, "POST", `/${b.id}/rows/bulk`, { rows: [{ cells: cellsOf(b, { name: "x" }) }, {}] });
         expect(res.statusCode).toBe(500);
         expect(await snapshot(b)).toEqual(before); // the rows inserted before the cells are gone too
-      } finally {
-        await sql.unsafe(`drop trigger ${name} on workbook_cells`);
-        await sql.unsafe(`drop function ${name}()`);
-      }
+      });
     });
 
     it("takes a bulk body over the global 1 MB limit, up to 5 MB", async () => {

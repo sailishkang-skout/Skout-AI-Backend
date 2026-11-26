@@ -174,12 +174,12 @@ Whatever runs these later must still enforce what saving cannot: webhook address
 | `POST /:id/runs` | `{ columnId, scope = "all", rowIds? }`; `scope`: `all`, `empty`, `failed`, `selected` (with 1–10,000 `rowIds`), `first10` | `enrichment.run` |
 | `POST /:id/crm-push` | the same; `columnId` must be a `push_to_crm` action column | `enrichment.run` |
 
-**There is no run engine yet.** A permitted, valid request answers `501 NOT_IMPLEMENTED`; nothing is written, queued, sent or charged. Other answers: `403` without the permission (checked before anything else), `404` for a workbook or column outside the workspace, `422 VALIDATION_FAILED`, `422 COLUMN_NOT_RUNNABLE` (input and formula columns are not run; `crm-push` on another column).
+**There is no run engine yet.** A permitted, valid request answers `501 NOT_IMPLEMENTED`; nothing is written, queued, sent or charged. Other answers: `403` without the permission (checked before anything else), `404` for a workbook or column outside the workspace, or a selected row that is not in the workbook, `422 VALIDATION_FAILED`, `422 COLUMN_NOT_RUNNABLE` (input and formula columns are not run; `crm-push` on another column).
 
 ### For whoever builds the engine
 - Keep `enrichment.run` and the checks in `findRunTarget` in front of it, and put any new route that executes or resumes a run behind the same permission. `workbook-v2-permissions.routes.test.ts` fails until each new V2 route is classified.
 - A scheduled or background run must check the permission of whoever started it.
-- Check that `rowIds` belong to the workbook (not done by the placeholder), the row and credit limits, and suppression.
+- Check the row and credit limits, and suppression.
 
 ### Giving a member the permission
 Built-in roles: change the person's team role to admin (which also grants everything else an admin can do) and back again to remove it. Custom roles (`/cops/roles`) can carry `enrichment.run`, but in production those routes are open only to Skout's internal workspace, so **customer workspaces cannot grant it to a single member**.

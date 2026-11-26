@@ -29,8 +29,8 @@ export async function workbookV2RunRoutes(app: FastifyInstance) {
     handle(async (request) => {
       const { db, actor } = await authorize(request, WORKBOOK_RUN_PERMISSION);
       const { id } = idParams.parse(request.params);
-      const { columnId } = runBody.parse(request.body ?? {});
-      await findRunTarget(db, actor.workspaceId, id, columnId, kind);
+      const { columnId, rowIds } = runBody.parse(request.body ?? {});
+      await findRunTarget(db, actor.workspaceId, id, columnId, kind, rowIds);
       return notImplemented(kind);
     });
 

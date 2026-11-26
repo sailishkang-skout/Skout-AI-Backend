@@ -6,6 +6,7 @@ import { invalidateWorkspaceAccess } from "@skout/auth";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
 import { remapColumnReferences } from "../services/workbook-v2.service.js";
+import { withFailingCellInserts } from "../test/failing-cell-inserts.js";
 
 /** WB2-011: one route test per operation, plus the row limit, permissions, the feature flag and isolation. */
 const base = loadEnv();
@@ -481,19 +482,14 @@ describe.skipIf(!hasDatabase)("Workbooks V2 CRUD routes", () => {
       const ids = await fill(wb.id, 2);
       const marker = `explode-${suffix}`;
       await db.update(workbookCells).set({ value: marker }).where(and(eq(workbookCells.workbookId, wb.id), eq(workbookCells.rowId, ids.rows[1]!.id), eq(workbookCells.columnId, ids.first)));
-      await sql.unsafe(`create or replace function wb2_test_explode_${suffix}() returns trigger language plpgsql as $$ begin if new.value = to_jsonb('${marker}'::text) then raise exception 'boom'; end if; return new; end $$`);
-      await sql.unsafe(`create trigger wb2_test_explode_${suffix} before insert on workbook_cells for each row execute function wb2_test_explode_${suffix}()`);
-      try {
+      await withFailingCellInserts(sql, `wb2_test_explode_${suffix}`, `new.value = to_jsonb('${marker}'::text)`, async () => {
         const res = await call(u, "POST", `/${wb.id}/duplicate`, { includeRows: true });
         expect(res.statusCode).toBe(500);
         expect(res.body).not.toContain("boom"); // database errors are never returned to the client
         expect(await total(u)).toBe(1);
         const [orphans] = await sql`select count(*)::int as n from workbook_rows r join workbooks w on w.id = r.workbook_id where w.workspace_id = ${u.workspaceId} and w.id <> ${wb.id}`;
         expect(orphans!.n).toBe(0);
-      } finally {
-        await sql.unsafe(`drop trigger if exists wb2_test_explode_${suffix} on workbook_cells`);
-        await sql.unsafe(`drop function if exists wb2_test_explode_${suffix}()`);
-      }
+      });
     });
 
     it("limits how often one caller can start a copy", async () => {
