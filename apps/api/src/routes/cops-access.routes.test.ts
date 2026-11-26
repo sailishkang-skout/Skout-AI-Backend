@@ -132,6 +132,40 @@ describe.skipIf(!hasDatabase)("COPS early access routes", () => {
     expect(after.json()).toMatchObject({ code: "feature_disabled", feature: "sequences" });
   });
 
+  it("COPS switches WORKBOOKS_V2 on for one workspace only, and off again, at once", async () => {
+    const mine = `ea-cops-v2-${suffix}@test.com`;
+    const theirs = `ea-cops-v2b-${suffix}@test.com`;
+    const wsOf = async (email: string) => {
+      await call(email, "GET", "/me");
+      const [u] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
+      const [m] = await db.select().from(schema.workspaceMembers).where(eq(schema.workspaceMembers.userId, u!.id));
+      return m!.workspaceId;
+    };
+    const mineWs = await wsOf(mine);
+    await wsOf(theirs);
+    expect((await call(mine, "GET", "/workbooks-v2/status")).statusCode).toBe(403);
+
+    const on = await call(OPS, "PUT", `/cops/workspaces/${mineWs}/features`, { features: { workbooks_v2: true } });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().data.features.workbooks_v2).toBe(true);
+    expect((await call(mine, "GET", "/workbooks-v2/status")).statusCode).toBe(200);
+    expect((await call(theirs, "GET", "/workbooks-v2/status")).statusCode).toBe(403);
+
+    const off = await call(OPS, "PUT", `/cops/workspaces/${mineWs}/features`, { features: { workbooks_v2: false } });
+    expect(off.json().data.features.workbooks_v2).toBe(false);
+    expect((await call(mine, "GET", "/workbooks-v2/status")).statusCode).toBe(403);
+  });
+
+  it("approving with the original twelve keys still works and leaves WORKBOOKS_V2 off", async () => {
+    const p = await pending();
+    const { workbooks_v2: _omit, ...twelve } = PLAN_PRESETS.full.features;
+    const res = await call(OPS, "POST", `/cops/access-requests/${p.requestId}/approve`, approveBody({ features: twelve }));
+    expect(res.statusCode).toBe(200);
+    const detail = await call(OPS, "GET", `/cops/workspaces/${p.workspaceId}`);
+    expect(detail.json().data.features.workbooks_v2).toBe(false);
+    expect(detail.json().data.features.sequences).toBe(true);
+  });
+
   it("sets the plan and grants or removes credits", async () => {
     const p = await pending();
     const plan = await call(OPS, "PUT", `/cops/workspaces/${p.workspaceId}/plan`, { plan: "multichannel" });
