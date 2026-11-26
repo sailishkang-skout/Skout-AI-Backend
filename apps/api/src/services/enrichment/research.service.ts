@@ -9,7 +9,8 @@
  *     as ENR-01/ENR-02 (prospect-crm-link.service.ts, capture-ingest.service.ts).
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, exists, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { recordPrivilegedAction } from "@skout/auth";
@@ -860,26 +861,43 @@ async function countJobChanges(db: Db, workspaceId: string) {
   };
 }
 
+/**
+ * Marks a job change as looked at. A job change is everything one capture wrote for a person (see listJobChanges), so
+ * all of those rows are marked together; any of their ids will do. Rows already reviewed keep who reviewed them.
+ */
 export async function reviewJobChange(db: Db, actor: CaptureActor, changeId: string) {
-  const [updated] = await db
+  const asked = alias(enrichmentChangeEvents, "asked");
+  await db
     .update(enrichmentChangeEvents)
     .set({ reviewedAt: new Date(), reviewedBy: actor.userId })
     .where(
       and(
-        eq(enrichmentChangeEvents.id, changeId),
         eq(enrichmentChangeEvents.workspaceId, actor.workspaceId),
         eq(enrichmentChangeEvents.isJobChange, true),
-        isNull(enrichmentChangeEvents.reviewedAt)
+        isNull(enrichmentChangeEvents.reviewedAt),
+        // Compared in the database, which keeps the timestamp's microseconds.
+        exists(
+          db
+            .select({ id: asked.id })
+            .from(asked)
+            .where(
+              and(
+                eq(asked.id, changeId),
+                eq(asked.workspaceId, actor.workspaceId),
+                eq(asked.isJobChange, true),
+                eq(asked.entityId, enrichmentChangeEvents.entityId),
+                eq(asked.detectedAt, enrichmentChangeEvents.detectedAt)
+              )
+            )
+        )
       )
-    )
-    .returning();
-  if (updated) return toChange(updated);
-  const [existing] = await db
+    );
+  const [change] = await db
     .select()
     .from(enrichmentChangeEvents)
     .where(and(eq(enrichmentChangeEvents.id, changeId), eq(enrichmentChangeEvents.workspaceId, actor.workspaceId), eq(enrichmentChangeEvents.isJobChange, true)))
     .limit(1);
-  return existing ? toChange(existing) : null;
+  return change ? toChange(change) : null;
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────

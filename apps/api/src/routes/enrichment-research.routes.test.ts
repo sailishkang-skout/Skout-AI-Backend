@@ -400,6 +400,72 @@ describe("ENR-03 change detection", () => {
     expect(stored!.isJobChange).toBe(false);
   });
 
+  it("reviews a whole capture at once, and nothing else", async () => {
+    const entityId = randomUUID();
+    const neighbour = randomUUID();
+    const stamp = new Date().toISOString().slice(0, -1);
+    const event = (person: string, field: string, microseconds: string) => ({
+      workspaceId: OTHER_WORKSPACE,
+      entityType: "person" as const,
+      entityId: person,
+      field,
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: "Initech", title: `${field} ${microseconds}` }],
+      isJobChange: true,
+      detectedAt: sql`${`${stamp}${microseconds}Z`}::timestamptz`,
+    });
+    const insert = (...rows: Array<ReturnType<typeof event>>) => db().insert(schema.enrichmentChangeEvents).values(rows).returning();
+    try {
+      const capture = await insert(event(entityId, "currentCompanies", "001"), event(entityId, "headline", "001"), event(entityId, "title", "001"));
+      // Not part of that capture: the same person a microsecond later, and another person at the same instant.
+      await insert(event(entityId, "currentCompanies", "002"), event(neighbour, "currentCompanies", "001"));
+      const stored = async () => {
+        const rows = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+        return new Map(rows.map((row) => [row.id, row]));
+      };
+      const listed = async (status: string) => (await get(`/enrichment/job-changes?status=${status}`, outsider)).json();
+      const review = (id: string, headers = outsider) => post(`/enrichment/job-changes/${id}/review`, {}, headers);
+      const headline = capture.find((row) => row.field === "headline")!;
+      const ids = capture.map((row) => row.id);
+      expect((await listed("pending")).counts).toMatchObject({ pending: 3, reviewed: 0 });
+
+      // Another workspace cannot review it.
+      expect((await review(headline.id, owner)).statusCode).toBe(404);
+      expect([...(await stored()).values()].filter((row) => row.reviewedAt)).toEqual([]);
+
+      // Any row of the capture reviews all of it, and the answer is about the row that was asked for.
+      const res = await review(headline.id);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().jobChange).toMatchObject({ id: headline.id });
+      expect(res.json().jobChange.reviewedAt).toBeTruthy();
+      const after = await stored();
+      expect(new Set(ids.map((id) => `${after.get(id)!.reviewedAt?.toISOString()} ${after.get(id)!.reviewedBy}`)).size).toBe(1);
+      expect(ids.every((id) => after.get(id)!.reviewedAt && after.get(id)!.reviewedBy)).toBe(true);
+      expect([...after.values()].filter((row) => !ids.includes(row.id)).map((row) => row.reviewedAt)).toEqual([null, null]);
+      const pending = await listed("pending");
+      expect(pending.counts).toMatchObject({ pending: 2, reviewed: 1 });
+      expect(pending.jobChanges.map((change: { id: string }) => change.id)).not.toEqual(expect.arrayContaining([ids[0]]));
+
+      // Reviewing again changes nothing.
+      expect((await review(headline.id)).json().jobChange.reviewedAt).toBe(res.json().jobChange.reviewedAt);
+      expect(await stored()).toEqual(after);
+
+      // A capture reviewed row by row before this fix: asking again for the reviewed row finishes the rest,
+      // keeping who reviewed it first.
+      const earlier = new Date(Date.now() - 60_000);
+      await db().update(schema.enrichmentChangeEvents).set({ reviewedAt: null, reviewedBy: null }).where(eq(schema.enrichmentChangeEvents.entityId, entityId));
+      await db().update(schema.enrichmentChangeEvents).set({ reviewedAt: earlier }).where(eq(schema.enrichmentChangeEvents.id, ids[0]!));
+      const finish = await review(ids[0]!);
+      expect(finish.json().jobChange).toMatchObject({ id: ids[0], reviewedAt: earlier.toISOString() });
+      const done = await stored();
+      expect(done.get(ids[0]!)!.reviewedBy).toBeNull();
+      expect(ids.every((id) => done.get(id)!.reviewedAt)).toBe(true);
+    } finally {
+      await db().delete(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+    }
+  });
+
   it("keeps two changes recorded within one millisecond, and still merges the rows of one capture", async () => {
     const millisecond = new Date().toISOString().slice(0, -1); // "…T10:00:00.123"
     const event = (entityId: string, company: string, microseconds: string) => ({
