@@ -74,7 +74,7 @@ maybe("public API request log (PAPI-044)", () => {
     await maintainPublicApiTables(db); // make sure this month's partition exists
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-044", slug: `papi044-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi044-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi044-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });

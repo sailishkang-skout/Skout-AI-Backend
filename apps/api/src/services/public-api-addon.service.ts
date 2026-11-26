@@ -5,7 +5,7 @@ import { HttpError } from "../utils/http.js";
 import { subscriptionAccessBlock, SUBSCRIPTION_ENTITLEMENT_KEY } from "./cops-subscription-access.js";
 import { notifyPublicKeyChange } from "../lib/public-key-cache.js";
 
-const { workspaceApiSettings, apiTermsAcceptances, entitlements, workspaces, creditTransactions, auditLogs } = schema;
+const { workspaceApiSettings, apiTermsAcceptances, entitlements, workspaces, creditTransactions, auditLogs, users } = schema;
 
 /**
  * Public API add-on (PAPI-020, public API PRD ADD-1 to ADD-5, D2).
@@ -21,7 +21,9 @@ export type LiveKeyBlock =
   | "addon_disabled"
   | "workspace_suspended"
   /** Trial or early-access workspace that hasn't bought credits and has no CustomerOps override (ADD-4). */
-  | "live_access_not_enabled";
+  | "live_access_not_enabled"
+  /** The member asking hasn't verified their email (users.is_active false), ADD-3. Per user, not per workspace. */
+  | "user_not_active";
 
 export interface AddonStatus {
   enabled: boolean;
@@ -74,7 +76,8 @@ export async function liveKeyBlock(db: Db, workspaceId: string): Promise<LiveKey
   return null;
 }
 
-export async function getAddonStatus(db: Db, workspaceId: string): Promise<AddonStatus> {
+/** Status for the workspace; with userId, canCreateLiveKeys also reflects that member (ADD-3). */
+export async function getAddonStatus(db: Db, workspaceId: string, userId?: string): Promise<AddonStatus> {
   const settings = await settingsRow(db, workspaceId);
   const [accepted] = await db
     .select({ version: apiTermsAcceptances.termsVersion })
@@ -82,7 +85,11 @@ export async function getAddonStatus(db: Db, workspaceId: string): Promise<Addon
     .where(eq(apiTermsAcceptances.workspaceId, workspaceId))
     .orderBy(desc(apiTermsAcceptances.acceptedAt))
     .limit(1);
-  const block = await liveKeyBlock(db, workspaceId);
+  let block: LiveKeyBlock | null = await liveKeyBlock(db, workspaceId);
+  if (!block && userId) {
+    const [u] = await db.select({ isActive: users.isActive }).from(users).where(eq(users.id, userId)).limit(1);
+    if (u?.isActive !== true) block = "user_not_active";
+  }
   const enabled = Boolean(settings?.addonEnabled);
   return {
     enabled,
@@ -154,7 +161,7 @@ export async function enableAddon(db: Db, input: EnableAddonInput): Promise<Addo
     });
   });
   await notifyPublicKeyChange({ workspaceId: input.workspaceId });
-  return getAddonStatus(db, input.workspaceId);
+  return getAddonStatus(db, input.workspaceId, input.userId);
 }
 
 export interface DisableAddonInput {

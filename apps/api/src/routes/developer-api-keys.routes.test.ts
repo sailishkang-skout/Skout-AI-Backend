@@ -57,6 +57,8 @@ maybe("PAPI-027 key management routes", () => {
       .limit(1);
     workspaceId = m!.workspaceId;
     userId = m!.userId;
+    // A user signed up through auth starts inactive (ADD-3); this one has verified their email.
+    await app.db!.update(schema.users).set({ isActive: true }).where(eq(schema.users.id, userId));
     await setRole("owner");
     await app.db!.insert(schema.workspaceApiSettings).values({ workspaceId, addonEnabled: true }).onConflictDoUpdate({
       target: schema.workspaceApiSettings.workspaceId,
@@ -64,7 +66,7 @@ maybe("PAPI-027 key management routes", () => {
     });
     for (const role of ["owner", "admin", "member"]) {
       const e = `papi027-${role}-${randomUUID().slice(0, 6)}@test.com`;
-      const [u] = await app.db!.insert(schema.users).values({ email: e }).returning();
+      const [u] = await app.db!.insert(schema.users).values({ email: e, isActive: true }).returning();
       await app.db!.insert(schema.workspaceMembers).values({ workspaceId, userId: u!.id, role });
       others.push({ id: u!.id, email: e, role });
     }

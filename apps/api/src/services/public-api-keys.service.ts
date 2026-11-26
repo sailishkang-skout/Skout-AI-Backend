@@ -6,7 +6,7 @@ import { HttpError } from "../utils/http.js";
 import { liveKeyBlock } from "./public-api-addon.service.js";
 import { notifyPublicKeyChange, type CachedKey } from "../lib/public-key-cache.js";
 
-const { apiKeys, workspaceApiSettings, auditLogs } = schema;
+const { apiKeys, workspaceApiSettings, auditLogs, users } = schema;
 
 /**
  * Public API keys (PAPI-021, public API PRD KEY-1 to KEY-10, D8).
@@ -238,7 +238,7 @@ async function lockWorkspaceKeys(tx: Db, workspaceId: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"api_keys:" + workspaceId}))`);
 }
 
-async function assertCanCreate(db: Db, workspaceId: string, type: ApiKeyType) {
+async function assertCanCreate(db: Db, workspaceId: string, type: ApiKeyType, userId: string) {
   const block = await liveKeyBlock(db, workspaceId);
   if (block === "addon_disabled") throw new HttpError("addon_disabled", 403, { message: "Enable the API add-on first." });
   if (type === "live" && block === "workspace_suspended") {
@@ -249,6 +249,15 @@ async function assertCanCreate(db: Db, workspaceId: string, type: ApiKeyType) {
       message: "Trial and early-access workspaces can create test keys only until they buy credits.",
     });
   }
+  // ADD-3: live keys need an active user (verified email). Test keys don't.
+  if (type === "live" && !(await isActiveUser(db, userId))) {
+    throw new HttpError("user_not_active", 403, { message: "Verify your email address to create live keys. Test keys work meanwhile." });
+  }
+}
+
+async function isActiveUser(db: Db, userId: string): Promise<boolean> {
+  const [row] = await db.select({ isActive: users.isActive }).from(users).where(eq(users.id, userId)).limit(1);
+  return row?.isActive === true;
 }
 
 async function auditKey(
@@ -289,7 +298,7 @@ export async function createPublicApiKey(
   const days = validateExpiryDays(input.expiresInDays);
   const dailyCreditCap = validateCap(input.dailyCreditCap, "Daily credit cap");
   const monthlyCreditCap = validateCap(input.monthlyCreditCap, "Monthly credit cap");
-  await assertCanCreate(db, actor.workspaceId, input.type);
+  await assertCanCreate(db, actor.workspaceId, input.type, actor.userId);
 
   return db.transaction(async (txRaw) => {
     const tx = txRaw as unknown as Db;
@@ -370,7 +379,7 @@ export async function rotatePublicApiKey(
     .where(and(eq(apiKeys.id, keyId), eq(apiKeys.workspaceId, actor.workspaceId)))
     .limit(1);
   if (!existing) throw new HttpError("Key not found", 404);
-  await assertCanCreate(db, actor.workspaceId, existing.type as ApiKeyType);
+  await assertCanCreate(db, actor.workspaceId, existing.type as ApiKeyType, actor.userId);
 
   const rotated = await db.transaction(async (txRaw) => {
     const tx = txRaw as unknown as Db;

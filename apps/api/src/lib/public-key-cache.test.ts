@@ -27,7 +27,7 @@ async function within(ms: number, check: () => Promise<boolean>): Promise<number
 async function seedWorkspace(db: Db, label: string) {
   const ws = randomUUID();
   await db.insert(schema.workspaces).values({ id: ws, name: label, slug: `${label}-${ws}` });
-  const [u] = await db.insert(schema.users).values({ email: `${label}-${ws.slice(0, 8)}@test.com` }).returning();
+  const [u] = await db.insert(schema.users).values({ email: `${label}-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
   await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });
   return { ws, userId: u!.id };
 }

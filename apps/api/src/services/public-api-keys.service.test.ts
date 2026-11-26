@@ -14,6 +14,7 @@ import {
   type KeyServiceConfig,
 } from "./public-api-keys.service.js";
 import { generateApiKey, keyMatches } from "./cops-api-credentials.service.js";
+import { getAddonStatus } from "./public-api-addon.service.js";
 
 const PEPPER = randomBytes(32).toString("base64");
 const DAY = 86_400_000;
@@ -70,7 +71,7 @@ maybe("public API key service (Postgres)", () => {
   beforeAll(async () => {
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-021 test", slug: `papi021-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi021-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi021-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });
   });
@@ -192,6 +193,24 @@ maybe("public API key service (Postgres)", () => {
     await db.update(schema.workspaceApiSettings).set({ addonEnabled: false }).where(eq(schema.workspaceApiSettings.workspaceId, ws));
     await expect(create({ type: "test" })).rejects.toMatchObject({ statusCode: 403, message: "addon_disabled" });
     await db.update(schema.workspaceApiSettings).set({ addonEnabled: true }).where(eq(schema.workspaceApiSettings.workspaceId, ws));
+  });
+
+  it("needs an active user (verified email) for live keys, not for test keys (ADD-3)", async () => {
+    await db.update(schema.users).set({ isActive: false }).where(eq(schema.users.id, userId));
+    try {
+      await expect(create({ type: "live" })).rejects.toMatchObject({ statusCode: 403, message: "user_not_active" });
+      const testKey = await create({ type: "test" });
+      await revokePublicApiKey(db, actor(), testKey.id, "cleanup");
+      expect((await getAddonStatus(db, ws, userId)).liveKeyBlock).toBe("user_not_active");
+      expect((await getAddonStatus(db, ws)).liveKeyBlock).toBeNull();
+    } finally {
+      await db.update(schema.users).set({ isActive: true }).where(eq(schema.users.id, userId));
+    }
+    expect((await getAddonStatus(db, ws, userId)).canCreateLiveKeys).toBe(true);
+    // A brand-new user starts inactive.
+    const [fresh] = await db.insert(schema.users).values({ email: `papi021-new-${ws.slice(0, 8)}@test.com` }).returning();
+    expect(fresh!.isActive).toBe(false);
+    await db.delete(schema.users).where(eq(schema.users.id, fresh!.id));
   });
 
   it("refuses to work without a pepper", async () => {

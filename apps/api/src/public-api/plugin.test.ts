@@ -127,7 +127,7 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
   beforeAll(async () => {
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-040", slug: `papi040-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi040-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi040-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true, searchDailyQuota: 40 });

@@ -83,7 +83,7 @@ maybe("public prefix authentication (PAPI-024)", () => {
   beforeAll(async () => {
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-024", slug: `papi024-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi024-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi024-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });
@@ -202,7 +202,7 @@ maybe("failed-authentication limit per IP (PAPI-025, RL-3)", () => {
   beforeAll(async () => {
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-025", slug: `papi025-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi025-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi025-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });

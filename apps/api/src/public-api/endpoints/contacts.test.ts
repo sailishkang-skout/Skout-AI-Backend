@@ -73,7 +73,7 @@ maybe("email and phone find endpoints (PAPI-055, PAPI-056)", () => {
   async function workspace() {
     const ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-055", slug: `papi055-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi055-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi055-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     users.push(u!.id);
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId: u!.id, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true });

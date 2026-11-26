@@ -17,7 +17,7 @@ export async function developerApiAddonRoutes(app: FastifyInstance) {
   app.get("/developer/api-addon", async (request) => {
     const workspaceId = requireWorkspaceId(request);
     if (!app.db) throw new HttpError("Database unavailable", 503);
-    return getAddonStatus(app.db, workspaceId);
+    return getAddonStatus(app.db, workspaceId, request.userId ?? undefined);
   });
 
   app.post("/developer/api-addon/enable", async (request) => {

@@ -11,6 +11,8 @@ export const users = pgTable("users", {
   phone: text("phone"),
   status: text("status").notNull().default("active"),
   isBlocked: boolean("is_blocked").notNull().default(false),
+  /** ADD-3: an active user (verified email) can create live API keys. Existing users were backfilled true. */
+  isActive: boolean("is_active").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

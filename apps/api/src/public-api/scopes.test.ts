@@ -82,7 +82,7 @@ maybe("every endpoint, with and without its scope (PAPI-045)", () => {
   beforeAll(async () => {
     ws = randomUUID();
     await db.insert(schema.workspaces).values({ id: ws, name: "PAPI-045", slug: `papi045-${ws}` });
-    const [u] = await db.insert(schema.users).values({ email: `papi045-${ws.slice(0, 8)}@test.com` }).returning();
+    const [u] = await db.insert(schema.users).values({ email: `papi045-${ws.slice(0, 8)}@test.com`, isActive: true }).returning();
     userId = u!.id;
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws, userId, role: "owner" });
     await db.insert(schema.workspaceApiSettings).values({ workspaceId: ws, addonEnabled: true, maxActiveKeys: 30 });
