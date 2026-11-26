@@ -10,7 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { schema } from "@skout/db";
-import { and, eq, isNull, like } from "drizzle-orm";
+import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { loadEnv } from "../config/env.js";
 import { buildApp } from "../app.js";
@@ -398,6 +398,29 @@ describe("ENR-03 change detection", () => {
     // The "+ 1 more" event is no longer a job change at all.
     const [stored] = await db().select().from(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.id, noise!.id));
     expect(stored!.isJobChange).toBe(false);
+  });
+
+  it("keeps two changes recorded within one millisecond, and still merges the rows of one capture", async () => {
+    const millisecond = new Date().toISOString().slice(0, -1); // "…T10:00:00.123"
+    const event = (entityId: string, company: string, microseconds: string) => ({
+      workspaceId: WORKSPACE,
+      entityType: "person" as const,
+      entityId,
+      field: "currentCompanies",
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: company, title: "Head of Revenue" }],
+      isJobChange: true,
+      detectedAt: sql`${`${millisecond}${microseconds}Z`}::timestamptz`,
+    });
+    const separate = randomUUID();
+    const [first] = await db().insert(schema.enrichmentChangeEvents).values(event(separate, "Initech", "001")).returning();
+    const [second] = await db().insert(schema.enrichmentChangeEvents).values(event(separate, "Umbrella", "002")).returning();
+    expect((await jobChangesFor(separate)).map((change) => change.id)).toEqual([second!.id, first!.id]);
+    // One capture writes its rows with one timestamp; they are listed once.
+    const together = randomUUID();
+    await db().insert(schema.enrichmentChangeEvents).values([event(together, "Initech", "003"), event(together, "Umbrella", "003")]);
+    expect(await jobChangesFor(together)).toHaveLength(1);
   });
 
   it("does not flag a job change when the current company and role are unchanged", async () => {
