@@ -729,7 +729,12 @@ export async function listJobChanges(
   );
   const [totals] = await db.select({ total: count() }).from(enrichmentChangeEvents).where(where);
   const rows = await db
-    .select({ change: enrichmentChangeEvents, snapshot: prospectActivations.snapshot })
+    .select({
+      change: enrichmentChangeEvents,
+      snapshot: prospectActivations.snapshot,
+      // A JS Date keeps milliseconds only; the database keeps microseconds.
+      detectedAtExact: sql<string>`${enrichmentChangeEvents.detectedAt}::text`,
+    })
     .from(enrichmentChangeEvents)
     .leftJoin(
       prospectActivations,
@@ -739,10 +744,11 @@ export async function listJobChanges(
     .orderBy(desc(enrichmentChangeEvents.detectedAt))
     .limit(filters.pageSize * 5)
     .offset((filters.page - 1) * filters.pageSize * 5);
-  // Deduplicate job changes: keep only the most recent change per person per detected time
+  // One capture can write several rows for a person, all with the same timestamp: list them once. The full timestamp
+  // is compared, so separate changes recorded within the same millisecond are all kept.
   const seen = new Set<string>();
   const uniqueRows = rows.filter((row) => {
-    const key = `${row.change.entityId}-${row.change.detectedAt.getTime()}`;
+    const key = `${row.change.entityId}-${row.detectedAtExact}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
