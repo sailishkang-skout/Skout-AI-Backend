@@ -121,6 +121,9 @@ maybe("COPS-07 retention, flags and metrics (Postgres)", () => {
     expect(inventory.find((r) => r.table === "contacts")!.tags).toEqual(expect.arrayContaining(["tenant_scoped", "personal_data"]));
     expect(inventory.find((r) => r.table === "audit_logs")).toMatchObject({ category: "audit_logs", retention: "automatic" });
     expect(inventory.find((r) => r.table === "user_credentials")!.tags).toContain("credentials");
+    // A partitioned table appears once; its 64 partitions are not separate inventory rows.
+    expect(inventory.find((r) => r.table === "workbook_cells")).toBeDefined();
+    expect(inventory.filter((r) => /^workbook_cells_p\d+$/.test(r.table))).toEqual([]);
   });
 
   it("modules are on by default; an admin can turn one off but never the admin module", async () => {
