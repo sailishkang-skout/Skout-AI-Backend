@@ -35,7 +35,9 @@ export type WorkbookV2ErrorCode =
   | "COLUMN_IN_USE"
   | "COLUMN_LIMIT_EXCEEDED"
   | "COLUMN_ORDER_CONFLICT"
-  | "COLUMN_ORDER_INVALID";
+  | "COLUMN_ORDER_INVALID"
+  | "COLUMN_NOT_RUNNABLE"
+  | "NOT_IMPLEMENTED";
 
 export class WorkbookV2Error extends Error {
   constructor(

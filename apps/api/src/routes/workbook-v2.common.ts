@@ -10,8 +10,17 @@ import { HttpError, apiError, requireWorkspaceId } from "../utils/http.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Viewing needs `enrichment:read`; creating or changing anything needs `enrichment:capture` (manage enrichment data). */
-export type WorkbookPermission = "enrichment:read" | "enrichment:capture";
+/**
+ * Running columns and pushing to a CRM spend credits or send data out. Owners and admins hold this; members do not
+ * (WB2-014). It is separate from editing: someone without it can still change cells, formulas and columns.
+ */
+export const WORKBOOK_RUN_PERMISSION = "enrichment.run";
+
+/**
+ * Viewing needs `enrichment:read`; creating or changing anything needs `enrichment:capture` (manage enrichment data);
+ * anything that executes a column needs `enrichment.run`.
+ */
+export type WorkbookPermission = "enrichment:read" | "enrichment:capture" | typeof WORKBOOK_RUN_PERMISSION;
 export type Outcome = { status: number; body: unknown };
 export type WorkbookAuth = { db: Db; actor: WorkbookActor };
 
