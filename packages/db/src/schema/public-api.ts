@@ -226,3 +226,29 @@ export const providerCostEvents = pgTable(
     index("provider_cost_events_provider_created_idx").on(t.provider, t.operation, t.createdAt),
   ]
 );
+
+/**
+ * What each workspace was charged for, per subject and datum type (PAPI-034, CRED-4): the same datum
+ * delivered again to the same workspace within 30 days is served from here and costs 0. One row per
+ * (workspace, subject, datum type); `delivered_at` is the last *charged* delivery, so free cache hits
+ * never extend the window. DSAR deletion removes a subject from every workspace (PRD §9.6).
+ */
+export const apiDatumCache = pgTable(
+  "api_datum_cache",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** Stable key of the person or company the datum is about, e.g. "person:<internal id>". */
+    subjectKey: text("subject_key").notNull(),
+    /** email | phone | person | company | company_jobs */
+    datumType: text("datum_type").notNull(),
+    value: jsonb("value").notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.subjectKey, t.datumType] }),
+    index("api_datum_cache_subject_idx").on(t.subjectKey),
+    index("api_datum_cache_delivered_idx").on(t.deliveredAt),
+  ]
+);
