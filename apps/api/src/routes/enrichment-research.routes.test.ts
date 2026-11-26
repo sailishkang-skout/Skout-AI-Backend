@@ -423,6 +423,74 @@ describe("ENR-03 change detection", () => {
     expect(await jobChangesFor(together)).toHaveLength(1);
   });
 
+  it("pages through every job change once, with totals and counts that match what is listed", async () => {
+    const ago = (days: number, seconds = 0) => new Date(Date.now() - days * 24 * 60 * 60 * 1000 - seconds * 1000);
+    const event = (company: string, detectedAt: Date, extra: Partial<typeof schema.enrichmentChangeEvents.$inferInsert> = {}) => ({
+      workspaceId: OTHER_WORKSPACE,
+      entityType: "person" as const,
+      entityId: randomUUID(),
+      field: "currentCompanies",
+      changeType: "FIELD_UPDATED" as const,
+      oldValue: [{ name: "Hooli", title: "Sales Manager" }],
+      newValue: [{ name: company, title: "Head of Revenue" }],
+      isJobChange: true,
+      detectedAt,
+      ...extra,
+    });
+    // One capture of one person that wrote three rows; the employer change is the one to show.
+    const entityId = randomUUID();
+    const capturedAt = ago(0, 5);
+    const sibling = (field: string) => event("Initech", capturedAt, { entityId, field, newValue: [{ name: "Initech", title: `from ${field}` }] });
+    // Two people recorded at the same instant.
+    const tie = ago(0, 8);
+    const rows = [
+      ...[1, 2, 3, 4].map((n) => event(`Recent ${n}`, ago(0, n))),
+      sibling("headline"),
+      sibling("currentCompanies"),
+      sibling("title"),
+      event("Tie A", tie),
+      event("Tie B", tie),
+      ...[1, 2, 3].map((n) => event(`Reviewed ${n}`, ago(1, n), { reviewedAt: new Date() })),
+      ...[1, 2, 3].map((n) => event(`Old ${n}`, ago(30, n))),
+    ];
+    await db().insert(schema.enrichmentChangeEvents).values(rows);
+    try {
+      const list = async (status: string, page: number, pageSize: number) => {
+        const res = await get(`/enrichment/job-changes?status=${status}&page=${page}&pageSize=${pageSize}`, outsider);
+        expect(res.statusCode, res.body).toBe(200);
+        return res.json() as { jobChanges: Array<Record<string, any>>; total: number; counts: Record<string, number> };
+      };
+      const everything = async (status: string, pageSize: number) => {
+        const seen: Array<Record<string, any>> = [];
+        const first = await list(status, 1, pageSize);
+        for (let page = 1; page <= Math.ceil(first.total / pageSize); page++) {
+          const body = await list(status, page, pageSize);
+          expect(body.jobChanges, `${status} page ${page}`).toHaveLength(Math.min(pageSize, first.total - (page - 1) * pageSize));
+          seen.push(...body.jobChanges);
+        }
+        expect((await list(status, Math.ceil(first.total / pageSize) + 1, pageSize)).jobChanges).toEqual([]);
+        return { seen, total: first.total, counts: first.counts };
+      };
+
+      for (const pageSize of [1, 4, 100]) {
+        const all = await everything("all", pageSize);
+        expect(all.total).toBe(13);
+        expect(new Set(all.seen.map((change) => change.id)).size).toBe(13);
+        const companies = all.seen.map((change) => change.to.company as string);
+        expect(companies.slice(0, 5)).toEqual(["Recent 1", "Recent 2", "Recent 3", "Recent 4", "Initech"]);
+        expect(companies.slice(5, 7).sort()).toEqual(["Tie A", "Tie B"]);
+        expect(companies.slice(7)).toEqual(["Reviewed 1", "Reviewed 2", "Reviewed 3", "Old 1", "Old 2", "Old 3"]);
+        expect(all.seen[4]!.to.title).toBe("from currentCompanies");
+        expect(all.counts).toEqual({ pending: 10, reviewed: 3, lastSevenDays: 10 });
+      }
+      expect((await everything("pending", 3)).total).toBe(10);
+      expect((await everything("reviewed", 2)).total).toBe(3);
+      expect((await get("/enrichment/overview", outsider)).json().jobChanges).toEqual({ pendingReview: 10 });
+    } finally {
+      await db().delete(schema.enrichmentChangeEvents).where(eq(schema.enrichmentChangeEvents.workspaceId, OTHER_WORKSPACE));
+    }
+  });
+
   it("does not flag a job change when the current company and role are unchanged", async () => {
     const [person] = await personByName("Priya Raman");
     // Only the tenure text and the headline moved.
