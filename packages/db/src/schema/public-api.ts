@@ -138,6 +138,10 @@ export const apiJobs = pgTable(
     holdId: uuid("hold_id"),
     /** Where the results are stored (object key), when not inline. */
     resultLocation: text("result_location"),
+    /** The batch's items and the price per item snapshotted at reservation (PAPI-058). */
+    input: jsonb("input"),
+    /** Per-item results, inline (PAPI-058); kept until results_expire_at. */
+    results: jsonb("results"),
     errorCode: text("error_code"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),

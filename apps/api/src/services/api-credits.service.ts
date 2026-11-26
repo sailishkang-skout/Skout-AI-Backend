@@ -85,6 +85,8 @@ export async function reserve(
     max: number;
     /** Per-key and workspace credit caps (PAPI-033); checked under the wallet lock. */
     caps?: CreditCaps;
+    /** How long the hold lasts before the sweeper frees it; default HOLD_TTL_MS. Batch jobs hold longer. */
+    ttlMs?: number;
   },
   now = new Date()
 ): Promise<ReservedHold> {
@@ -110,7 +112,7 @@ export async function reserve(
         requestId: input.requestId,
         amount: input.max,
         status: "held",
-        expiresAt: new Date(now.getTime() + HOLD_TTL_MS),
+        expiresAt: new Date(now.getTime() + (input.ttlMs ?? HOLD_TTL_MS)),
         createdAt: now,
       })
       .returning();

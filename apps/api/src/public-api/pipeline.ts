@@ -27,6 +27,8 @@ export interface EndpointContext<I> {
   prices: PriceList;
   /** Aborted when the request times out; handlers pass it to slow calls. */
   signal: AbortSignal;
+  /** The credit hold reserved for this call (null when nothing was reserved); batch jobs take it over. */
+  holdId: string | null;
   /** Public id codec (CONV-8): encode every id the response carries, decode ids from the request. */
   ids: PublicIdCodec;
 }
@@ -39,6 +41,11 @@ export interface EndpointResult<O> {
   quotaUsed?: number;
   /** HTTP status for a success, default 200 (202 for async jobs). */
   status?: number;
+  /**
+   * Async jobs (JOB-1): the job now owns the hold and settles it when it finishes, so the pipeline
+   * neither commits nor releases it, and charges nothing for the request itself.
+   */
+  holdTransferred?: boolean;
 }
 
 export interface PublicEndpoint<S extends z.ZodTypeAny = z.ZodTypeAny, O = unknown> {
@@ -62,6 +69,8 @@ export interface PublicEndpoint<S extends z.ZodTypeAny = z.ZodTypeAny, O = unkno
   idempotent?: boolean;
   /** Batch endpoints get the lower per-minute rate limit (RL-2). */
   batch?: boolean;
+  /** How long the reservation lasts; defaults to the request hold TTL. Batch jobs need longer. */
+  holdTtlMs?: number;
   /** Daily count quota the call uses, taken up front (RL-5, RL-6). */
   quota?: { kind: QuotaKind; units: (input: z.infer<S>) => number };
   /** Live keys: the real work. */
@@ -248,7 +257,14 @@ async function execute(
   // Reserve (402 insufficient_credits / 429 cap_reached before any work).
   let hold;
   try {
-    hold = await reserve(deps.db, { workspaceId: key.workspaceId, apiKeyId: key.id, requestId: String(request.id), max, caps: limits.caps });
+    hold = await reserve(deps.db, {
+      workspaceId: key.workspaceId,
+      apiKeyId: key.id,
+      requestId: String(request.id),
+      max,
+      caps: limits.caps,
+      ttlMs: ep.holdTtlMs,
+    });
   } catch (err) {
     await refundQuota(0);
     throw err;
@@ -258,7 +274,7 @@ async function execute(
   let result: EndpointResult<unknown>;
   try {
     result = await withTimeout(deps.timeoutMs ?? 30_000, (signal) =>
-      ep.handle({ input, requestId: String(request.id), workspaceId: key.workspaceId, apiKeyId: key.id, prices, signal, ids: deps.ids })
+      ep.handle({ input, requestId: String(request.id), workspaceId: key.workspaceId, apiKeyId: key.id, prices, signal, ids: deps.ids, holdId: hold.holdId })
     );
     // Never let an internal id or provider name out (CONV-8); checked before charging anything.
     assertNoLeaks(ep, result.data);
@@ -268,9 +284,11 @@ async function execute(
     throw err;
   }
 
-  // Commit the actual charge (0 releases the hold).
+  // Commit the actual charge (0 releases the hold); an async job settles its own hold later.
   const charge = Math.max(0, Math.min(max, Math.trunc(result.charge)));
-  const committed = await commit(deps.db, hold.holdId, charge, ep.operation ?? "free");
+  const committed = result.holdTransferred
+    ? { charged: 0, balance: null }
+    : await commit(deps.db, hold.holdId, charge, ep.operation ?? "free");
   state.creditsCharged = committed.charged;
   await refundQuota(result.quotaUsed ?? quotaUnits);
 

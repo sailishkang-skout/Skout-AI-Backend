@@ -1219,6 +1219,13 @@
       "when": 1798388300000,
       "tag": "0171_users_is_active",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1798388400000,
+      "tag": "0172_api_jobs_payload",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { ensureClickHouseSchema } from "./lib/clickhouse.js";
 import { buildApp } from "./app.js";
 import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 import { startListScoreWorker } from "./workers/list-score.worker.js";
+import { startPublicApiJobsWorker } from "./workers/public-api-jobs.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
 import { startAutomationRunWorker } from "./workers/automation-run.worker.js";
@@ -64,6 +65,7 @@ async function main() {
 
   const stopCrmWorker = await startCrmExportWorker(config);
   const stopListScoreWorker = await startListScoreWorker(config);
+  const stopPublicApiJobsWorker = await startPublicApiJobsWorker(config);
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
   const stopAutomationRunWorker = await startAutomationRunWorker(config);
@@ -175,6 +177,7 @@ async function main() {
     await stopDexterOrchestratorWorker();
     await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
+    await stopPublicApiJobsWorker();
     await stopCrmWorker();
     await app.close();
   };
