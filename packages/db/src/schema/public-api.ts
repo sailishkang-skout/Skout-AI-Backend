@@ -187,6 +187,8 @@ export const workspaceApiSettings = pgTable("workspace_api_settings", {
   monthlyCreditCap: integer("monthly_credit_cap"),
   maxActiveKeys: integer("max_active_keys"),
   lowBalanceThreshold: integer("low_balance_threshold"),
+  /** When the last low-balance alert went out; at most one per 24 hours (PAPI-036, CRED-8). */
+  lowBalanceAlertedAt: timestamp("low_balance_alerted_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
 });

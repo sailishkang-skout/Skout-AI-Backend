@@ -11,6 +11,7 @@ import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
 import { dbPlugin } from "./plugins/db.js";
 import { publicKeyCachePlugin } from "./plugins/public-key-cache.js";
+import { creditAlertsPlugin } from "./plugins/credit-alerts.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -191,6 +192,7 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
   await app.register(publicKeyCachePlugin);
+  await app.register(creditAlertsPlugin);
   await app.register(authPlugin);
   // COPS-08: a suspended or closed subscription closes product use; billing and sign-in stay open.
   registerSubscriptionSuspensionGate(app);

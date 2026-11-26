@@ -55,6 +55,7 @@ export const WEBHOOK_EVENT_TYPES = [
   // ── Public API (PAPI-022, JOB-3) ─────────────────────────────────────────
   "api_key.expiring",
   "api_key.expired",
+  "credits.low",
 ] as const;
 
 /** CustomerOps domain events that are also sent to customer webhooks, by their public name. */

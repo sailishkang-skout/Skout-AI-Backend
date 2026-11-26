@@ -3,6 +3,7 @@ import { CreditLedgerError, postCreditTransaction, schema, type Db } from "@skou
 import type { ApiPriceOperation } from "@skout/shared";
 import { HttpError } from "../utils/http.js";
 import { assertCreditCaps, type CreditCaps } from "./api-limits.service.js";
+import { notifyBalanceAfterCharge } from "./low-balance-alert.service.js";
 
 const { creditBalances, creditHolds } = schema;
 
@@ -140,6 +141,20 @@ export async function commit(db: Db, holdId: string | null, actual: number, oper
     if (actual > 0) throw new HttpError("Can't charge a request that reserved nothing", 500);
     return { charged: 0, balance: null, alreadyCommitted: false };
   }
+  const result = await commitHold(db, holdId, actual, operation);
+  // CRED-8: after a real charge, check the balance against the low-balance threshold.
+  if (result.charged > 0 && result.balance !== null && result.workspaceId) {
+    await notifyBalanceAfterCharge(result.workspaceId, result.balance);
+  }
+  return { charged: result.charged, balance: result.balance, alreadyCommitted: result.alreadyCommitted };
+}
+
+async function commitHold(
+  db: Db,
+  holdId: string,
+  actual: number,
+  operation: string
+): Promise<CommitResult & { workspaceId?: string }> {
   return db.transaction(async (txRaw) => {
     const tx = txRaw as unknown as Db;
     const hold = await lockHold(tx, holdId);
@@ -175,7 +190,7 @@ export async function commit(db: Db, holdId: string | null, actual: number, oper
       throw err;
     }
     await tx.update(creditHolds).set({ status: "committed", settledAt: now }).where(eq(creditHolds.id, hold.id));
-    return { charged: actual, balance, alreadyCommitted: false };
+    return { charged: actual, balance, alreadyCommitted: false, workspaceId: hold.workspaceId };
   });
 }
 
