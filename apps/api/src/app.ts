@@ -166,6 +166,9 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   // { error }, { error, message }, { ok, error, statusCode } etc.
   app.addHook("onSend", async (request, reply, payload) => {
     if (reply.statusCode < 400 || typeof payload !== "string") return payload;
+    // The public API has its own error shape (CONV-6: { error: { type, code, message, request_id,
+    // doc_url } }) and req_ request ids; rewriting it here would break the contract.
+    if (isPublicApiPath(request.url)) return payload;
     const contentType = String(reply.getHeader("content-type") ?? "");
     if (!contentType.includes("application/json")) return payload;
     try {

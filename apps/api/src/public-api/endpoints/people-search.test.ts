@@ -240,4 +240,11 @@ maybe("POST /people/search (PAPI-051)", () => {
     expect(osSearch).not.toHaveBeenCalled();
     expect(await balance(A.ws)).toBe(before);
   });
+
+  it("is unavailable, never demo data, when Skout's index isn't configured", async () => {
+    const ep = createPeopleSearchEndpoint({ env: {} as never, db });
+    await expect(
+      ep.handle({ input: { job_title: "CTO", limit: 25 }, ids: createPublicIdCodec(PEPPER) } as never)
+    ).rejects.toMatchObject({ code: "upstream_unavailable" });
+  });
 });

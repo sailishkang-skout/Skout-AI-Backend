@@ -6,6 +6,7 @@ import type { Env } from "../../config/env.js";
 import { HttpError } from "../../utils/http.js";
 import { SearchService } from "../../services/search.service.js";
 import { getCachedDatum, recordChargedDatum } from "../../services/api-datum-cache.service.js";
+import { openSearchConfigFromEnv } from "../../lib/opensearch-config.js";
 import { PublicApiError } from "../errors.js";
 import type { PublicIdCodec } from "../ids.js";
 import type { PublicEndpoint } from "../pipeline.js";
@@ -124,6 +125,11 @@ export function createPeopleSearchEndpoint(deps: { env: Env; db: Db }): PublicEn
     quota: { kind: "search_results", units: (input) => input.limit },
 
     async handle({ input, workspaceId, apiKeyId, requestId, prices, ids }) {
+      // Without Skout's index the app's search falls back to a demo corpus (local dev); the public API
+      // must never sell demo people, so it is simply unavailable.
+      if (!openSearchConfigFromEnv(deps.env)) {
+        throw new PublicApiError("upstream_unavailable", "People search is temporarily unavailable. Nothing was charged; try again.");
+      }
       const page = pageFromCursor(ids, input);
       const subject = `search:${searchHash(input)}:${page}`;
 

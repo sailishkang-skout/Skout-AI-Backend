@@ -55,6 +55,19 @@ describe("public API edge surface (PAPI-001)", () => {
     expect(internal.headers["x-request-id"]).toBe("trace-123");
   });
 
+  it("keeps the public API's own error shape and req_ ids in the full app (CONV-6)", async () => {
+    // The app's global onSend hook rewrites { error } bodies into its own shape; it must leave
+    // /api/public alone (found in a local end-to-end run).
+    const res = await app.inject({ method: "GET", url: "/api/public/v1/usage" });
+    expect(res.statusCode).toBe(401);
+    const body = res.json();
+    expect(body.error).toMatchObject({ type: "authentication_error", code: "authentication_failed" });
+    expect(body.error.request_id).toMatch(/^req_[0-9a-f]{32}$/);
+    expect(body.error.request_id).toBe(res.headers["x-request-id"]);
+    expect(body.error.doc_url).toMatch(/^https:\/\/www\.skoutai\.io\/docs\/api\/errors/);
+    expect(body).not.toHaveProperty("statusCode");
+  });
+
   it("matches only the public prefix", () => {
     expect(isPublicApiPath("/api/public/v1/people/search")).toBe(true);
     expect(isPublicApiPath("/api/public")).toBe(true);
