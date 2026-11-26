@@ -56,7 +56,7 @@ export function toPersonProfile(doc: ProspectDocument, ids: PublicIdCodec): Pers
 const personSubject = (prospectId: string) => `person:${prospectId}`;
 
 /** The index document for a person, or null when absent or suppressed for this workspace. */
-async function loadPerson(deps: { env: Env; db: Db }, workspaceId: string, prospectId: string): Promise<ProspectDocument | null> {
+export async function loadPerson(deps: { env: Env; db: Db }, workspaceId: string, prospectId: string): Promise<ProspectDocument | null> {
   const cfg = openSearchConfigFromEnv(deps.env);
   if (!cfg) throw new PublicApiError("upstream_unavailable", "People lookup is temporarily unavailable. Nothing was charged; try again.");
   let doc: ProspectDocument | null;
