@@ -14,6 +14,7 @@ import { publicApiPlugin } from "./plugin.js";
 import type { PublicApiDeps, PublicEndpoint, RequestLogEntry } from "./pipeline.js";
 import { createRateLimitStep } from "./rate-limit-step.js";
 import { claimIdempotencyKey, completeIdempotencyKey, requestHash } from "./idempotency.js";
+import { createPublicIdCodec } from "./ids.js";
 import { createMemoryRateLimiter } from "../lib/public-rate-limit.js";
 
 /** PAPI-040: the public API plugin and its shared pipeline, with a dummy endpoint, on real Postgres. */
@@ -57,6 +58,19 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     },
     fixture: (input) => ({ id: "per_test_fixture", name: input.name }),
   };
+  const leaky: PublicEndpoint = {
+    method: "POST",
+    path: "/dummy/leaky",
+    scope: "people:read",
+    operation: "people.lookup",
+    input: z.object({ what: z.enum(["uuid", "provider"]) }).strict(),
+    maxCost: (_i, prices) => prices["people.lookup"].credits,
+    handle: async ({ input }) => {
+      calls++;
+      return { data: input.what === "uuid" ? { id: randomUUID() } : { id: "per_x", source: "Wiza" }, charge: 2 };
+    },
+    fixture: () => ({ id: "per_test" }),
+  };
   const freeGet: PublicEndpoint = {
     method: "GET",
     path: "/dummy/free",
@@ -85,11 +99,12 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
       quotas: createMemoryQuotaStore(),
       limitDefaults: { verifyDailyQuota: 5000, searchDailyQuota: 10000 },
       enabled,
+      ids: createPublicIdCodec(PEPPER),
       timeoutMs: 300,
       rateLimit: rateLimit ?? (async () => (rateOk ? { ok: true } : { ok: false, retryAfterSeconds: 7 })),
       logRequest: async (e) => void logs.push(e),
     };
-    await app.register(publicApiPlugin, { prefix: "/api/public/v1", deps, endpoints: [dummy, freeGet] });
+    await app.register(publicApiPlugin, { prefix: "/api/public/v1", deps, endpoints: [dummy, freeGet, leaky] });
     await app.ready();
     apps.push(app);
     return app;
@@ -351,6 +366,38 @@ maybe("public API plugin skeleton (PAPI-040)", () => {
     expect(Number(over.headers["retry-after"])).toBeGreaterThan(0);
     expect(over.headers["ratelimit-remaining"]).toBe("0");
     expect(over.headers["x-credits-charged"]).toBe("0");
+  });
+
+  it("never returns an internal UUID or a provider name: such a response becomes internal_error and charges nothing (PAPI-043)", async () => {
+    const before = (await availableCredits(db, ws)).balance;
+    for (const what of ["uuid", "provider"]) {
+      const res = await call(liveKey, { what }, {}, "/api/public/v1/dummy/leaky");
+      expect(res.statusCode).toBe(500);
+      expect(res.json().error.code).toBe("internal_error");
+      expect(res.body).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      expect(res.body.toLowerCase()).not.toContain("wiza");
+    }
+    expect((await availableCredits(db, ws)).balance).toBe(before);
+    expect(await activeHolds()).toBe(0);
+  });
+
+  it("keeps UUIDs and provider names out of every response body, success or error", async () => {
+    const responses = [
+      await call(liveKey, { name: "Ada" }),
+      await call(liveKey, { name: "Ada", mode: "none" }),
+      await call(liveKey, { name: "Ada", mode: "throw" }),
+      await call(narrowKey, { name: "Ada" }),
+      await call(null, { name: "Ada" }),
+      await call(liveKey, { name: "Ada", extra: 1 }),
+      await call(testKey, { name: "Ada" }),
+      await app.inject({ method: "GET", url: "/api/public/v1/nope", headers: { authorization: `Bearer ${liveKey}` } }),
+      await app.inject({ method: "GET", url: "/api/public/v1/health" }),
+    ];
+    for (const res of responses) {
+      expect(res.body, res.body).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      for (const name of ["wiza", "contactout", "datagma", "unipile"]) expect(res.body.toLowerCase()).not.toContain(name);
+      expect(String(res.headers["x-request-id"] ?? "req_")).toMatch(/^req_/);
+    }
   });
 
   it("answers unknown paths with not_found, and only the health check while the flag is off", async () => {

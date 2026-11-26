@@ -48,6 +48,13 @@ describe("public API edge surface (PAPI-001)", () => {
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
 
+  it("ignores a client-supplied X-Request-Id on the public API (it keys credit holds)", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/public/v1/health", headers: { "x-request-id": "attacker-chosen" } });
+    expect(res.headers["x-request-id"]).toMatch(/^req_[0-9a-f]{32}$/);
+    const internal = await app.inject({ method: "GET", url: "/api/v1/health", headers: { "x-request-id": "trace-123" } });
+    expect(internal.headers["x-request-id"]).toBe("trace-123");
+  });
+
   it("matches only the public prefix", () => {
     expect(isPublicApiPath("/api/public/v1/people/search")).toBe(true);
     expect(isPublicApiPath("/api/public")).toBe(true);

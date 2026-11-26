@@ -2,7 +2,7 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import { HttpError } from "../utils/http.js";
 import { availableCredits } from "../services/api-credits.service.js";
 import { setPublicApiSecurityHeaders } from "../routes/public-api.routes.js";
-import { PublicApiError, isPublicApiErrorCode, publicApiError, type PublicApiErrorCode } from "./errors.js";
+import { PublicApiError, isPublicApiErrorCode, publicApiError, publicRequestId, type PublicApiErrorCode } from "./errors.js";
 import { runPipeline, type PublicApiDeps, type PublicEndpoint } from "./pipeline.js";
 
 /** 1 MB request body limit (CONV-10, PRD §9.5). */
@@ -43,14 +43,14 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
     (request as FastifyRequest & { publicStartedAt?: number }).publicStartedAt = Date.now();
     const path = request.url.split("?")[0]!;
     if (!deps.enabled && !path.endsWith("/health")) {
-      const { status, body } = publicApiError("not_found", "The public API is not available yet.", String(request.id));
+      const { status, body } = publicApiError("not_found", "The public API is not available yet.", publicRequestId(request.id));
       return reply.code(status).send(body);
     }
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
     setPublicApiSecurityHeaders(reply);
-    reply.header("x-request-id", String(request.id));
+    reply.header("x-request-id", publicRequestId(request.id));
     // The public API never sets cookies or CORS headers, whatever an upstream hook may have added.
     reply.removeHeader("set-cookie");
     for (const h of Object.keys(reply.getHeaders())) if (h.toLowerCase().startsWith("access-control-")) reply.removeHeader(h);
@@ -64,7 +64,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
     const errorCode = (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode ?? null;
     try {
       await deps.logRequest({
-        requestId: String(request.id),
+        requestId: publicRequestId(request.id),
         workspaceId: request.publicApiKey?.workspaceId ?? null,
         apiKeyId: request.publicApiKey?.id ?? null,
         method: request.method,
@@ -86,7 +86,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
     const e = toPublicError(err);
     if (e.code === "internal_error") request.log.error({ err }, "public API request failed");
     (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode = e.code;
-    const { body } = publicApiError(e.code, e.message, String(request.id));
+    const { body } = publicApiError(e.code, e.message, publicRequestId(request.id));
     if (e.details && Object.keys(e.details).length > 0 && e.code !== "internal_error") {
       Object.assign(body.error, { details: e.details });
     }
@@ -100,7 +100,7 @@ export async function publicApiPlugin(app: FastifyInstance, opts: PublicApiPlugi
 
   app.setNotFoundHandler(async (request, reply) => {
     (request as FastifyRequest & { publicErrorCode?: string }).publicErrorCode = "not_found";
-    const { status, body } = publicApiError("not_found", `No endpoint ${request.method} ${request.url.split("?")[0]}.`, String(request.id));
+    const { status, body } = publicApiError("not_found", `No endpoint ${request.method} ${request.url.split("?")[0]}.`, publicRequestId(request.id));
     return reply.code(status).send(body);
   });
 

@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@skout/db";
 import { isPublicApiPath, PUBLIC_API_PREFIX } from "../routes/public-api.routes.js";
-import { publicApiError, type PublicApiErrorCode } from "../public-api/errors.js";
+import { publicApiError, publicRequestId, type PublicApiErrorCode } from "../public-api/errors.js";
 import { verifyPublicApiKey, type ApiKeyType } from "../services/public-api-keys.service.js";
 import { subscriptionAccessBlock } from "../services/cops-subscription-access.js";
 import { getRedis, isRedisAvailable } from "../lib/redis.js";
@@ -62,7 +62,7 @@ export function ipAllowed(ip: string, allowlist: string[]): boolean {
 }
 
 function fail(reply: FastifyReply, request: FastifyRequest, code: PublicApiErrorCode, message: string) {
-  const { status, body } = publicApiError(code, message, String(request.id));
+  const { status, body } = publicApiError(code, message, publicRequestId(request.id));
   return reply.code(status).header("cache-control", "no-store").send(body);
 }
 

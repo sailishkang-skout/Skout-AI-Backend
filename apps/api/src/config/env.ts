@@ -543,6 +543,9 @@ const envSchema = z
     PUBLIC_API_MAX_ACTIVE_KEYS: z.coerce.number().int().positive().default(10),
     /** CRED-8: low-balance alert threshold in credits. */
     PUBLIC_API_LOW_BALANCE_THRESHOLD: z.coerce.number().int().nonnegative().default(100),
+    // PAPI-043: secret for the opaque public ids (per_, com_, ...). Customers store these ids, so keep it
+    // stable. Unset = derived from API_KEY_PEPPER (then rotating the pepper would also change every id).
+    PUBLIC_API_ID_SECRET: z.string().min(32).optional(),
     // PAPI-013: what each data-provider call costs Skout, in USD millionths, keyed "provider:operation",
     // e.g. {"wiza:search":{"perCall":0,"perUnit":20000}}. Unset entries record cost_micros = null.
     PROVIDER_UNIT_COSTS_JSON: z.string().optional(),

@@ -8,6 +8,7 @@ import { availableCredits, commit, release, reserve } from "../services/api-cred
 import { consumeQuota, limitsForKey, type ApiLimitDefaults } from "../services/api-limits.service.js";
 import type { PublicApiScope } from "../services/public-api-keys.service.js";
 import { PublicApiError } from "./errors.js";
+import { findInternalLeaks, type PublicIdCodec } from "./ids.js";
 import { abandonIdempotencyKey, claimIdempotencyKey, completeIdempotencyKey, requestHash } from "./idempotency.js";
 
 /**
@@ -26,6 +27,8 @@ export interface EndpointContext<I> {
   prices: PriceList;
   /** Aborted when the request times out; handlers pass it to slow calls. */
   signal: AbortSignal;
+  /** Public id codec (CONV-8): encode every id the response carries, decode ids from the request. */
+  ids: PublicIdCodec;
 }
 
 export interface EndpointResult<O> {
@@ -92,6 +95,8 @@ export interface PublicApiDeps {
   limitDefaults: ApiLimitDefaults;
   /** PUBLIC_API_ENABLED. */
   enabled: boolean;
+  /** Opaque public ids (PAPI-043). */
+  ids: PublicIdCodec;
   /** Per-request time limit, default 30 s (PRD §9.5). */
   timeoutMs?: number;
   /** Rate limit step (PAPI-041). Absent = no limit at this layer. */
@@ -215,7 +220,9 @@ async function execute(
   if (key.type === "test") {
     reply.header("x-credits-charged", "0");
     reply.header("x-credits-remaining", "0");
-    return { data: ep.fixture(input) };
+    const fixture = ep.fixture(input);
+    assertNoLeaks(ep, fixture);
+    return { data: fixture };
   }
 
   const limits = await limitsForKey(deps.db, deps.limitDefaults, key);
@@ -245,8 +252,10 @@ async function execute(
   let result: EndpointResult<unknown>;
   try {
     result = await withTimeout(deps.timeoutMs ?? 30_000, (signal) =>
-      ep.handle({ input, requestId: String(request.id), workspaceId: key.workspaceId, apiKeyId: key.id, prices, signal })
+      ep.handle({ input, requestId: String(request.id), workspaceId: key.workspaceId, apiKeyId: key.id, prices, signal, ids: deps.ids })
     );
+    // Never let an internal id or provider name out (CONV-8); checked before charging anything.
+    assertNoLeaks(ep, result.data);
   } catch (err) {
     await release(deps.db, hold.holdId);
     await refundQuota(0);
@@ -265,4 +274,15 @@ async function execute(
   reply.header("x-credits-remaining", String(balance));
   reply.code(result.status ?? 200);
   return { data: result.data };
+}
+
+/**
+ * Fails closed (CONV-8, PRD §9.5): a response that would carry an internal UUID or a provider name is
+ * not sent; the caller gets internal_error and the leak is logged as an error for the team to fix.
+ */
+function assertNoLeaks(ep: PublicEndpoint, data: unknown) {
+  const leaks = findInternalLeaks(data);
+  if (leaks.length > 0) {
+    throw Object.assign(new Error(`public API response leak in ${ep.method} ${ep.path}: ${leaks.join("; ")}`), { publicLeak: true });
+  }
 }

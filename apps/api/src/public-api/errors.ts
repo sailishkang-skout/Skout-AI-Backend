@@ -56,3 +56,12 @@ export class PublicApiError extends Error {
 export function isPublicApiErrorCode(code: unknown): code is PublicApiErrorCode {
   return typeof code === "string" && code in PUBLIC_API_ERROR_CODES;
 }
+
+/**
+ * The request id as customers see it (CONV-3): req_ + the id without dashes, so no response carries a
+ * UUID (CONV-8). Support turns it back by re-inserting the dashes.
+ */
+export function publicRequestId(id: string | number): string {
+  const s = String(id);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ? `req_${s.replace(/-/g, "")}` : `req_${s}`;
+}

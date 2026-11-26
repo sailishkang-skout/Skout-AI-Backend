@@ -42,13 +42,17 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     }),
     trustProxy: config.TRUST_PROXY,
     bodyLimit: config.REQUEST_BODY_LIMIT_BYTES,
-    requestIdHeader: "x-request-id",
+    // genReqId below reads X-Request-Id itself (and ignores it on the public API), so Fastify must not
+    // take the header directly.
+    requestIdHeader: false,
     // Default find-my-way maxParamLength (100) is too short for HMAC-signed
     // tracking/unsubscribe tokens, which routinely exceed it (the click token
     // embeds the destination URL in its payload).
     routerOptions: { maxParamLength: 1000 },
     genReqId: (req) =>
-      (typeof req.headers["x-request-id"] === "string"
+      // The public API never takes a client's request id: it keys credit holds, so a reused id would
+      // replay an already-committed hold (PAPI-043 / CRED-4). Elsewhere a caller's id is kept for tracing.
+      (typeof req.headers["x-request-id"] === "string" && !(req.url ?? "").startsWith("/api/public")
         ? req.headers["x-request-id"]
         : undefined) ?? randomUUID(),
     // Remote databases (e.g. Supabase) need more than the 10 s default.

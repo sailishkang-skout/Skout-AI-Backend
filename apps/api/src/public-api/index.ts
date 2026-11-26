@@ -4,6 +4,8 @@ import { createMemoryQuotaStore, createRedisQuotaStore } from "../lib/api-quota.
 import { ApiPricingService } from "../services/api-pricing.service.js";
 import { PUBLIC_API_PREFIX } from "../routes/public-api.routes.js";
 import { publicApiPlugin } from "./plugin.js";
+import { randomBytes } from "node:crypto";
+import { createPublicIdCodec, publicIdSecret } from "./ids.js";
 import { createMemoryRateLimiter, createRedisRateLimiter } from "../lib/public-rate-limit.js";
 import { createRateLimitStep } from "./rate-limit-step.js";
 import type { PublicApiDeps, PublicEndpoint } from "./pipeline.js";
@@ -30,6 +32,9 @@ export async function registerPublicApi(app: FastifyInstance, endpoints: PublicE
       searchDailyQuota: app.config.PUBLIC_API_SEARCH_DAILY_QUOTA,
     },
     enabled: app.config.PUBLIC_API_ENABLED === "true",
+    // With the API on, API_KEY_PEPPER is required at boot, so a stable secret always exists. A
+    // throwaway one is only used while the API is off and no pepper is configured.
+    ids: createPublicIdCodec(publicIdSecret(app.config) ?? randomBytes(32).toString("base64")),
     rateLimit: createRateLimitStep({
       limiter: redis ? createRedisRateLimiter(redis) : createMemoryRateLimiter(),
       base: {
