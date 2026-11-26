@@ -6,6 +6,7 @@ import { assertStepUp } from "@skout/auth";
 import { HttpError, requireWorkspaceId } from "../utils/http.js";
 import { sendMail } from "../services/mail.service.js";
 import { notifyOwnersOfNewLiveKey } from "../services/public-api-key-notify.service.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import {
   createPublicApiKey,
   listPublicApiKeys,
@@ -169,6 +170,15 @@ export async function developerApiKeysRoutes(app: FastifyInstance) {
     const { db, actor } = actorFor(request);
     const { id } = parse(idParams, request.params);
     const body = parse(revokeBody, request.body);
-    return { data: await revokePublicApiKey(db, actor, id, body.reason) };
+    const revoked = await revokePublicApiKey(db, actor, id, body.reason);
+    // JOB-3: api_key.revoked to the workspace's webhooks; a failed dispatch never fails the revoke.
+    await dispatchWebhookEvent(db, app.config, "api_key.revoked", actor.workspaceId, {
+      key_id: revoked.id,
+      name: revoked.name,
+      type: revoked.type,
+      masked_key: revoked.masked_key,
+      revoked_at: new Date().toISOString(),
+    }).catch((err: unknown) => request.log.warn({ err }, "api_key.revoked webhook dispatch failed"));
+    return { data: revoked };
   });
 }

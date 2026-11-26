@@ -135,3 +135,30 @@ export async function runBatchJob<I, R>(db: Db, jobId: string, runner: BatchRunn
     return "failed";
   }
 }
+
+export type JobWebhookEvent = "api.job.completed" | "api.job.failed";
+
+/**
+ * JOB-3: tells the workspace's webhooks a job has finished: api.job.failed when no item succeeded,
+ * else api.job.completed (also for partially_completed). The results themselves come from GET /jobs/{id}.
+ */
+export async function notifyJobFinished(
+  db: Db,
+  jobId: string,
+  encodeJobId: (id: string) => string,
+  dispatch: (event: JobWebhookEvent, workspaceId: string, payload: Record<string, unknown>) => Promise<void>
+): Promise<void> {
+  const [job] = await db.select().from(apiJobs).where(eq(apiJobs.id, jobId)).limit(1);
+  if (!job || !["completed", "failed", "partially_completed"].includes(job.status)) return;
+  await dispatch(job.status === "failed" ? "api.job.failed" : "api.job.completed", job.workspaceId, {
+    job_id: encodeJobId(job.id),
+    type: job.operation,
+    status: job.status,
+    total: job.totalItems,
+    succeeded: job.succeededItems,
+    failed: job.failedItems,
+    error_code: job.errorCode,
+    finished_at: job.finishedAt?.toISOString() ?? null,
+    results_expire_at: job.resultsExpireAt?.toISOString() ?? null,
+  });
+}

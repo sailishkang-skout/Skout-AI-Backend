@@ -7,7 +7,9 @@ import { isRedisAvailable } from "../../lib/redis.js";
 import { createLogger } from "@skout/observability";
 import { enqueuePublicApiJob } from "../../workers/public-api-jobs.queue.js";
 import { PublicApiError } from "../errors.js";
-import { API_JOB_HOLD_TTL_MS, createBatchJob, runBatchJob, type BatchRunner } from "../jobs.js";
+import { API_JOB_HOLD_TTL_MS, createBatchJob, notifyJobFinished, runBatchJob, type BatchRunner } from "../jobs.js";
+import { createPublicIdCodec, publicIdSecret } from "../ids.js";
+import { dispatchWebhookEvent } from "../../services/webhook.service.js";
 import type { PublicEndpoint } from "../pipeline.js";
 
 /**
@@ -153,9 +155,25 @@ export function verifyBatchRunner(deps: EmailsDeps): BatchRunner<string, Verifie
   };
 }
 
-/** Runs one queued public API job (the worker, or this process when Redis is unavailable). */
-export async function runPublicApiJob(db: Db, env: Env, jobId: string, verify?: EmailsDeps["verify"]) {
-  return runBatchJob(db, jobId, verifyBatchRunner({ env, db, verify }));
+type JobDispatch = Parameters<typeof notifyJobFinished>[3];
+
+/**
+ * Runs one queued public API job (the worker, or this process when Redis is unavailable), then sends
+ * api.job.completed / api.job.failed to the workspace's webhooks (JOB-3).
+ */
+export async function runPublicApiJob(db: Db, env: Env, jobId: string, verify?: EmailsDeps["verify"], dispatch?: JobDispatch) {
+  const status = await runBatchJob(db, jobId, verifyBatchRunner({ env, db, verify }));
+  if (status) {
+    const secret = publicIdSecret(env);
+    const codec = secret ? createPublicIdCodec(secret) : null;
+    await notifyJobFinished(
+      db,
+      jobId,
+      (id) => (codec ? codec.encode("job", id) : "job_unknown"),
+      dispatch ?? ((event, ws, payload) => dispatchWebhookEvent(db, env, event, ws, payload))
+    ).catch((err) => log.error("job webhook dispatch failed", err, { jobId }));
+  }
+  return status;
 }
 
 /**
