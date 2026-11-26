@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -38,6 +39,17 @@ import { workspaces } from "./workspaces.js";
  * Tenancy: only `workbooks` carries workspace_id. Every other table is reached through it, and composite
  * foreign keys stop a cell or run from joining the rows or columns of two different workbooks.
  */
+
+/**
+ * jsonb read exactly as stored. postgres-js already decodes jsonb, and drizzle's own `jsonb` then parses any
+ * *string* it receives a second time, so a text cell "123" came back as the number 123, "true" as a boolean and
+ * "{...}" as an object. Needed wherever the stored value may be a bare string.
+ */
+const exactJsonb = customType<{ data: unknown; driverData: unknown }>({
+  dataType: () => "jsonb",
+  toDriver: (value) => JSON.stringify(value),
+  fromDriver: (value) => value,
+});
 
 export const WORKBOOK_COLUMN_TYPES_V2 = ["input", "enrichment", "ai", "formula", "action"] as const;
 export type WorkbookColumnTypeV2 = (typeof WORKBOOK_COLUMN_TYPES_V2)[number];
@@ -138,7 +150,7 @@ export const workbookCells = pgTable(
     workbookId: uuid("workbook_id").notNull(),
     rowId: bigint("row_id", { mode: "number" }).notNull(),
     columnId: uuid("column_id").notNull(),
-    value: jsonb("value"),
+    value: exactJsonb("value"),
     state: text("state").$type<WorkbookCellState>().notNull(),
     confidence: real("confidence"),
     creditsCharged: integer("credits_charged").notNull().default(0),

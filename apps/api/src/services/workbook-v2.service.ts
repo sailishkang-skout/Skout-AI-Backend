@@ -23,7 +23,14 @@ export const WORKBOOK_NAME_MAX = 200;
 const COPY_SUFFIX = " (copy)";
 const PG_INTEGER_MAX = 2_147_483_647;
 
-export type WorkbookV2ErrorCode = "NOT_FOUND" | "ROW_LIMIT_EXCEEDED" | "RESTORE_WINDOW_EXPIRED" | "WORKBOOK_NOT_DELETED";
+export type WorkbookV2ErrorCode =
+  | "NOT_FOUND"
+  | "ROW_LIMIT_EXCEEDED"
+  | "RESTORE_WINDOW_EXPIRED"
+  | "WORKBOOK_NOT_DELETED"
+  | "UNKNOWN_COLUMN"
+  | "NOT_AN_INPUT_COLUMN"
+  | "INVALID_CELL_VALUE";
 
 export class WorkbookV2Error extends Error {
   constructor(
@@ -92,8 +99,19 @@ export async function getWorkspaceRowLimit(db: Executor, workspaceId: string): P
 
 const live = (workspaceId: string, id: string) => and(scopedById(workbooks, workspaceId, id), isNull(workbooks.deletedAt));
 
-async function findLive(db: Executor, workspaceId: string, id: string): Promise<WorkbookRecord> {
+/** The workspace's workbook, unless it is deleted. Anything else is "not found". */
+export async function findLiveWorkbook(db: Executor, workspaceId: string, id: string): Promise<WorkbookRecord> {
   const [row] = await db.select().from(workbooks).where(live(workspaceId, id)).limit(1);
+  if (!row) throw notFound();
+  return row;
+}
+
+/**
+ * The same, holding the workbook's row lock until the transaction ends. Every change to a workbook's rows takes it,
+ * so positions, the row count and the row limit are decided one request at a time.
+ */
+export async function lockLiveWorkbook(tx: Executor, workspaceId: string, id: string): Promise<WorkbookRecord> {
+  const [row] = await tx.select().from(workbooks).where(live(workspaceId, id)).limit(1).for("no key update");
   if (!row) throw notFound();
   return row;
 }
@@ -192,7 +210,7 @@ export async function listWorkbooks(db: Db, workspaceId: string, page: number, p
 }
 
 export async function getWorkbook(db: Db, workspaceId: string, id: string): Promise<WorkbookDetail> {
-  return detail(db, await findLive(db, workspaceId, id));
+  return detail(db, await findLiveWorkbook(db, workspaceId, id));
 }
 
 export async function renameWorkbook(db: Db, workspaceId: string, id: string, name: string): Promise<WorkbookDetail> {
@@ -232,7 +250,7 @@ export async function duplicateWorkbook(db: Db, actor: WorkbookActor, sourceId: 
   const created = await db.transaction(
     async (rawTx) => {
       const tx = rawTx as unknown as Db;
-      const source = await findLive(tx, actor.workspaceId, sourceId);
+      const source = await findLiveWorkbook(tx, actor.workspaceId, sourceId);
       const rowLimit = await getWorkspaceRowLimit(tx, actor.workspaceId);
 
       let rows = 0;

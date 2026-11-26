@@ -269,6 +269,21 @@ maybe("Workbooks V2 schema (Postgres)", () => {
       expect(hook).toMatchObject({ enabled: true, lastUsedAt: null });
     });
 
+    it("reads a cell value back exactly as written, including text that looks like JSON", async () => {
+      const { wb, cols, rows } = await seed(await workspace("exact"), null, 1, 1);
+      const where = and(eq(workbookCells.workbookId, wb.id), eq(workbookCells.rowId, rows[0]!.id), eq(workbookCells.columnId, cols[0]!.id));
+      for (const value of ["123", "true", "null", "1e5", '{"a":1}', "[1]", '"quoted"', "00123", "text", 123, 0, true, false, { a: "1" }, ["1"]]) {
+        await db.update(workbookCells).set({ value }).where(where);
+        const [read] = await db.select({ value: workbookCells.value }).from(workbookCells).where(where);
+        expect(read!.value, JSON.stringify(value)).toStrictEqual(value);
+        const [raw] = await sql`select jsonb_typeof(value) as kind from workbook_cells where workbook_id = ${wb.id} and row_id = ${rows[0]!.id}`;
+        expect(raw!.kind, JSON.stringify(value)).toBe(Array.isArray(value) ? "array" : typeof value === "object" ? "object" : typeof value);
+      }
+      await db.update(workbookCells).set({ value: null }).where(where);
+      const [cleared] = await sql`select value is null as empty from workbook_cells where workbook_id = ${wb.id} and row_id = ${rows[0]!.id}`;
+      expect(cleared!.empty).toBe(true);
+    });
+
     it("the public cell selection never returns internal provenance", async () => {
       const { wb, cols, rows } = await seed(await workspace("public"), null, 1, 1);
       const where = and(eq(workbookCells.workbookId, wb.id), eq(workbookCells.rowId, rows[0]!.id), eq(workbookCells.columnId, cols[0]!.id));
