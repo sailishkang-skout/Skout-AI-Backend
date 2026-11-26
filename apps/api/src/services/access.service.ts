@@ -66,7 +66,7 @@ export interface AccessDeps {
 export interface ApproveInput {
   plan: PlanPresetCode;
   credits: number;
-  features: Record<ProductFeature, boolean>;
+  features: Partial<Record<ProductFeature, boolean>>;
   note?: string;
 }
 
