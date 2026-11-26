@@ -25,6 +25,7 @@ import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js"
 import { startCreditReconciliationWorker } from "./workers/credit-reconciliation.worker.js";
 import { startPublicApiMaintenanceWorker } from "./workers/public-api-maintenance.worker.js";
 import { startPublicApiKeyExpiryWorker } from "./workers/public-api-key-expiry.worker.js";
+import { startCreditHoldSweeperWorker } from "./workers/credit-hold-sweeper.worker.js";
 import { startCopsOnboardingEvaluatorWorker } from "./workers/cops-onboarding-evaluator.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
 import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
@@ -82,6 +83,7 @@ async function main() {
   const stopCreditReconciliationWorker = await startCreditReconciliationWorker(config);
   const stopPublicApiMaintenanceWorker = await startPublicApiMaintenanceWorker(config);
   const stopPublicApiKeyExpiryWorker = await startPublicApiKeyExpiryWorker(config);
+  const stopCreditHoldSweeperWorker = await startCreditHoldSweeperWorker(config);
   const stopCopsOnboardingEvaluatorWorker = await startCopsOnboardingEvaluatorWorker(config);
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
   const stopEnrichmentEvidenceRetentionWorker = await startEnrichmentEvidenceRetentionWorker(config);
@@ -155,6 +157,7 @@ async function main() {
     await stopCreditReconciliationWorker();
     await stopPublicApiMaintenanceWorker();
     await stopPublicApiKeyExpiryWorker();
+    await stopCreditHoldSweeperWorker();
     await stopCopsOnboardingEvaluatorWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalActivationSweepWorker();

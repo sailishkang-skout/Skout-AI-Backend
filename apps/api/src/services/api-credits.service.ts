@@ -181,3 +181,40 @@ export async function release(db: Db, holdId: string | null): Promise<{ released
     return { released: true };
   });
 }
+
+export interface ReleasedHold {
+  id: string;
+  workspaceId: string;
+  apiKeyId: string;
+  requestId: string;
+  amount: number;
+  expiresAt: Date;
+}
+
+/**
+ * The hold sweeper (PAPI-032, CRED-2): releases every hold still `held` after its 15-minute expiry,
+ * so credits a crashed or timed-out request reserved become spendable again. Rows another
+ * transaction is committing right now are skipped (SKIP LOCKED) and settle on their own; a hold that
+ * gets committed meanwhile no longer matches `status = 'held'`. Safe to run on several instances.
+ */
+export async function releaseExpiredHolds(db: Db, now = new Date(), batch = 500): Promise<ReleasedHold[]> {
+  const rows = (await db.execute(sql`
+    update ${creditHolds} set status = 'released', settled_at = ${now.toISOString()}::timestamptz
+    where id in (
+      select id from ${creditHolds}
+      where status = 'held' and expires_at <= ${now.toISOString()}::timestamptz
+      order by expires_at
+      limit ${batch}
+      for update skip locked
+    ) and status = 'held'
+    returning id, workspace_id, api_key_id, request_id, amount, expires_at
+  `)) as unknown as Array<{ id: string; workspace_id: string; api_key_id: string; request_id: string; amount: number; expires_at: string | Date }>;
+  return rows.map((r) => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    apiKeyId: r.api_key_id,
+    requestId: r.request_id,
+    amount: r.amount,
+    expiresAt: new Date(r.expires_at),
+  }));
+}

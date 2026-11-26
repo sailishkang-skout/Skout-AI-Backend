@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { createDb, postCreditTransaction, schema } from "@skout/db";
-import { availableCredits, commit, release, reserve, InsufficientApiCreditsError, apiChargeIdempotencyKey } from "./api-credits.service.js";
+import { availableCredits, commit, release, releaseExpiredHolds, reserve, InsufficientApiCreditsError, apiChargeIdempotencyKey } from "./api-credits.service.js";
+import { runCreditHoldSweep } from "../workers/credit-hold-sweeper.worker.js";
 
 /** PAPI-031 against a real, migrated Postgres: reserve → commit → release on the shared wallet. */
 const url = process.env.COPS_TEST_DATABASE_URL;
@@ -125,6 +126,31 @@ maybe("public API credits: reserve, commit, release (PAPI-031)", () => {
     await expect(postCreditTransaction(db, { workspaceId: ws, amount: -5, kind: "consume", action: "search" })).rejects.toMatchObject({ code: "INSUFFICIENT_CREDITS" });
     await postCreditTransaction(db, { workspaceId: ws, amount: -2, kind: "consume", action: "search" });
     expect(await commit(db, hold.holdId, 8, "contacts.phone_find")).toMatchObject({ charged: 8, balance: 0 });
+  });
+
+  it("sweeps holds older than 15 minutes: released, logged, balance restored; fresh and settled holds untouched (PAPI-032)", async () => {
+    const { ws, keyId } = await walletWith(10);
+    const now = new Date();
+    const stale = await reserve(db, { workspaceId: ws, apiKeyId: keyId, requestId: "req_stale", max: 6 }, new Date(now.getTime() - 16 * 60_000));
+    const fresh = await reserve(db, { workspaceId: ws, apiKeyId: keyId, requestId: "req_fresh", max: 3 }, now);
+    const done = await reserve(db, { workspaceId: ws, apiKeyId: keyId, requestId: "req_done", max: 1 }, new Date(now.getTime() - 20 * 60_000));
+    await commit(db, done.holdId, 1, "people.lookup");
+    // The stale hold no longer blocks spending, but it is still "held" until the sweeper frees it.
+    expect(await availableCredits(db, ws, now)).toEqual({ balance: 9, held: 3, available: 6 });
+
+    const released = (await releaseExpiredHolds(db, now)).filter((h) => h.workspaceId === ws);
+    expect(released.map((h) => [h.id, h.amount, h.requestId])).toEqual([[stale.holdId, 6, "req_stale"]]);
+    const statuses = await db.select({ id: schema.creditHolds.id, status: schema.creditHolds.status }).from(schema.creditHolds).where(eq(schema.creditHolds.workspaceId, ws));
+    expect(Object.fromEntries(statuses.map((r) => [r.id, r.status]))).toEqual({ [stale.holdId!]: "released", [fresh.holdId!]: "held", [done.holdId!]: "committed" });
+    expect(await availableCredits(db, ws, now)).toEqual({ balance: 9, held: 3, available: 6 });
+    // A late commit of a swept hold charges nothing.
+    await expect(commit(db, stale.holdId, 6, "people.lookup")).rejects.toMatchObject({ statusCode: 409 });
+    expect((await ledger(ws)).filter((r) => r.kind === "consume")).toHaveLength(1);
+    // Running again finds nothing; the worker's run reports the count.
+    expect((await releaseExpiredHolds(db, now)).filter((h) => h.workspaceId === ws)).toEqual([]);
+    expect(await runCreditHoldSweep(db, new Date(now.getTime() + 16 * 60_000))).toBeGreaterThanOrEqual(1);
+    const [f] = await db.select({ status: schema.creditHolds.status }).from(schema.creditHolds).where(eq(schema.creditHolds.id, fresh.holdId!));
+    expect(f!.status).toBe("released");
   });
 
   it("doesn't count expired holds against the balance", async () => {
