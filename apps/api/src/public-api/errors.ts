@@ -37,3 +37,22 @@ export function publicApiError(code: PublicApiErrorCode, message: string, reques
     body: { error: { type: def.type, code, message, request_id: requestId, doc_url: `${PUBLIC_API_DOCS_ERRORS_URL}#${code}` } },
   };
 }
+
+/** An error the public API returns as-is, in the CONV-6 shape. */
+export class PublicApiError extends Error {
+  readonly statusCode: number;
+  constructor(
+    readonly code: PublicApiErrorCode,
+    message: string,
+    readonly details: Record<string, unknown> = {},
+    status?: number
+  ) {
+    super(message);
+    this.name = "PublicApiError";
+    this.statusCode = status ?? PUBLIC_API_ERROR_CODES[code].status;
+  }
+}
+
+export function isPublicApiErrorCode(code: unknown): code is PublicApiErrorCode {
+  return typeof code === "string" && code in PUBLIC_API_ERROR_CODES;
+}
