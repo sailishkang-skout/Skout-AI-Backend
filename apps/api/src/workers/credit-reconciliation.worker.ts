@@ -21,10 +21,15 @@ export async function runCreditReconciliation(db: Db, triggeredBy = "schedule") 
   for (const m of report.mismatches) {
     log.error("credit ledger mismatch", { ...m, runId: report.runId });
   }
+  // PAPI-035: public API holds, charges and keys. Each one is an alert, like a wallet mismatch.
+  for (const m of report.apiMismatches) {
+    log.error("public API credit mismatch", { ...m, runId: report.runId });
+  }
   log.info("credit reconciliation finished", {
     runId: report.runId,
     walletsChecked: report.walletsChecked,
     mismatches: report.mismatches.length,
+    apiMismatches: report.apiMismatches.length,
   });
   return report;
 }

@@ -24,6 +24,9 @@ export {
   type PostCreditInput,
   type PostCreditResult,
   type CreditMismatch,
+  type ApiCreditMismatch,
+  reconcileApiCredits,
+  STALE_HOLD_GRACE_MS,
   type CreditTransactionRow,
 } from "./credit-ledger.js";
 export {
