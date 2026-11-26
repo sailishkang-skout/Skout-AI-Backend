@@ -19,9 +19,9 @@ import { createPublicApiKey } from "../../services/public-api-keys.service.js";
 import { availableCredits } from "../../services/api-credits.service.js";
 import { publicApiPlugin } from "../plugin.js";
 import { createPublicIdCodec } from "../ids.js";
-import { createEmailFindEndpoint } from "./contacts.js";
+import { createEmailFindEndpoint, createPhoneFindEndpoint } from "./contacts.js";
 
-/** PAPI-055: POST /contacts/email/find on real Postgres; OpenSearch and the provider waterfall faked. */
+/** PAPI-055/056: POST /contacts/email/find and /contacts/phone/find on real Postgres; OpenSearch and the provider waterfall faked. */
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 const PEPPER = randomBytes(32).toString("base64");
@@ -48,6 +48,12 @@ const nothing: Waterfall = (input) => ({
   attempts: [{ order: 1, provider: "hunter", operation: "findEmail", status: "miss", latencyMs: 5, credentialSource: "platform" }],
   creditsUsed: 0,
 });
+const phone = (data: Record<string, unknown> | null, status: "ok" | "miss" | "error" = data ? "ok" : "miss"): Waterfall => (input) => ({
+  prospectId: input.prospectId,
+  results: data ? [{ field: "phone", valueJson: data, value: String(data.mobile ?? data.direct), provider: "cognism", isPrimary: true }] : [],
+  attempts: [{ order: 1, provider: "cognism", operation: "fetchPhone", status, latencyMs: 5, credentialSource: "platform" }],
+  creditsUsed: data ? 1 : 0,
+});
 const allFailed: Waterfall = (input) => ({
   prospectId: input.prospectId,
   results: [],
@@ -55,7 +61,7 @@ const allFailed: Waterfall = (input) => ({
   creditsUsed: 0,
 });
 
-maybe("email find endpoint (PAPI-055)", () => {
+maybe("email and phone find endpoints (PAPI-055, PAPI-056)", () => {
   const { db, sql } = createDb(url as string);
   let app: FastifyInstance;
   let waterfall: Waterfall = nothing;
@@ -88,6 +94,13 @@ maybe("email find endpoint (PAPI-055)", () => {
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": randomUUID() },
       payload: JSON.stringify(body),
     });
+  const findPhone = (key: string, body: Record<string, unknown>) =>
+    app.inject({
+      method: "POST",
+      url: "/api/public/v1/contacts/phone/find",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "idempotency-key": randomUUID() },
+      payload: JSON.stringify(body),
+    });
   const balance = async (ws: string) => (await availableCredits(db, ws)).balance;
   const costRows = async (ws: string) => db.select().from(schema.providerCostEvents).where(eq(schema.providerCostEvents.workspaceId, ws));
 
@@ -110,7 +123,7 @@ maybe("email find endpoint (PAPI-055)", () => {
         enabled: true,
         ids: codec,
       },
-      endpoints: [createEmailFindEndpoint({ env, db, resolveEngine: async () => engine }) as never],
+      endpoints: [createEmailFindEndpoint({ env, db, resolveEngine: async () => engine }) as never, createPhoneFindEndpoint({ env, db, resolveEngine: async () => engine }) as never],
     });
     await app.ready();
   });
@@ -226,5 +239,48 @@ maybe("email find endpoint (PAPI-055)", () => {
     expect(fx.json().data.email).toBe("ada@example.com");
     expect(calls).toHaveLength(0);
     expect(await balance(A.ws)).toBe(before);
+  });
+
+  it("phone: finds a number, charges contacts.phone_find (10), skips the in-app score gate, reuses a known email", async () => {
+    waterfall = found("hedy@acme.com");
+    expect((await find(A.key, { full_name: "Hedy Lamarr", company_domain: "acme.com" })).statusCode).toBe(200);
+    calls.length = 0;
+    waterfall = phone({ mobile: " +1 555 0100 ", direct: "+1 555 0199" });
+    const before = await balance(A.ws);
+    const res = await findPhone(A.key, { full_name: "Hedy Lamarr", company_domain: "acme.com" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({ phone: "+1 555 0100", type: "mobile", person: { full_name: "Hedy Lamarr", company_domain: "acme.com" } });
+    expect(res.json().data.provenance.source_class).toBe("external");
+    expect(res.headers["x-credits-charged"]).toBe("10");
+    expect(await balance(A.ws)).toBe(before - 10);
+    expect(calls[0]).toMatchObject({ fields: ["phone"], email: "hedy@acme.com", leadScore: Number.POSITIVE_INFINITY });
+    expect(res.body.toLowerCase()).not.toContain("cognism");
+    // 30-day repeat: free, no provider call.
+    calls.length = 0;
+    expect((await findPhone(A.key, { full_name: "Hedy Lamarr", company_domain: "acme.com" })).headers["x-credits-charged"]).toBe("0");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("phone: a direct line when there is no mobile; nothing charged for no number, sample data, or providers down", async () => {
+    waterfall = phone({ direct: "+44 20 7946 0001" });
+    expect((await findPhone(A.key, { full_name: "Direct Line", company_domain: "acme.com" })).json().data).toMatchObject({ phone: "+44 20 7946 0001", type: "direct" });
+    const before = await balance(A.ws);
+    waterfall = phone(null);
+    expect((await findPhone(A.key, { full_name: "No Phone", company_domain: "acme.com" })).statusCode).toBe(404);
+    waterfall = phone({ mobile: "+1 000", sampleData: true });
+    expect((await findPhone(A.key, { full_name: "Sample Phone", company_domain: "acme.com" })).statusCode).toBe(404);
+    waterfall = phone(null, "error");
+    expect((await findPhone(A.key, { full_name: "Down Phone", company_domain: "acme.com" })).statusCode).toBe(503);
+    waterfall = nothing; // no phone provider configured at all
+    expect((await findPhone(A.key, { full_name: "Unconfigured", company_domain: "acme.com" })).statusCode).toBe(503);
+    expect(await balance(A.ws)).toBe(before);
+  });
+
+  it("phone: needs contacts:reveal and serves test keys a free fixture", async () => {
+    expect((await findPhone(A.narrowKey, { full_name: "Ada", company_domain: "acme.com" })).statusCode).toBe(403);
+    expect((await findPhone(A.key, { full_name: "Ada" })).statusCode).toBe(422);
+    const fx = await findPhone(A.testKey, { full_name: "Ada", company_domain: "acme.com" });
+    expect(fx.statusCode).toBe(200);
+    expect(fx.json().data.type).toBe("mobile");
   });
 });
