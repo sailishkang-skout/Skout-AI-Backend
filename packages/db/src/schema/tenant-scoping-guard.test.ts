@@ -66,6 +66,8 @@ const UNSCOPED: Record<string, string> = {
   workbook_imports: "child of workbooks",
   workbook_import_issues: "child of workbook_imports (WB2-020), read only by the server while it writes that import's report",
   workbook_import_items: "child of workbook_imports (WB2-021): the prospects one addition is working through",
+  workbook_sheet_sources: "child of workbooks (WB2-025): a Google Sheets tab the workbook takes rows from",
+  workbook_sheet_keys: "child of workbook_sheet_sources (WB2-025): identities of rows already added, read only by the server",
   workbook_views: "child of workbooks",
   workbook_webhooks: "child of workbooks; an inbound token resolves to a workbook, then its workspace",
 };

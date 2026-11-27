@@ -4,6 +4,7 @@ import { schema, scopedById, scopedTo, type Db } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { EntitlementsService } from "./entitlements.service.js";
 import { recordWorkbookActivity, type ActivityActor } from "./workbook-activity-log.js";
+import { copySheetSources } from "./workbook-sheet-copy.js";
 
 /**
  * Workbooks V2 CRUD (WB2-011). Every function takes the workspace id from the authenticated session and
@@ -74,6 +75,23 @@ export type WorkbookV2ErrorCode =
   | "APOLLO_UNKNOWN_STAGE"
   | "APOLLO_SEARCH_REJECTED"
   | "APOLLO_CONNECTION_CHANGED"
+  | "SHEETS_NOT_CONFIGURED"
+  | "SHEETS_NOT_CONNECTED"
+  | "SHEETS_RECONNECT_REQUIRED"
+  | "SHEETS_SCOPE_MISSING"
+  | "SHEETS_NO_ACCESS"
+  | "SHEETS_SPREADSHEET_NOT_FOUND"
+  | "SHEETS_TAB_NOT_FOUND"
+  | "SHEETS_RATE_LIMITED"
+  | "SHEETS_UNAVAILABLE"
+  | "SHEETS_REJECTED"
+  | "SHEETS_INVALID_LINK"
+  | "SHEETS_CONNECTION_CHANGED"
+  | "SHEETS_NOT_YOURS"
+  | "SHEET_INVALID"
+  | "SHEET_IDENTITY_CHANGED"
+  | "SHEET_IMPORT_RUNNING"
+  | "SHEET_MAPPING_CHANGED"
   | "ROWS_CHANGED"
   | "NOT_IMPLEMENTED";
 
@@ -331,6 +349,8 @@ export async function duplicateWorkbook(db: Db, actor: WorkbookActor, sourceId: 
       }
 
       if (rows > 0) await copyRowsAndCells(tx, source.id, copy!.id, columnIds);
+      // Only with the rows: a copy without them must be able to pull them all.
+      if (input.includeRows) await copySheetSources(tx, source.id, copy!.id, columnIds);
 
       // The copy's history starts with what it was given.
       for (const c of [...columns].sort((a, b) => a.position - b.position)) {

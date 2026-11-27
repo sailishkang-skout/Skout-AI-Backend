@@ -16,7 +16,7 @@ import { eq, isNotNull } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { inboxes } from "./schema/inbox.js";
-import { crmConnections, workspaceIntegrations } from "./schema/integrations.js";
+import { crmConnections, googleSheetsConnections, workspaceIntegrations } from "./schema/integrations.js";
 import { calendarConnections } from "./schema/crm.js";
 import { reencrypt, reencryptInlineRef } from "./rotate-crypto.js";
 
@@ -135,6 +135,31 @@ try {
     }
     if (Object.keys(patch).length) {
       await db.update(calendarConnections).set(patch).where(eq(calendarConnections.id, row.id));
+      updated += Object.keys(patch).length;
+    }
+  }
+
+  const sheetsRows = await db
+    .select({ id: googleSheetsConnections.id, access: googleSheetsConnections.accessTokenEncrypted, refresh: googleSheetsConnections.refreshTokenEncrypted })
+    .from(googleSheetsConnections);
+
+  for (const row of sheetsRows) {
+    const patch: Partial<{ accessTokenEncrypted: string; refreshTokenEncrypted: string }> = {};
+    for (const [field, value] of [
+      ["accessTokenEncrypted", row.access],
+      ["refreshTokenEncrypted", row.refresh],
+    ] as const) {
+      try {
+        const next = reencrypt(value, oldKey, newKey);
+        if (next) patch[field] = next;
+        else if (value) skipped++;
+      } catch (err) {
+        failed++;
+        console.error(`[google_sheets_connections.${field}] failed id=${row.id}`, err);
+      }
+    }
+    if (Object.keys(patch).length) {
+      await db.update(googleSheetsConnections).set(patch).where(eq(googleSheetsConnections.id, row.id));
       updated += Object.keys(patch).length;
     }
   }

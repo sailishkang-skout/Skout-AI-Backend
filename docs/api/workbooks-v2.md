@@ -197,7 +197,7 @@ Event = { id, type, occurredAt, actor: { id, name, email } | null, details }
 
 | `type` | `details` |
 |---|---|
-| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request. CRM imports add `object` and `viewName?`; Apollo imports also add `status`, `duplicates`, `skipped` and `failed` (see [Apollo import](#apollo-import)) |
+| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request. CRM imports add `object` and `viewName?`; Apollo imports also add `status`, `duplicates`, `skipped` and `failed` (see [Apollo import](#apollo-import)); Google Sheets imports add those and `spreadsheetName`, `tabName`, `pull` and `alreadyImported` (see [Google Sheets](#google-sheets)) |
 | `rows.deleted` | `rows`, `rowCount` |
 | `column.added` | `columnId`, `columnName`, `columnType`, `operation`, `copiedFromWorkbookId?` |
 | `column.updated` | `columnId`, `columnName`, `renamedFrom?`, `settingsChanged?` (setting names), `dataType?: { from, to }` |
@@ -242,7 +242,7 @@ Three steps: send the file, confirm how it maps, follow it. Nothing is added to 
 | `GET /:id/imports/:importId/report` | `enrichment:read` | | the skipped-rows CSV | `404 NOT_FOUND` / `REPORT_NOT_AVAILABLE` |
 
 ```ts
-Import = { id, workbookId, sourceType /* csv | list | smart_list | search | hubspot | apollo */, sourceName, truncated, status, fileName, fileBytes,
+Import = { id, workbookId, sourceType /* csv | list | smart_list | search | google_sheets | hubspot | apollo */, sourceName, truncated, status, fileName, fileBytes,
            counts: { total, processed, imported, duplicates, skipped, failed },
            progress /* 0-100, processed / total */, background, error: { code, message } | null,
            report: { available, rows },
@@ -518,3 +518,104 @@ them.
 | `NOTHING_TO_ADD` (422) | The selection is empty |
 
 The key needs Apollo API access to contact search, plus lists and contact stages to offer those, or a master key.
+
+## Google Sheets
+
+Rows from one tab of a Google spreadsheet, imported once and then topped up when someone asks. Nothing syncs on its own
+and nothing is written to Google.
+
+### Connecting
+
+Each member connects their **own** Google account within a workspace. The only permission asked for is
+`https://www.googleapis.com/auth/spreadsheets.readonly`. Google offers no permission that is both read-only and limited
+to chosen files, so this one can read any spreadsheet the person can; Skout reads only the one whose link they paste.
+Skout asks for no Drive access, so it can't list files.
+
+| Method and path (`/api/v1`) | Answer |
+| --- | --- |
+| `GET /google-sheets/connection` | `{ configured, status: "connected" \| "needs_reauth" \| "not_connected", connectedAt }` |
+| `POST /google-sheets/connection/start` | `{ authorizationUrl }` |
+| `POST /google-sheets/connection` with `{ code, state }` | The connection |
+| `DELETE /google-sheets/connection` | `{ disconnected, revokedAtGoogle }` |
+
+Any signed-in member may use them, for themselves only. Google returns the browser to the app's
+`/settings/google-sheets` page, which sends `code` and `state` back as the signed-in person. A `state` works once, for
+ten minutes, and only for the member and workspace that started, so nobody's consent can be attached to another's
+account. Errors: `google_sheets_not_configured` (503), `invalid_oauth_state`, `google_permission_not_granted`,
+`google_sign_in_failed` (400) and `google_unavailable` (502).
+
+Tokens are stored encrypted with `INTEGRATION_ENCRYPTION_KEY` (the rotation script covers them) and are never returned.
+Disconnecting deletes them, cancels that person's unconfirmed sheet previews, stops their running sheet imports, and
+revokes the grant at Google (`revokedAtGoogle: false` if Google didn't confirm). Rows stay.
+
+### Importing a tab
+
+| Method and path (`/api/v1/workbooks-v2`) | Permission |
+| --- | --- |
+| `GET /:id/sheet-sources` | `enrichment:read` |
+| `POST /:id/sheets/inspect` with `{ spreadsheet }` | `enrichment:capture` |
+| `POST /:id/sheets-imports` with `{ spreadsheet, sheetId }` (accepts `Idempotency-Key`) | `enrichment:capture` |
+| `POST /:id/sheet-sources/:sourceId/pull` with `{}` (accepts `Idempotency-Key`) | `enrichment:capture` |
+| `DELETE /:id/sheet-sources/:sourceId` | `enrichment:capture` |
+
+1. `sheets/inspect` takes a Google Sheets link or id and answers `{ spreadsheetId, name, linkedSheetId, tabs: [{
+   sheetId, name, rows, columns, sourceId }] }`. `rows` and `columns` are the grid's size.
+2. `sheets-imports` copies the tab and returns an import `awaiting_confirmation` with the usual `preview`, plus
+   `preview.sheet` `{ spreadsheetName, tabName, unique, source }`. Row 1 names the columns (an empty or repeated name is
+   completed with the column's letter). Empty rows are ignored. Up to 100,000 rows, 500 columns and 50 MB. **What was
+   previewed is what is imported**, however the sheet changes before the confirm. Only the person who asked sees the
+   preview (`preview` is null for others).
+3. Confirm with `POST /:id/imports/:importId/confirm`, as for CSV, adding `idColumn` (a heading's position, or null).
+   Only the person who previewed may confirm, through the same connection. Over 1,000 rows run in the background.
+
+An import's `sourceType` is `google_sheets`, `sourceName` the tab, and `sheet` `{ sourceId, spreadsheetName, tabName,
+pull }`. The report's first column is the row number in the sheet.
+
+### Recognising rows
+
+Sheets gives rows no lasting id, and a read-only app can't set one. So each tab imported into a workbook becomes a
+**source** that remembers, by identity, every row it has added:
+
+- **With an ID column** (`idColumn`): the value in that column. Edits to other columns don't add the row again. A row
+  with nothing there is skipped; a value used twice adds only its first row.
+- **Without one**: what the row holds in the columns of the first import. Moving rows, adding columns and editing other
+  columns don't matter, but **a row edited in those columns comes in again as a new row**. Identical rows are counted, so
+  each is added once.
+
+A later import of the same tab must recognise rows the same way (`409 SHEET_IDENTITY_CHANGED`). Forgetting the source
+(`DELETE`) removes what it remembers, so its rows can then be added again.
+
+### Pull new rows
+
+Reads the tab again through the connection of **whoever asks**, who must be able to open it, and adds only rows the
+source has not added. Existing rows are never changed or removed. A row skipped as a duplicate or as invalid was not
+added, so a later pull looks at it again; a row deleted from the workbook is not added back. Columns follow their
+headings, so they may be moved in the sheet. The answer is `{ data: Import, alreadyRunning }`: while a pull of a tab is
+under way, asking again returns it. `counts.alreadyImported` says how many rows were already added. Tabs that held more
+than 1,000 rows are pulled in the background, as is one found to have grown past that.
+
+A workbook copied with its rows keeps its sources.
+
+| Code | Meaning |
+| --- | --- |
+| `SHEETS_NOT_CONFIGURED` (503) | No Google app on this server |
+| `SHEETS_NOT_CONNECTED`, `SHEETS_RECONNECT_REQUIRED`, `SHEETS_SCOPE_MISSING` (409) | Connect or reconnect |
+| `SHEETS_CONNECTION_CHANGED` (409), `SHEETS_NOT_YOURS` (403) | The preview was made with another connection, or by someone else |
+| `SHEETS_INVALID_LINK`, `SHEETS_NO_ACCESS`, `SHEETS_SPREADSHEET_NOT_FOUND`, `SHEETS_TAB_NOT_FOUND`, `SHEETS_REJECTED`, `SHEET_INVALID`, `NOTHING_TO_ADD` (422) | The sheet can't be used |
+| `SHEET_IDENTITY_CHANGED`, `SHEET_IMPORT_RUNNING`, `SHEET_MAPPING_CHANGED` (409) | The source can't take this now |
+| `SHEETS_RATE_LIMITED` (429), `SHEETS_UNAVAILABLE` (502) | Try again later |
+
+An import that fails after starting carries these in `error`, plus `SHEETS_DISCONNECTED`, `SHEET_HEADING_MISSING` and
+`MAPPING_CHANGED`. Reads are retried with growing waits; a background pull that still can't read Google is tried again
+later and given up after six hours.
+
+### Before using it
+
+1. Create a Google Cloud project **used only for this**, enable the Google Sheets API, and add the consent screen with
+   the `spreadsheets.readonly` scope. Google classes it as sensitive: people outside your organisation need the app
+   verified by Google.
+2. Create a web OAuth client with the redirect `<app URL>/app/settings/google-sheets`.
+3. Set `GOOGLE_SHEETS_CLIENT_ID` and `GOOGLE_SHEETS_CLIENT_SECRET`.
+
+A separate project matters: revoking at Google removes everything the person granted that project, so sharing the
+Calendar and mailbox app would disconnect those too.

@@ -9,7 +9,10 @@ import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, MAX_IMPORT_BYTES, inspectCsv, type CsvDelimiter, type CsvInspection } from "./workbook-import-csv.js";
 import { checkMapping, suggestMapping, type ColumnMapping, type DedupeChoice, type ExistingColumn, type HeaderSuggestion, type ImportPlan, type MatchKey, type PlannedColumn } from "./workbook-import-plan.js";
 import { UploadTooLarge, receiveUpload, uploadKey, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
-import { IMPORT_SOURCE_TYPES, RetryLater, isCrmSource, isRecordSource } from "./workbook-import-core.js";
+import { IMPORT_SOURCE_TYPES, RetryLater, isCrmSource, isFileSource, isRecordSource } from "./workbook-import-core.js";
+import type { SheetImportPlan } from "./workbook-sheet-runner.js";
+import type { SheetsReader } from "./workbook-sheets-access.js";
+import { checkSheetConfirm, linkSheetSource, type SheetPreview } from "./workbook-sheet-confirm.js";
 import type { CrmAccess } from "./workbook-crm-access.js";
 import type { CrmImportPlan } from "./workbook-crm-runner.js";
 import type { CrmPlan } from "./workbook-crm.service.js";
@@ -44,15 +47,19 @@ interface StoredPreview {
   headers: CsvInspection["headers"];
   rows: CsvInspection["preview"];
   suggestions: HeaderSuggestion[];
+  /** Google Sheets only. */
+  sheet?: SheetPreview;
 }
 
 export interface ImportDto {
   id: string;
   workbookId: string;
-  /** csv, list, smart_list, search, a CRM or apollo. */
+  /** csv, list, smart_list, search, google_sheets, a CRM or apollo. */
   sourceType: string;
-  /** The list, smart list, CRM view or Apollo list rows came from. */
+  /** The list, smart list, CRM view, Apollo list or sheet tab rows came from. */
   sourceName: string | null;
+  /** For a Google Sheets import, the tab being read. */
+  sheet: { sourceId: string | null; spreadsheetName: string; tabName: string; pull: boolean } | null;
   /** For a CRM import, what is being read. */
   crm: { provider: string; object: "contact" | "company" } | null;
   /**
@@ -70,7 +77,7 @@ export interface ImportDto {
   background: boolean;
   error: { code: string; message: string } | null;
   report: { available: boolean; rows: number };
-  /** Only while awaiting confirmation. */
+  /** Only while awaiting confirmation. A sheet's preview is shown only to whoever asked for it. */
   preview: StoredPreview | null;
   /** Only once confirmed. */
   mapping: { columns: Array<{ header: number; headerName: string; columnId: string; columnName: string }>; dedupe: { key: string; header?: number } } | null;
@@ -79,20 +86,25 @@ export interface ImportDto {
   finishedAt: string | null;
 }
 
-export function toImportDto(record: ImportRecord, opts: { preview?: boolean } = {}): ImportDto {
+export function toImportDto(record: ImportRecord, opts: { preview?: boolean; viewerId?: string | null } = {}): ImportDto {
+  const sheet = record.sourceType === "google_sheets" ? ((record.plan as unknown as SheetImportPlan | null)?.sheet ?? null) : null;
+  // What a sheet holds was read through one person's Google account; until they add it, only they see it.
+  const shown = opts.preview && record.status === "awaiting_confirmation" && (record.sourceType !== "google_sheets" || record.createdBy === opts.viewerId);
   const counts = countsOf(record.counts);
   // What was read from a CRM or Apollo, a page at a time.
   const read = isRecordSource(record.sourceType) ? ((record.plan as unknown as { crm?: CrmPlan } | null)?.crm ?? null) : null;
   // Only imports with columns to map have a mapping: files, and CRM or Apollo selections once confirmed.
-  const mapped = record.sourceType === "csv" || (read !== null && record.confirmedAt !== null);
+  // A pull has its mapping once it has read the tab.
+  const mapped = record.sourceType === "csv" || ((read !== null || sheet !== null) && record.confirmedAt !== null);
   const plan = mapped ? (record.plan as unknown as ImportPlan | null) : null;
-  const addition = record.sourceType === "csv" || isRecordSource(record.sourceType) ? null : (record.plan as unknown as ProspectPlan | null);
+  const addition = isFileSource(record.sourceType) || isRecordSource(record.sourceType) ? null : (record.plan as unknown as ProspectPlan | null);
   const progress = record.status === "completed" ? 100 : counts.total ? Math.floor((counts.processed * 100) / counts.total) : 0;
   return {
     id: record.id,
     workbookId: record.workbookId,
     sourceType: record.sourceType,
-    sourceName: addition?.source.name ?? read?.viewName ?? null,
+    sourceName: addition?.source.name ?? read?.viewName ?? sheet?.tabName ?? null,
+    sheet: sheet ? { sourceId: record.sheetSourceId, spreadsheetName: sheet.spreadsheetName, tabName: sheet.tabName, pull: sheet.pull } : null,
     crm: read && isCrmSource(record.sourceType) ? { provider: read.provider, object: read.object } : null,
     truncated: addition?.truncated ?? read?.truncated ?? null,
     status: record.status,
@@ -100,11 +112,11 @@ export function toImportDto(record: ImportRecord, opts: { preview?: boolean } = 
     fileBytes: record.fileBytes ?? 0,
     counts,
     progress,
-    background: addition ? addition.background : (read?.background ?? counts.total > SYNC_ROW_LIMIT),
+    background: addition ? addition.background : (read?.background ?? sheet?.background ?? counts.total > SYNC_ROW_LIMIT),
     error: record.error,
     report: { available: record.errorReportFile !== null, rows: counts.duplicates + counts.skipped + counts.failed },
-    preview: opts.preview && record.status === "awaiting_confirmation" ? (record.preview as unknown as StoredPreview | null) : null,
-    mapping: plan
+    preview: shown ? (record.preview as unknown as StoredPreview | null) : null,
+    mapping: plan?.columns
       ? {
           columns: plan.columns.map((c) => ({ header: c.header, headerName: plan.headers[c.header] ?? "", columnId: c.columnId, columnName: c.name })),
           dedupe: plan.dedupe.key === "none" ? { key: "none" } : { key: plan.dedupe.key, header: plan.dedupe.header },
@@ -169,7 +181,7 @@ export async function assertRoomForAnotherImport(db: Db, workspaceId: string): P
 /** Runs a confirmed import now, or queues it when it is large. */
 export async function startImport(
   db: Db,
-  deps: { storage: ImportStorage; queue: ImportQueue; directory?: ProspectDirectory; crm?: CrmAccess },
+  deps: { storage: ImportStorage; queue: ImportQueue; directory?: ProspectDirectory; crm?: CrmAccess; sheets?: SheetsReader },
   job: { importId: string; workspaceId: string },
   background: boolean
 ): Promise<void> {
@@ -180,7 +192,7 @@ export async function startImport(
     return;
   }
   try {
-    await processImport(db, deps.storage, importId, deps.directory, deps.crm);
+    await processImport(db, deps.storage, importId, deps.directory, deps.crm, deps.sheets);
   } catch (error) {
     if (error instanceof RetryLater) {
       // Carry on in the background, where there is time to wait.
@@ -281,8 +293,8 @@ export async function createImport(db: Db, storage: ImportStorage, actor: Workbo
   }));
 }
 
-export async function getImport(db: Db, workspaceId: string, workbookId: string, importId: string): Promise<ImportDto> {
-  return toImportDto(await requireImport(db, workspaceId, workbookId, importId), { preview: true });
+export async function getImport(db: Db, workspaceId: string, workbookId: string, importId: string, viewerId?: string | null): Promise<ImportDto> {
+  return toImportDto(await requireImport(db, workspaceId, workbookId, importId), { preview: true, viewerId });
 }
 
 /** The workbook's latest imports, newest first, without previews. */
@@ -300,6 +312,8 @@ export async function listImports(db: Db, workspaceId: string, workbookId: strin
 export interface ImportChoice {
   columns: ColumnMapping[];
   dedupe: DedupeChoice;
+  /** Google Sheets only: the heading position of the column that identifies rows, or null to go by their contents. */
+  idColumn?: number | null;
 }
 
 /**
@@ -308,7 +322,7 @@ export interface ImportChoice {
  */
 export async function confirmImport(
   db: Db,
-  deps: { storage: ImportStorage; queue: ImportQueue; crm?: CrmAccess },
+  deps: { storage: ImportStorage; queue: ImportQueue; crm?: CrmAccess; sheets?: SheetsReader },
   actor: WorkbookActor,
   workbookId: string,
   importId: string,
@@ -320,6 +334,11 @@ export async function confirmImport(
   if (waiting.status !== "awaiting_confirmation") throw stateConflict(waiting.status);
   const crm = isRecordSource(waiting.sourceType) ? (waiting.plan as unknown as { crm: CrmPlan }).crm : null;
   if (crm) await checkCrm?.(crm);
+  const fromSheet = waiting.sourceType === "google_sheets";
+  if (!fromSheet && choice.idColumn !== undefined) {
+    throw new WorkbookV2Error("INVALID_IMPORT_MAPPING", 422, "Only a Google Sheets import has a column that identifies rows.", { errors: [{ path: "idColumn", code: "DEDUPE_COLUMN_INVALID", message: "Only a Google Sheets import has a column that identifies rows." }] });
+  }
+  if (fromSheet) await checkSheetConfirm(db, deps.sheets!, actor, waiting);
   // A selection the CRM would not count could be any size.
   const background = (crm !== null && crm.matched === null) || countsOf(waiting.counts).total > SYNC_ROW_LIMIT;
   // Checked before anything changes, so an import is not left half-started.
@@ -377,15 +396,24 @@ export async function confirmImport(
           : { key: choice.dedupe.key as MatchKey, header: keyHeader!, columnId: planned.find((c) => c.header === keyHeader)!.columnId },
       requestId: actor.requestId ?? null,
     };
-    const confirmed: ImportPlan | CrmImportPlan = crm ? { ...plan, crm: { ...crm, background } } : plan;
+    const linked = fromSheet ? await linkSheetSource(tx, actor, record, plan, choice.idColumn ?? null, background) : null;
+    const confirmed: ImportPlan | CrmImportPlan | SheetImportPlan = linked ? { ...plan, sheet: linked.sheet } : crm ? { ...plan, crm: { ...crm, background } } : plan;
     await tx
       .update(workbookImports)
-      .set({ status: "queued", plan: confirmed as unknown as Record<string, unknown>, preview: null, createdBy: actor.userId, confirmedAt: sql`now()`, updatedAt: sql`now()` })
+      .set({
+        status: "queued",
+        plan: confirmed as unknown as Record<string, unknown>,
+        preview: null,
+        createdBy: actor.userId,
+        confirmedAt: sql`now()`,
+        updatedAt: sql`now()`,
+        ...(linked ? { sheetSourceId: linked.sheet.sourceId, counts: { ...countsOf(record.counts), alreadyImported: 0 } } : {}),
+      })
       .where(eq(workbookImports.id, importId));
   }));
 
   await startImport(db, deps, { importId, workspaceId: actor.workspaceId }, background);
-  return { background, data: await getImport(db, actor.workspaceId, workbookId, importId) };
+  return { background, data: await getImport(db, actor.workspaceId, workbookId, importId, actor.userId) };
 }
 
 /** Abandons an import that has not been confirmed, and removes its file. */

@@ -11,6 +11,8 @@ import {
   workbookImports,
   workbookRows,
   workbookRuns,
+  workbookSheetKeys,
+  workbookSheetSources,
   workbooks,
   workbookViews,
   workbookWebhooks,
@@ -24,8 +26,8 @@ import {
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 
-const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks, workbookImportIssues, workbookImportItems];
-const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks", "workbook_import_issues", "workbook_import_items"];
+const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks, workbookImportIssues, workbookImportItems, workbookSheetSources, workbookSheetKeys];
+const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks", "workbook_import_issues", "workbook_import_items", "workbook_sheet_sources", "workbook_sheet_keys"];
 const LEGACY = ["enrichment_workbooks", "enrichment_workbook_runs", "workbook_column_definitions", "workbook_column_values"];
 
 maybe("Workbooks V2 schema (Postgres)", () => {

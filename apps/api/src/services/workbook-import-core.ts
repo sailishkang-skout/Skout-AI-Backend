@@ -11,7 +11,9 @@ const { workbookImports } = schema;
 export const CRM_IMPORT_SOURCES = ["hubspot", "salesforce", "pipedrive"] as const;
 /** Everything read from outside Skout a page at a time: the CRMs, and saved Apollo contacts (WB2-024). */
 const RECORD_IMPORT_SOURCES = [...CRM_IMPORT_SOURCES, "apollo"] as const;
-export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search", ...RECORD_IMPORT_SOURCES] as const;
+export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search", "google_sheets", ...RECORD_IMPORT_SOURCES] as const;
+/** Imports that read rows from a stored file: an uploaded CSV, or a copy of a Google Sheets tab (WB2-025). */
+export const isFileSource = (sourceType: string) => sourceType === "csv" || sourceType === "google_sheets";
 export const isCrmSource = (sourceType: string) => (CRM_IMPORT_SOURCES as readonly string[]).includes(sourceType);
 export const isRecordSource = (sourceType: string) => (RECORD_IMPORT_SOURCES as readonly string[]).includes(sourceType);
 export type ImportSourceType = (typeof IMPORT_SOURCE_TYPES)[number];
@@ -23,11 +25,14 @@ export interface ImportCounts {
   duplicates: number;
   skipped: number;
   failed: number;
+  /** Google Sheets only: rows an earlier import or pull of the tab already added. */
+  alreadyImported?: number;
 }
 
 export function countsOf(stored: Record<string, number> | null | undefined): ImportCounts {
   const n = (key: keyof ImportCounts) => stored?.[key] ?? 0;
-  return { total: n("total"), processed: n("processed"), imported: n("imported"), duplicates: n("duplicates"), skipped: n("skipped"), failed: n("failed") };
+  const counts = { total: n("total"), processed: n("processed"), imported: n("imported"), duplicates: n("duplicates"), skipped: n("skipped"), failed: n("failed") };
+  return stored?.alreadyImported === undefined ? counts : { ...counts, alreadyImported: stored.alreadyImported };
 }
 
 /** Something retrying cannot fix. */
@@ -81,7 +86,7 @@ export const lockImport = async (tx: Db, importId: string) => (await tx.select()
 export type Issue = { record: number; line: number; kind: (typeof schema.WORKBOOK_IMPORT_ISSUE_KINDS)[number]; reason: string; values: string[] };
 
 /** Inside a chunk's transaction: stores the rows it did not add and moves the import past the chunk. */
-export async function recordChunk(tx: Db, importId: string, counts: ImportCounts, chunk: { processed: number; imported: number }, issues: Issue[]): Promise<void> {
+export async function recordChunk(tx: Db, importId: string, counts: ImportCounts, chunk: { processed: number; imported: number; alreadyImported?: number }, issues: Issue[]): Promise<void> {
   if (issues.length) {
     await tx.execute(sql`
       INSERT INTO workbook_import_issues (import_id, record, line, kind, reason, "values")
@@ -97,6 +102,7 @@ export async function recordChunk(tx: Db, importId: string, counts: ImportCounts
     duplicates: counts.duplicates + duplicates,
     skipped: counts.skipped + skipped,
     failed: counts.failed + issues.length - duplicates - skipped,
+    ...(counts.alreadyImported === undefined ? {} : { alreadyImported: counts.alreadyImported + (chunk.alreadyImported ?? 0) }),
   };
   await tx.update(workbookImports).set({ counts: { ...next }, updatedAt: sql`now()` }).where(eq(workbookImports.id, importId));
 }

@@ -311,6 +311,13 @@ const envSchema = z
     HUBSPOT_COMPANY_SCOPES: z.enum(["true", "false"]).optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
+    /**
+     * WB2-025: Google Sheets import. A separate OAuth client in its own Google Cloud project, so that revoking it does
+     * not also revoke Calendar or mailbox access. The redirect defaults to the app's /settings/google-sheets page.
+     */
+    GOOGLE_SHEETS_CLIENT_ID: z.string().optional(),
+    GOOGLE_SHEETS_CLIENT_SECRET: z.string().optional(),
+    GOOGLE_SHEETS_REDIRECT_URI: z.string().url().optional(),
     /** AUTH-ADI-09 / AUTH-BE-16 — dedicated Google OAuth credentials for login */
     GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
     GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),

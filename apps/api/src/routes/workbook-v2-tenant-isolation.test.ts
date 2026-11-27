@@ -52,6 +52,8 @@ const {
   workbookRuns,
   workbookImports,
   workbookViews,
+  workbookSheetKeys,
+  workbookSheetSources,
   workbookWebhooks,
   creditBalances,
   sequences,
@@ -105,6 +107,8 @@ interface Ids {
   webhook: string;
   /** An entry in the workbook's activity log. */
   activity: string;
+  /** A Google Sheets tab the workbook pulls from. */
+  sheetSource: string;
   /** Idempotency keys this workspace has already used. */
   duplicateKey: string;
   rowKey: string;
@@ -122,7 +126,7 @@ function ghostIds(): Ids {
   const id = () => randomUUID();
   return {
     workspace: id(), workbook: id(), deleted: id(), input: id(), spare: id(), formula: id(), enrichment: id(), ai: id(), action: id(), crm: id(),
-    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), smartList: id(), prospect: id(), view: id(), webhook: id(), activity: id(),
+    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), smartList: id(), prospect: id(), view: id(), webhook: id(), activity: id(), sheetSource: id(),
     duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(), pasteKey: id(),
   };
 }
@@ -216,6 +220,18 @@ function notFoundCases(): Case[] {
   on("GET /workbooks-v2/:id/apollo-source", "see Apollo through their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/apollo-source` }));
   // Neither tenant has saved an Apollo key, so an owner is told that (409) and Apollo is not called.
   on("POST /workbooks-v2/:id/apollo-imports", "import from Apollo into their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/apollo-imports`, body: { fields: ["email"], search: {} } }), 409);
+
+  const link = "https://docs.google.com/spreadsheets/d/isolation-sheet-abcdefghijklmnop/edit";
+  on("GET /workbooks-v2/:id/sheet-sources", "see which sheets their workbook pulls from", (_, t) => ({ method: "GET", path: `/${t.workbook}/sheet-sources` }));
+  // Neither tenant has connected Google, so an owner is told that (409) and Google is not called.
+  on("POST /workbooks-v2/:id/sheets/inspect", "read a spreadsheet through their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/sheets/inspect`, body: { spreadsheet: link } }), 409);
+  on("POST /workbooks-v2/:id/sheets-imports", "import a sheet into their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/sheets-imports`, body: { spreadsheet: link, sheetId: 0 } }), 409);
+  const pullSheet = "POST /workbooks-v2/:id/sheet-sources/:sourceId/pull";
+  on(pullSheet, "pull their sheet into their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/sheet-sources/${t.sheetSource}/pull`, body: {} }), 409);
+  on(pullSheet, "pull their sheet through my workbook", (m, t) => ({ method: "POST", path: `/${m.workbook}/sheet-sources/${t.sheetSource}/pull`, body: {} }), 409);
+  const forgetSheet = "DELETE /workbooks-v2/:id/sheet-sources/:sourceId";
+  on(forgetSheet, "stop their workbook pulling from a sheet", (_, t) => ({ method: "DELETE", path: `/${t.workbook}/sheet-sources/${t.sheetSource}` }));
+  on(forgetSheet, "remove their sheet through my workbook", (m, t) => ({ method: "DELETE", path: `/${m.workbook}/sheet-sources/${t.sheetSource}` }));
 
   const editRow = "PATCH /workbooks-v2/:id/rows/:rowId";
   on(editRow, "edit their cell", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${t.row1}`, body: { cells: { [t.input]: "overwritten" } } }));
@@ -537,6 +553,11 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         preview: { delimiter: ",", headers: [{ index: 0, name: "Name", fits: ["text"], filled: 1 }], rows: [{ line: 2, values: [`${marker} uploaded`] }], suggestions: [] },
       },
     ]);
+    await db.insert(workbookSheetSources).values({
+      id: ids.sheetSource, workbookId: ids.workbook, spreadsheetId: `${marker}-spreadsheet`, sheetId: 0, spreadsheetName: marker, tabName: marker, createdBy: userId,
+      mapping: { columns: [{ header: "Name", columnId: ids.input, dataType: "text" }], dedupe: { key: "none", header: null }, idHeader: null, identity: [ids.input] },
+    });
+    await db.insert(workbookSheetKeys).values({ sourceId: ids.sheetSource, key: marker });
     await db.insert(workbookViews).values({ id: ids.view, workbookId: ids.workbook, name: marker, hiddenColumns: [ids.spare] });
     await db.insert(workbookWebhooks).values({ id: ids.webhook, workbookId: ids.workbook, tokenHash: `${marker}-token-hash` });
     // One log entry on each workbook, so a log that mixed workbooks up would show it.
@@ -562,6 +583,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         'runs', (select jsonb_agg(x order by x.id) from workbook_runs x where x.workbook_id in (select id from books)),
         'imports', (select jsonb_agg(x order by x.id) from workbook_imports x where x.workbook_id in (select id from books)),
         'importIssues', (select jsonb_agg(x order by x.import_id, x.record) from workbook_import_issues x join workbook_imports i on i.id = x.import_id where i.workbook_id in (select id from books)),
+        'sheetSources', (select jsonb_agg(x order by x.id) from workbook_sheet_sources x where x.workbook_id in (select id from books)),
+        'sheetKeys', (select jsonb_agg(x order by x.source_id, x.key) from workbook_sheet_keys x join workbook_sheet_sources s on s.id = x.source_id where s.workbook_id in (select id from books)),
+        'sheetConnections', (select jsonb_agg(x order by x.id) from google_sheets_connections x where x.workspace_id = ${w}),
         'views', (select jsonb_agg(x order by x.id) from workbook_views x where x.workbook_id in (select id from books)),
         'webhooks', (select jsonb_agg(x order by x.id) from workbook_webhooks x where x.workbook_id in (select id from books)),
         'audit', (select jsonb_agg(x order by x.id) from audit_logs x where x.workspace_id = ${w}),

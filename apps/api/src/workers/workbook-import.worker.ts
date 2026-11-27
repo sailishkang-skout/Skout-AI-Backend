@@ -8,6 +8,7 @@ import { describeFailure, runImportJob, sweepImports, type ImportJob } from "../
 import { importStorage } from "../services/workbook-import-storage.js";
 import { prospectDirectory } from "../services/prospect-directory.js";
 import { crmAccess } from "../services/workbook-crm-access.js";
+import { sheetsReader } from "../services/workbook-sheets-access.js";
 import { WORKBOOK_IMPORT_QUEUE, closeWorkbookImportQueue, workbookImportQueue } from "./workbook-import.queue.js";
 
 const log = createLogger("workbook-import.worker");
@@ -35,6 +36,7 @@ export async function startWorkbookImportWorker(config: Env): Promise<() => Prom
   const { db, sql } = createDb(config.DATABASE_URL);
   const directory = prospectDirectory(config);
   const crm = crmAccess(db, config);
+  const sheets = sheetsReader(db, config);
   const connection = redisBullMqConnection(config.REDIS_URL);
 
   const worker = new Worker<ImportJob>(
@@ -43,7 +45,7 @@ export async function startWorkbookImportWorker(config: Env): Promise<() => Prom
       const { importId, workspaceId } = job.data;
       log.info("Processing workbook import", { importId, workspaceId, attempt: job.attemptsMade });
       const lastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
-      await withSpan("workbook-import.worker.process", () => runImportJob(db, storage, importId, lastAttempt, directory, crm));
+      await withSpan("workbook-import.worker.process", () => runImportJob(db, storage, importId, lastAttempt, directory, crm, sheets));
     },
     { connection, concurrency: CONCURRENCY }
   );

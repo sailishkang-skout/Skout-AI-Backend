@@ -228,6 +228,46 @@ export type WorkbookImportStatus = (typeof WORKBOOK_IMPORT_STATUSES)[number];
 export const WORKBOOK_IMPORT_ISSUE_KINDS = ["duplicate", "invalid", "malformed", "skipped", "over_limit"] as const;
 export type WorkbookImportIssueKind = (typeof WORKBOOK_IMPORT_ISSUE_KINDS)[number];
 
+/**
+ * One tab of one Google spreadsheet a workbook takes rows from (WB2-025): how its headers map, and how its rows are
+ * recognised when new ones are pulled.
+ */
+export const workbookSheetSources = pgTable(
+  "workbook_sheet_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workbookId: uuid("workbook_id")
+      .notNull()
+      .references(() => workbooks.id, { onDelete: "cascade" }),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    /** Google's id of the tab, which stays when the tab is renamed or moved. */
+    sheetId: bigint("sheet_id", { mode: "number" }).notNull(),
+    spreadsheetName: text("spreadsheet_name").notNull(),
+    tabName: text("tab_name").notNull(),
+    /** Headers to columns, the deduplication key and the row identity. */
+    mapping: jsonb("mapping").$type<Record<string, unknown>>().notNull(),
+    /** Rows the tab held when it was last read. */
+    rowCount: integer("row_count").notNull().default(0),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    lastPulledAt: timestamp("last_pulled_at", { withTimezone: true }),
+  },
+  (t) => [unique("workbook_sheet_sources_tab_key").on(t.workbookId, t.spreadsheetId, t.sheetId)]
+);
+
+/** Identities of the sheet rows a source has added, so none is added twice. */
+export const workbookSheetKeys = pgTable(
+  "workbook_sheet_keys",
+  {
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => workbookSheetSources.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+  },
+  (t) => [primaryKey({ name: "workbook_sheet_keys_pkey", columns: [t.sourceId, t.key] })]
+);
+
 export const workbookImports = pgTable(
   "workbook_imports",
   {
@@ -259,8 +299,14 @@ export const workbookImports = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** The Google Sheets tab an import reads, once it is confirmed or pulled. */
+    sheetSourceId: uuid("sheet_source_id").references(() => workbookSheetSources.id, { onDelete: "set null" }),
   },
   (t) => [
+    // A tab is read by one import at a time (WB2-025).
+    uniqueIndex("workbook_imports_sheet_running_key")
+      .on(t.sheetSourceId)
+      .where(sql`${t.sheetSourceId} IS NOT NULL AND ${t.status} IN ('queued','processing')`),
     index("workbook_imports_workbook_created_idx").on(t.workbookId, t.createdAt),
     // For the sweep that finds unfinished, abandoned and not-yet-cleaned-up imports.
     index("workbook_imports_unfinished_idx").on(t.status, t.updatedAt).where(sql`${t.finishedAt} IS NULL OR ${t.fileKey} IS NOT NULL`),

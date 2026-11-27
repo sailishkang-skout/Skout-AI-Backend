@@ -7,9 +7,12 @@ import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, csvLine, csvRecords, type CsvRecord } from "./workbook-import-csv.js";
 import { classifyRow, duplicateReason, type ClassifiedRow, type ImportPlan, type MatchKey } from "./workbook-import-plan.js";
 import { KeyIndex } from "./workbook-import-keys.js";
+import { identifier, type RowIdentity } from "./workbook-sheet-identity.js";
+import { SHEET_FAILED_MESSAGE, assertSheetConnection, knownKeys, prepareSheetImport, rememberKeys, type SheetImportPlan, type SheetPlan } from "./workbook-sheet-runner.js";
+import type { SheetsReader } from "./workbook-sheets-access.js";
 import { importFromCrm, type CrmImportPlan } from "./workbook-crm-runner.js";
 import type { CrmAccess } from "./workbook-crm-access.js";
-import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, RetryLater, Superseded, countsOf, describeFailure, isRecordSource, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
+import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, RetryLater, Superseded, countsOf, describeFailure, isFileSource, isRecordSource, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
 import { addProspects } from "./workbook-prospect-runner.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
 import { removeStaleTempFiles, reportKey, saveStream, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
@@ -23,7 +26,7 @@ import { recordWorkbookActivity } from "./workbook-activity-log.js";
  * the file again and starts after `processed`: nothing is imported twice. The workbook is locked only for the length
  * of a chunk, so people can keep working in it.
  */
-const { workbooks, workbookColumns, workbookRows, workbookImports, workbookImportIssues, workbookImportItems } = schema;
+const { workbooks, workbookColumns, workbookRows, workbookImports, workbookImportIssues, workbookImportItems, workbookSheetSources } = schema;
 const log = createLogger("workbook-import");
 
 export { ImportFailure, countsOf, describeFailure, type ImportCounts } from "./workbook-import-core.js";
@@ -46,7 +49,10 @@ export const IMPORT_FAILED_MESSAGE =
   "The import stopped because of a problem on our side. Rows already imported are in the workbook. To add the rest, upload the file again and choose a deduplication key so rows are not added twice.";
 const CRM_FAILED_MESSAGE = "The import stopped before it finished. Rows already imported are in the workbook. Import the same selection again to add the rest; records already there are skipped.";
 /** What to say when an import ends because it could not be completed. */
-export const failedMessage = (sourceType: string) => (isRecordSource(sourceType) ? CRM_FAILED_MESSAGE : IMPORT_FAILED_MESSAGE);
+export const failedMessage = (sourceType: string) => {
+  if (sourceType === "google_sheets") return SHEET_FAILED_MESSAGE;
+  return isRecordSource(sourceType) ? CRM_FAILED_MESSAGE : IMPORT_FAILED_MESSAGE;
+};
 
 export interface ImportJob {
   importId: string;
@@ -79,9 +85,12 @@ interface Run {
   /** Stored on every imported row (PRD ROW-9). */
   source: string;
   keys: KeyIndex | null;
+  /** For a Google Sheets tab: where its identities are kept, and the connection that must stay. */
+  sheet?: SheetPlan & { sourceId: string; sheets: SheetsReader };
 }
 
-type Pending = CsvRecord & { record: number };
+/** `identity` for a sheet row, whose `line` is then its row in the sheet. */
+type Pending = CsvRecord & { record: number; identity?: RowIdentity };
 
 async function checkColumns(tx: Db, run: Run) {
   const found = await tx
@@ -110,6 +119,7 @@ async function importChunk(db: Db, run: Run, chunk: Pending[]): Promise<void> {
       throw error;
     }
     await checkColumns(tx, run);
+    if (run.sheet) await assertSheetConnection(tx, run.sheet.sheets, run.workspaceId, run.sheet);
     // Under the lock, so rows added by anyone else since the last chunk are counted as existing.
     await run.keys?.refresh(tx);
 
@@ -120,14 +130,34 @@ async function importChunk(db: Db, run: Run, chunk: Pending[]): Promise<void> {
     const accepted: Array<Extract<ClassifiedRow, { kind: "ready" }>> = [];
     const issues: Issue[] = [];
     const keys = new Set<string>();
+    const identities = chunk.flatMap((row) => (row.identity?.key ? [row.identity.key] : []));
+    const added = run.sheet ? await knownKeys(tx, run.sheet.sourceId, identities) : new Set<string>();
+    const remembered: string[] = [];
+    let alreadyImported = 0;
     for (const row of chunk) {
-      const outcome = classifyRow(run.plan, row.values);
       const report = (kind: Issue["kind"], reason: string) => issues.push({ record: row.record, line: row.line, kind, reason, values: row.values });
+      if (row.identity) {
+        const { key, repeated } = row.identity;
+        if (key === null) {
+          report("skipped", `Missing value: the ID column “${run.sheet!.idHeaderName}” is empty in this row`);
+          continue;
+        }
+        if (repeated) {
+          report("duplicate", "Same ID as an earlier row of this tab");
+          continue;
+        }
+        if (added.has(key)) {
+          alreadyImported += 1;
+          continue;
+        }
+      }
+      const outcome = classifyRow(run.plan, row.values);
       if (outcome.kind !== "ready") report(outcome.kind, outcome.reason);
       else if (outcome.key !== null && (keys.has(outcome.key) || run.keys!.has(outcome.key))) report("duplicate", duplicateReason((run.plan.dedupe as { key: MatchKey }).key));
       else if (existing + accepted.length >= limit) report("over_limit", `The workbook reached its limit of ${limit.toLocaleString("en-US")} rows`);
       else {
         accepted.push(outcome);
+        if (row.identity?.key) remembered.push(row.identity.key);
         if (outcome.key !== null) keys.add(outcome.key);
       }
     }
@@ -150,7 +180,8 @@ async function importChunk(db: Db, run: Run, chunk: Pending[]): Promise<void> {
       }
       await tx.update(workbooks).set({ rowCount: existing + accepted.length, updatedAt: sql`now()` }).where(eq(workbooks.id, run.workbookId));
     }
-    await recordChunk(tx, run.importId, counts, { processed: chunk.length, imported: accepted.length }, issues);
+    if (run.sheet) await rememberKeys(tx, run.sheet.sourceId, remembered);
+    await recordChunk(tx, run.importId, counts, { processed: chunk.length, imported: accepted.length, alreadyImported }, issues);
     return keys;
   });
   for (const key of newKeys) run.keys?.add(key);
@@ -171,9 +202,9 @@ async function claim(db: Db, importId: string) {
  * Works through a confirmed import and finishes it. Safe to call again at any point. Throws only for problems worth
  * retrying; anything else ends the import as failed.
  */
-export async function processImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
+export async function processImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess, sheets?: SheetsReader): Promise<void> {
   try {
-    await attemptImport(db, storage, importId, directory, crm);
+    await attemptImport(db, storage, importId, directory, crm, sheets);
   } catch (error) {
     // A CRM that is busy or out of reach is not a failure of the import.
     if (error instanceof RetryLater) throw error;
@@ -181,13 +212,13 @@ export async function processImport(db: Db, storage: ImportStorage, importId: st
   }
 }
 
-async function attemptImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
+async function attemptImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess, sheets?: SheetsReader): Promise<void> {
   const found = await loadImport(db, importId);
   if (!found) return;
   if (FINISHED.has(found.record.status)) return housekeepImport(db, storage, importId);
-  const record = await claim(db, importId);
+  let record = await claim(db, importId);
   if (!record) return;
-  if (record.sourceType !== "csv") {
+  if (!isFileSource(record.sourceType)) {
     try {
       if (isRecordSource(record.sourceType)) {
         if (!crm) throw new Error("a CRM or Apollo import needs access to it");
@@ -204,31 +235,65 @@ async function attemptImport(db: Db, storage: ImportStorage, importId: string, d
     return finishImport(db, storage, importId, { status: "completed" });
   }
 
+  if (record.sourceType === "google_sheets") {
+    if (!sheets) throw new Error("a Google Sheets import needs access to Google");
+    try {
+      const prepared = await prepareSheetImport(db, storage, sheets, found.workspaceId, record);
+      // A tab with no rows: there is nothing to add.
+      if (!prepared) return finishImport(db, storage, importId, { status: "completed" });
+      record = prepared;
+    } catch (error) {
+      if (error instanceof Superseded) return;
+      if (error instanceof ImportStopped) return finishImport(db, storage, importId, { status: "failed", code: error.code, message: error.message });
+      throw error;
+    }
+  }
+
   const plan = record.plan as unknown as ImportPlan;
+  const sheet = record.sourceType === "google_sheets" ? (plan as SheetImportPlan).sheet : null;
+  if (sheet && !record.sheetSourceId) {
+    return finishImport(db, storage, importId, { status: "failed", code: "SHEET_FORGOTTEN", message: "This tab is no longer pulled from." });
+  }
+  const identify = sheet ? identifier(sheet.identity!) : null;
   const run: Run = {
     importId,
     workspaceId: found.workspaceId,
     workbookId: record.workbookId,
     plan,
-    source: JSON.stringify({ type: "csv", fileName: record.fileName, importId, importedAt: (record.confirmedAt ?? record.createdAt).toISOString() }),
+    source: JSON.stringify({
+      ...(sheet
+        ? { type: "google_sheets", spreadsheetId: sheet.spreadsheetId, spreadsheetName: sheet.spreadsheetName, sheetId: sheet.sheetId, tabName: sheet.tabName, sourceId: record.sheetSourceId }
+        : { type: "csv", fileName: record.fileName }),
+      importId,
+      importedAt: (record.confirmedAt ?? record.createdAt).toISOString(),
+    }),
     keys: plan.dedupe.key === "none" ? null : new KeyIndex(record.workbookId, plan.dedupe.columnId, plan.dedupe.key),
+    ...(sheet ? { sheet: { ...sheet, sourceId: record.sheetSourceId!, sheets: sheets! } } : {}),
   };
   const done = countsOf(record.counts).processed;
+  const fileKey = record.fileKey;
   const size = Math.max(MIN_CHUNK_ROWS, Math.min(CHUNK_ROWS, Math.floor(CHUNK_CELLS / plan.columns.length)));
 
   try {
     await withTempFile(async (file) => {
-      const stored = record.fileKey ? await storage.open(record.fileKey) : null;
+      const stored = fileKey ? await storage.open(fileKey) : null;
       if (!stored) throw new ImportStopped("FILE_MISSING", "The uploaded file is no longer available. Upload it again.");
       await saveStream(stored, file);
       // The long first read happens before any lock is taken.
       await run.keys?.refresh(db);
       let chunk: Pending[] = [];
       let n = -1; // The header line is record 0.
+      // A value holding line breaks takes several lines of the file, but one row of a sheet.
+      let extraLines = 0;
       for await (const row of csvRecords(file, plan.delimiter)) {
         n += 1;
-        if (n === 0 || n <= done) continue;
-        chunk.push({ ...row, record: n });
+        const sheetRow = row.line - extraLines;
+        extraLines += row.values.reduce((sum, v) => sum + (v.match(/\n/g)?.length ?? 0), 0);
+        if (n === 0) continue;
+        // Every row is identified, also those already dealt with: what came before tells rows apart.
+        const identity = identify?.(row.values);
+        if (n <= done) continue;
+        chunk.push({ ...row, record: n, ...(identity ? { identity, line: sheetRow } : {}) });
         if (chunk.length === size) {
           await importChunk(db, run, chunk);
           chunk = [];
@@ -247,9 +312,9 @@ async function attemptImport(db: Db, storage: ImportStorage, importId: string, d
 }
 
 /** One attempt by the background worker. After the last one the import is marked failed. */
-export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
+export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean, directory?: ProspectDirectory, crm?: CrmAccess, sheets?: SheetsReader): Promise<void> {
   try {
-    await processImport(db, storage, importId, directory, crm);
+    await processImport(db, storage, importId, directory, crm, sheets);
   } catch (error) {
     // A busy CRM is left for the sweep to try again later; it gives up only after hours.
     if (lastAttempt && !(error instanceof RetryLater)) {
@@ -264,7 +329,10 @@ export async function runImportJob(db: Db, storage: ImportStorage, importId: str
 }
 
 /** What the report's first column counts. */
-const positionLabel = (sourceType: string) => (sourceType === "csv" ? "Line in file" : "Position in selection");
+const positionLabel = (sourceType: string) => {
+  if (sourceType === "google_sheets") return "Row in sheet";
+  return sourceType === "csv" ? "Line in file" : "Position in selection";
+};
 /** The report's other columns: those of the file or selection, after the record's id for a CRM or Apollo. */
 function reportHeaders(record: { sourceType: string; plan: unknown }): string[] {
   const headers = (record.plan as ImportPlan | null)?.headers ?? [];
@@ -357,7 +425,11 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
       const added = counted.imported;
       // An Apollo import is recorded however it ends, with what became of every record (WB2-024).
       const apollo = record.sourceType === "apollo";
-      if (added > 0 || apollo) {
+      const sheet = record.sourceType === "google_sheets" ? ((record.plan as unknown as SheetImportPlan | null)?.sheet ?? null) : null;
+      if (sheet && record.sheetSourceId && outcome.status === "completed") {
+        await tx.update(workbookSheetSources).set({ lastPulledAt: sql`now()`, updatedAt: sql`now()` }).where(eq(workbookSheetSources.id, record.sheetSourceId));
+      }
+      if (added > 0 || apollo || sheet) {
         const [workbook] = await tx.select({ rowCount: workbooks.rowCount }).from(workbooks).where(eq(workbooks.id, record.workbookId));
         const requestId = (record.plan as unknown as ImportPlan | null)?.requestId ?? undefined;
         const from = isRecordSource(record.sourceType) ? (record.plan as unknown as CrmImportPlan).crm : null;
@@ -368,7 +440,8 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
             rows: added,
             rowCount: workbook?.rowCount ?? added,
             ...(from ? { object: from.object, ...(from.viewName ? { viewName: from.viewName } : {}) } : {}),
-            ...(apollo ? { status: outcome.status, duplicates: counted.duplicates, skipped: counted.skipped, failed: counted.failed } : {}),
+            ...(sheet ? { spreadsheetName: sheet.spreadsheetName, tabName: sheet.tabName, pull: sheet.pull, alreadyImported: counted.alreadyImported ?? 0 } : {}),
+            ...(apollo || sheet ? { status: outcome.status, duplicates: counted.duplicates, skipped: counted.skipped, failed: counted.failed } : {}),
           },
           channel: "worker",
         });

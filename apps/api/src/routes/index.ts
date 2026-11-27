@@ -59,6 +59,8 @@ import { workbookV2ImportRoutes } from "./workbook-v2-imports.routes.js";
 import { workbookV2ProspectRoutes } from "./workbook-v2-prospects.routes.js";
 import { workbookV2CrmRoutes } from "./workbook-v2-crm.routes.js";
 import { workbookV2ApolloRoutes } from "./workbook-v2-apollo.routes.js";
+import { workbookV2SheetsRoutes } from "./workbook-v2-sheets.routes.js";
+import { googleSheetsRoutes } from "./google-sheets.routes.js";
 import { reportRoutes } from "./report.routes.js";
 import { modelPerformanceRoutes } from "./model-performance.routes.js";
 import { evidenceRoutes } from "./evidence.routes.js";
@@ -196,6 +198,8 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(workbookV2ProspectRoutes);
     await v1.register(workbookV2CrmRoutes);
     await v1.register(workbookV2ApolloRoutes);
+    await v1.register(workbookV2SheetsRoutes);
+    await v1.register(googleSheetsRoutes);
     await v1.register(reportRoutes);
     await v1.register(modelPerformanceRoutes);
     await v1.register(evidenceRoutes);

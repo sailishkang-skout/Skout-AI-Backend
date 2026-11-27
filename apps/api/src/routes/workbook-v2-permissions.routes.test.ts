@@ -56,6 +56,12 @@ const ROUTES: Record<string, Access> = {
   // So is reading Apollo.
   "GET /workbooks-v2/:id/apollo-source": "edit",
   "POST /workbooks-v2/:id/apollo-imports": "edit",
+  // Which sheets a workbook pulls from is part of viewing it; reading Google is not.
+  "GET /workbooks-v2/:id/sheet-sources": "view",
+  "POST /workbooks-v2/:id/sheets/inspect": "edit",
+  "POST /workbooks-v2/:id/sheets-imports": "edit",
+  "POST /workbooks-v2/:id/sheet-sources/:sourceId/pull": "edit",
+  "DELETE /workbooks-v2/:id/sheet-sources/:sourceId": "edit",
   "PATCH /workbooks-v2/:id/rows/:rowId": "edit",
   "DELETE /workbooks-v2/:id/rows/:rowId": "edit",
   "POST /workbooks-v2/:id/rows/delete": "edit",
@@ -160,7 +166,17 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     const [list] = await db.insert(schema.lists).values({ workspaceId: owner.workspaceId, name: "perm" }).returning();
     await db.insert(schema.listMembers).values({ listId: list!.id, prospectId });
     const [smart] = await db.insert(schema.smartLists).values({ workspaceId: owner.workspaceId, name: "perm", filters: { companyDomain: "example1.com" } }).returning();
-    return { done, waiting: await make("a\n1\n"), unwanted: await make("a\n1\n"), list: list!.id, smartList: smart!.id };
+    const sheet = async () => {
+      const [source] = await db
+        .insert(schema.workbookSheetSources)
+        .values({
+          workbookId: b.id, spreadsheetId: `perm-${randomUUID()}`, sheetId: 0, spreadsheetName: "perm", tabName: "perm",
+          mapping: { columns: [{ header: "a", columnId: b.input, dataType: "text" }], dedupe: { key: "none", header: null }, idHeader: null, identity: [b.input] },
+        })
+        .returning();
+      return source!.id;
+    };
+    return { done, waiting: await make("a\n1\n"), unwanted: await make("a\n1\n"), list: list!.id, smartList: smart!.id, pulled: await sheet(), forgotten: await sheet() };
   }
   type Imports = Awaited<ReturnType<typeof importsFor>>;
 
@@ -493,6 +509,12 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
         ["POST /workbooks-v2/:id/crm-imports", "POST", `/${b.id}/crm-imports`, { provider: "hubspot", object: "contact", fields: ["email"] }],
         ["GET /workbooks-v2/:id/apollo-source", "GET", `/${b.id}/apollo-source`],
         ["POST /workbooks-v2/:id/apollo-imports", "POST", `/${b.id}/apollo-imports`, { fields: ["email"], search: {} }],
+        ["GET /workbooks-v2/:id/sheet-sources", "GET", `/${b.id}/sheet-sources`],
+        // Nobody here has connected Google, so an allowed caller is told that rather than reaching Google.
+        ["POST /workbooks-v2/:id/sheets/inspect", "POST", `/${b.id}/sheets/inspect`, { spreadsheet: "permission-sheet-abcdefghijklmnop" }],
+        ["POST /workbooks-v2/:id/sheets-imports", "POST", `/${b.id}/sheets-imports`, { spreadsheet: "permission-sheet-abcdefghijklmnop", sheetId: 0 }],
+        ["POST /workbooks-v2/:id/sheet-sources/:sourceId/pull", "POST", `/${b.id}/sheet-sources/${imports.pulled}/pull`, {}],
+        ["DELETE /workbooks-v2/:id/sheet-sources/:sourceId", "DELETE", `/${b.id}/sheet-sources/${imports.forgotten}`],
         ["PATCH /workbooks-v2/:id/rows/:rowId", "PATCH", `/${b.id}/rows/${b.rows[0]}`, { cells: { [b.input]: "edited" } }],
         ["DELETE /workbooks-v2/:id/rows/:rowId", "DELETE", `/${b.id}/rows/${b.rows[1]}`],
         ["POST /workbooks-v2/:id/rows/delete", "POST", `/${b.id}/rows/delete`, { rowIds: [b.rows[0]] }],
@@ -518,8 +540,8 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     }
 
     const expected = (outcome: Record<Access, number | "ok">) => Object.fromEntries(Object.entries(ROUTES).map(([route, access]) => [route, outcome[access]]));
-    /** No CRM or Apollo is connected here: being told so (409) means the caller was let through. */
-    const NEEDS_CONNECTION = new Set(["GET /workbooks-v2/:id/crm-sources/:provider/:object", "POST /workbooks-v2/:id/crm-imports", "POST /workbooks-v2/:id/apollo-imports"]);
+    /** No CRM, Apollo or Google is connected here: being told so (409) means the caller was let through. */
+    const NEEDS_CONNECTION = new Set(["GET /workbooks-v2/:id/crm-sources/:provider/:object", "POST /workbooks-v2/:id/crm-imports", "POST /workbooks-v2/:id/apollo-imports", "POST /workbooks-v2/:id/sheets/inspect", "POST /workbooks-v2/:id/sheets-imports", "POST /workbooks-v2/:id/sheet-sources/:sourceId/pull"]);
     const simplify = (results: Record<string, number>) =>
       Object.fromEntries(Object.entries(results).map(([route, status]) => [route, status < 300 || (status === 409 && NEEDS_CONNECTION.has(route)) ? "ok" : status]));
 

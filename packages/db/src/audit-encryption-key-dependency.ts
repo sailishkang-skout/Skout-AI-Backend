@@ -18,7 +18,7 @@ import { isNotNull } from "drizzle-orm";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { inboxes } from "./schema/inbox.js";
-import { workspaceIntegrations } from "./schema/integrations.js";
+import { googleSheetsConnections, workspaceIntegrations } from "./schema/integrations.js";
 import { calendarConnections } from "./schema/crm.js";
 import { automationSecrets } from "./schema/automations.js";
 
@@ -85,6 +85,8 @@ const report: Record<string, Result> = {
   "inboxes.oauth_refresh_token_encrypted": { ok: 0, clerkOnly: 0, undecryptable: 0 },
   "calendar_connections.oauth_access_token_encrypted": { ok: 0, clerkOnly: 0, undecryptable: 0 },
   "calendar_connections.oauth_refresh_token_encrypted": { ok: 0, clerkOnly: 0, undecryptable: 0 },
+  "google_sheets_connections.access_token_encrypted": { ok: 0, clerkOnly: 0, undecryptable: 0 },
+  "google_sheets_connections.refresh_token_encrypted": { ok: 0, clerkOnly: 0, undecryptable: 0 },
 };
 
 try {
@@ -121,6 +123,14 @@ try {
   for (const row of calendarRows) {
     classify(row.access, report["calendar_connections.oauth_access_token_encrypted"]);
     classify(row.refresh, report["calendar_connections.oauth_refresh_token_encrypted"]);
+  }
+
+  const sheetsRows = await db
+    .select({ access: googleSheetsConnections.accessTokenEncrypted, refresh: googleSheetsConnections.refreshTokenEncrypted })
+    .from(googleSheetsConnections);
+  for (const row of sheetsRows) {
+    classify(row.access, report["google_sheets_connections.access_token_encrypted"]);
+    classify(row.refresh, report["google_sheets_connections.refresh_token_encrypted"]);
   }
 
   let anyClerkOnly = false;

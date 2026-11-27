@@ -10,6 +10,7 @@ import { importStorage } from "../services/workbook-import-storage.js";
 import { cancelImport, confirmImport, createImport, getImport, listImports, openImportReport } from "../services/workbook-imports.service.js";
 import { workbookImportQueue } from "../workers/workbook-import.queue.js";
 import { isCrmSource } from "../services/workbook-import-core.js";
+import { sheetsReader } from "../services/workbook-sheets-access.js";
 import { crmAccess } from "../services/workbook-crm-access.js";
 import { assertSameCrmAccount } from "../services/workbook-crm.service.js";
 import { assertCrmFeature } from "./workbook-v2-crm.routes.js";
@@ -39,6 +40,7 @@ const confirmBody = z
       .object({ key: z.enum(DEDUPE_KEYS), header: header.optional() })
       .strict()
       .refine((d) => d.key !== "none" || d.header === undefined, "no column is needed without deduplication"),
+    idColumn: z.number().int().min(0).max(499).nullable().optional(),
   })
   .strict();
 
@@ -104,7 +106,7 @@ export async function workbookV2ImportRoutes(app: FastifyInstance) {
     handle(async (request) => {
       const { db, actor } = await authorize(request, "enrichment:read");
       const { id, importId } = importParams.parse(request.params);
-      return { status: 200, body: { data: await getImport(db, actor.workspaceId, id, importId) } };
+      return { status: 200, body: { data: await getImport(db, actor.workspaceId, id, importId, actor.userId) } };
     })
   );
 
@@ -115,7 +117,8 @@ export async function workbookV2ImportRoutes(app: FastifyInstance) {
       const { id, importId } = importParams.parse(request.params);
       const choice = confirmBody.parse(request.body ?? {});
       const crm = crmAccess(db, app.config);
-      const { background, data } = await confirmImport(db, { storage: storage(), queue: workbookImportQueue(app.config), crm }, actor, id, importId, choice, async (plan) => {
+      const sheets = sheetsReader(db, app.config);
+      const { background, data } = await confirmImport(db, { storage: storage(), queue: workbookImportQueue(app.config), crm, sheets }, actor, id, importId, choice, async (plan) => {
         // Apollo is connected in Settings → Integrations and is not part of the CRM feature.
         if (isCrmSource(plan.provider)) await assertCrmFeature(db, actor.workspaceId);
         await assertSameCrmAccount(crm, actor.workspaceId, plan);
