@@ -9,6 +9,9 @@ import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, MAX_IMPORT_BYTES, inspectCsv, type CsvDelimiter, type CsvInspection } from "./workbook-import-csv.js";
 import { checkMapping, suggestMapping, type ColumnMapping, type DedupeChoice, type ExistingColumn, type HeaderSuggestion, type ImportPlan, type MatchKey, type PlannedColumn } from "./workbook-import-plan.js";
 import { UploadTooLarge, receiveUpload, uploadKey, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
+import { IMPORT_SOURCE_TYPES } from "./workbook-import-core.js";
+import type { ProspectPlan } from "./workbook-prospect-runner.js";
+import type { ProspectDirectory } from "./prospect-directory.js";
 import { IMPORT_FAILED_MESSAGE, ImportFailure, UNFINISHED_STATUSES, countsOf, describeFailure, finishImport, housekeepImport, processImport, type ImportCounts, type ImportQueue } from "./workbook-import-runner.js";
 
 /**
@@ -43,6 +46,12 @@ interface StoredPreview {
 export interface ImportDto {
   id: string;
   workbookId: string;
+  /** csv, list, smart_list or search. */
+  sourceType: string;
+  /** The list or smart list rows came from. */
+  sourceName: string | null;
+  /** Set when a smart list matched more than the workbook can hold, so only the first were considered. */
+  truncated: { matched: number; considered: number } | null;
   status: string;
   fileName: string;
   fileBytes: number;
@@ -64,17 +73,21 @@ export interface ImportDto {
 
 export function toImportDto(record: ImportRecord, opts: { preview?: boolean } = {}): ImportDto {
   const counts = countsOf(record.counts);
-  const plan = record.plan as unknown as ImportPlan | null;
+  const plan = record.sourceType === "csv" ? (record.plan as unknown as ImportPlan | null) : null;
+  const addition = record.sourceType === "csv" ? null : (record.plan as unknown as ProspectPlan | null);
   const progress = record.status === "completed" ? 100 : counts.total ? Math.floor((counts.processed * 100) / counts.total) : 0;
   return {
     id: record.id,
     workbookId: record.workbookId,
+    sourceType: record.sourceType,
+    sourceName: addition?.source.name ?? null,
+    truncated: addition?.truncated ?? null,
     status: record.status,
     fileName: record.fileName ?? "",
     fileBytes: record.fileBytes ?? 0,
     counts,
     progress,
-    background: counts.total > SYNC_ROW_LIMIT,
+    background: addition ? addition.background : counts.total > SYNC_ROW_LIMIT,
     error: record.error,
     report: { available: record.errorReportFile !== null, rows: counts.duplicates + counts.skipped + counts.failed },
     preview: opts.preview && record.status === "awaiting_confirmation" ? (record.preview as unknown as StoredPreview | null) : null,
@@ -99,6 +112,8 @@ async function withoutFileDetails<T>(what: string, work: () => Promise<T>): Prom
     throw new ImportFailure(what, error);
   }
 }
+
+const anyImport = inArray(workbookImports.sourceType, [...IMPORT_SOURCE_TYPES]);
 
 const importNotFound = () => new WorkbookV2Error("NOT_FOUND", 404, "Import not found");
 
@@ -127,6 +142,38 @@ function cleanFileName(raw: string | null): string | null {
 
 const tooLarge = () => new WorkbookV2Error("FILE_TOO_LARGE", 413, `The file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.`, { limitBytes: MAX_IMPORT_BYTES });
 
+export async function assertRoomForAnotherImport(db: Db, workspaceId: string): Promise<void> {
+  const [pending] = await db
+    .select({ n: count() })
+    .from(workbookImports)
+    .innerJoin(workbooks, eq(workbooks.id, workbookImports.workbookId))
+    .where(and(eq(workbooks.workspaceId, workspaceId), anyImport, inArray(workbookImports.status, [...UNFINISHED_STATUSES])));
+  if ((pending?.n ?? 0) >= MAX_UNFINISHED_IMPORTS) {
+    throw new WorkbookV2Error("TOO_MANY_PENDING_IMPORTS", 429, `This workspace already has ${MAX_UNFINISHED_IMPORTS} unfinished imports. Confirm or cancel one, or wait for one to finish.`);
+  }
+}
+
+/** Runs a confirmed import now, or queues it when it is large. */
+export async function startImport(
+  db: Db,
+  deps: { storage: ImportStorage; queue: ImportQueue; directory?: ProspectDirectory },
+  job: { importId: string; workspaceId: string },
+  background: boolean
+): Promise<void> {
+  const { importId } = job;
+  if (background) {
+    // Confirmed either way: if queueing fails now, the sweep queues it.
+    await deps.queue.enqueue(job).catch((error) => log.error("could not queue an import", undefined, { importId, failure: describeFailure(error) }));
+    return;
+  }
+  try {
+    await processImport(db, deps.storage, importId, deps.directory);
+  } catch (error) {
+    log.error("import failed", undefined, { importId, failure: describeFailure(error) });
+    await finishImport(db, deps.storage, importId, { status: "failed", code: "IMPORT_FAILED", message: IMPORT_FAILED_MESSAGE });
+  }
+}
+
 export interface UploadedFile {
   name: string | null;
   contentType: string | null;
@@ -139,7 +186,7 @@ async function requireImport(db: Db, workspaceId: string, workbookId: string, im
   const [record] = await db
     .select()
     .from(workbookImports)
-    .where(and(eq(workbookImports.id, importId), eq(workbookImports.workbookId, workbookId), eq(workbookImports.sourceType, "csv")))
+    .where(and(eq(workbookImports.id, importId), eq(workbookImports.workbookId, workbookId), anyImport))
     .limit(1);
   if (!record) throw importNotFound();
   return record;
@@ -156,14 +203,7 @@ export async function createImport(db: Db, storage: ImportStorage, actor: Workbo
   }
   if (file.contentLength !== null && file.contentLength > MAX_IMPORT_BYTES) throw tooLarge();
 
-  const [pending] = await db
-    .select({ n: count() })
-    .from(workbookImports)
-    .innerJoin(workbooks, eq(workbooks.id, workbookImports.workbookId))
-    .where(and(eq(workbooks.workspaceId, actor.workspaceId), eq(workbookImports.sourceType, "csv"), inArray(workbookImports.status, [...UNFINISHED_STATUSES])));
-  if ((pending?.n ?? 0) >= MAX_UNFINISHED_IMPORTS) {
-    throw new WorkbookV2Error("TOO_MANY_PENDING_IMPORTS", 429, `This workspace already has ${MAX_UNFINISHED_IMPORTS} unfinished imports. Confirm or cancel one, or wait for one to finish.`);
-  }
+  await assertRoomForAnotherImport(db, actor.workspaceId);
 
   return withoutFileDetails("Could not take an uploaded file", () => withTempFile(async (temp) => {
     let bytes = 0;
@@ -231,7 +271,7 @@ export async function listImports(db: Db, workspaceId: string, workbookId: strin
   const records = await db
     .select()
     .from(workbookImports)
-    .where(and(eq(workbookImports.workbookId, workbookId), eq(workbookImports.sourceType, "csv")))
+    .where(and(eq(workbookImports.workbookId, workbookId), anyImport))
     .orderBy(desc(workbookImports.createdAt), desc(workbookImports.id))
     .limit(LISTED_IMPORTS);
   return records.map((record) => toImportDto(record));
@@ -308,19 +348,7 @@ export async function confirmImport(
       .where(eq(workbookImports.id, importId));
   }));
 
-  if (background) {
-    // Confirmed either way: if queueing fails now, the sweep queues it.
-    await deps.queue
-      .enqueue({ importId, workspaceId: actor.workspaceId })
-      .catch((error) => log.error("could not queue an import", undefined, { importId, failure: describeFailure(error) }));
-  } else {
-    try {
-      await processImport(db, deps.storage, importId);
-    } catch (error) {
-      log.error("import failed", undefined, { importId, failure: describeFailure(error) });
-      await finishImport(db, deps.storage, importId, { status: "failed", code: "IMPORT_FAILED", message: IMPORT_FAILED_MESSAGE });
-    }
-  }
+  await startImport(db, deps, { importId, workspaceId: actor.workspaceId }, background);
   return { background, data: await getImport(db, actor.workspaceId, workbookId, importId) };
 }
 

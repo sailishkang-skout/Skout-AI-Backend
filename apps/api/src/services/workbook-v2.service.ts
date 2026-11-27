@@ -48,6 +48,10 @@ export type WorkbookV2ErrorCode =
   | "TOO_MANY_PENDING_IMPORTS"
   | "IMPORT_UNAVAILABLE"
   | "REPORT_NOT_AVAILABLE"
+  | "UNKNOWN_SOURCE"
+  | "NOTHING_TO_ADD"
+  | "SEARCH_UNAVAILABLE"
+  | "PAGE_OUT_OF_RANGE"
   | "NOT_IMPLEMENTED";
 
 export class WorkbookV2Error extends Error {
@@ -345,8 +349,8 @@ async function copyRowsAndCells(tx: Db, sourceId: string, targetId: string, colu
       FROM row_map m JOIN workbook_rows r ON r.id = m.old_id AND r.workbook_id = ${sourceId}
     ),
     column_map (old_id, new_id) AS (VALUES ${columnMap})
-    INSERT INTO workbook_cells (workbook_id, row_id, column_id, value, state, confidence, credits_charged, found_via, internal_provenance, error_code, updated_at)
-    SELECT ${targetId}::uuid, m.new_id, cm.new_id, c.value, c.state, c.confidence, 0, c.found_via, c.internal_provenance, c.error_code, c.updated_at
+    INSERT INTO workbook_cells (workbook_id, row_id, column_id, value, state, confidence, credits_charged, found_via, verification, internal_provenance, error_code, updated_at)
+    SELECT ${targetId}::uuid, m.new_id, cm.new_id, c.value, c.state, c.confidence, 0, c.found_via, c.verification, c.internal_provenance, c.error_code, c.updated_at
     FROM workbook_cells c
     JOIN row_map m ON m.old_id = c.row_id
     JOIN column_map cm ON cm.old_id = c.column_id

@@ -99,6 +99,7 @@ export const contacts = pgTable(
     uniqueIndex("contacts_workspace_entity_unique_idx").on(table.workspaceId, table.id),
     index("contacts_workspace_company_idx").on(table.workspaceId, table.companyId),
     index("contacts_workspace_email_idx").on(table.workspaceId, table.email),
+    index("contacts_workspace_source_prospect_idx").on(table.workspaceId, table.sourceProspectId),
   ]
 );
 

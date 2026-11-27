@@ -65,6 +65,7 @@ const UNSCOPED: Record<string, string> = {
   workbook_runs: "child of workbooks",
   workbook_imports: "child of workbooks",
   workbook_import_issues: "child of workbook_imports (WB2-020), read only by the server while it writes that import's report",
+  workbook_import_items: "child of workbook_imports (WB2-021): the prospects one addition is working through",
   workbook_views: "child of workbooks",
   workbook_webhooks: "child of workbooks; an inbound token resolves to a workbook, then its workspace",
 };

@@ -7,6 +7,7 @@ import {
   workbookCells,
   workbookColumns,
   workbookImportIssues,
+  workbookImportItems,
   workbookImports,
   workbookRows,
   workbookRuns,
@@ -23,8 +24,8 @@ import {
 const url = process.env.COPS_TEST_DATABASE_URL;
 const maybe = url ? describe : describe.skip;
 
-const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks, workbookImportIssues];
-const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks", "workbook_import_issues"];
+const TABLES: PgTable[] = [workbooks, workbookColumns, workbookRows, workbookCells, workbookRuns, workbookImports, workbookViews, workbookWebhooks, workbookImportIssues, workbookImportItems];
+const NAMES = ["workbooks", "workbook_columns", "workbook_rows", "workbook_cells", "workbook_runs", "workbook_imports", "workbook_views", "workbook_webhooks", "workbook_import_issues", "workbook_import_items"];
 const LEGACY = ["enrichment_workbooks", "enrichment_workbook_runs", "workbook_column_definitions", "workbook_column_values"];
 
 maybe("Workbooks V2 schema (Postgres)", () => {
@@ -306,6 +307,7 @@ maybe("Workbooks V2 schema (Postgres)", () => {
       await db.insert(workbookRuns).values({ workbookId: s.wb.id, columnId: s.cols[0]!.id, scope: "all", startedBy: owner });
       const [imported] = await db.insert(workbookImports).values({ workbookId: s.wb.id, sourceType: "csv" }).returning();
       await db.insert(workbookImportIssues).values({ importId: imported!.id, record: 1, line: 2, kind: "invalid", reason: "r", values: ["v"] });
+      await db.insert(workbookImportItems).values({ importId: imported!.id, seq: 1, prospectId: "p" });
       await db.insert(workbookViews).values({ workbookId: s.wb.id, name: "v" });
       await db.insert(workbookWebhooks).values({ workbookId: s.wb.id, tokenHash: `${label}-${stamp}` });
       return { ...s, ws, owner };

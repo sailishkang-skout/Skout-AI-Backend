@@ -59,6 +59,9 @@ const {
   crmConnections,
   workspaceIntegrations,
   auditLogs,
+  listMembers,
+  smartLists,
+  prospectActivations,
 } = schema;
 
 type Method = "GET" | "HEAD" | "POST" | "PATCH" | "DELETE";
@@ -95,6 +98,9 @@ interface Ids {
   import: string;
   /** An import waiting to be confirmed, with its file. */
   waiting: string;
+  smartList: string;
+  /** A prospect this workspace holds, and the only member of `list`. */
+  prospect: string;
   view: string;
   webhook: string;
   /** An entry in the workbook's activity log. */
@@ -115,7 +121,7 @@ function ghostIds(): Ids {
   const id = () => randomUUID();
   return {
     workspace: id(), workbook: id(), deleted: id(), input: id(), spare: id(), formula: id(), enrichment: id(), ai: id(), action: id(), crm: id(),
-    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), view: id(), webhook: id(), activity: id(),
+    row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), smartList: id(), prospect: id(), view: id(), webhook: id(), activity: id(),
     duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(),
   };
 }
@@ -138,6 +144,11 @@ const duplicateRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.wor
 const rowRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows`, body: { cells: { [ids.input]: "keyed" } }, headers: { "idempotency-key": ids.rowKey } });
 const bulkRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows/bulk`, body: { rows: [{ cells: { [ids.input]: "keyed" } }] }, headers: { "idempotency-key": ids.bulkKey } });
 const columnRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/columns`, body: textColumn, headers: { "idempotency-key": ids.columnKey } });
+const addRequest = (workbook: string, source: Record<string, unknown>, selection: Record<string, unknown> = { all: true }, extra: Record<string, unknown> = {}): Req => ({
+  method: "POST",
+  path: `/${workbook}/prospect-imports`,
+  body: { source, selection, ...extra },
+});
 const uploadRequest = (workbook: string, query = ""): Req => ({ method: "POST", path: `/${workbook}/imports${query}`, raw: "Name\ninjected\n", headers: { "content-type": "text/csv", "x-file-name": "x.csv" } });
 const confirmRequest = (workbook: string, importId: string, columnId: string): Req => ({
   method: "POST",
@@ -247,6 +258,20 @@ function notFoundCases(): Case[] {
   on(cancelRoute, "cancel their import through my workbook", (m, t) => ({ method: "DELETE", path: `/${m.workbook}/imports/${t.waiting}` }));
   on(cancelRoute, "cancel my import inside their workbook", (m, t) => ({ method: "DELETE", path: `/${t.workbook}/imports/${m.waiting}` }));
 
+  const fromList = "GET /workbooks-v2/:id/sources/lists/:sourceId/prospects";
+  on(fromList, "browse their list in their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/sources/lists/${t.list}/prospects` }));
+  on(fromList, "browse their list through my workbook", (m, t) => ({ method: "GET", path: `/${m.workbook}/sources/lists/${t.list}/prospects` }));
+  on(fromList, "browse my list inside their workbook", (m, t) => ({ method: "GET", path: `/${t.workbook}/sources/lists/${m.list}/prospects` }));
+  const fromSmart = "GET /workbooks-v2/:id/sources/smart-lists/:sourceId/prospects";
+  on(fromSmart, "browse their smart list in their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/sources/smart-lists/${t.smartList}/prospects` }));
+  on(fromSmart, "browse their smart list through my workbook", (m, t) => ({ method: "GET", path: `/${m.workbook}/sources/smart-lists/${t.smartList}/prospects` }));
+  on(fromSmart, "browse my smart list inside their workbook", (m, t) => ({ method: "GET", path: `/${t.workbook}/sources/smart-lists/${m.smartList}/prospects` }));
+  const prospectRoute = "POST /workbooks-v2/:id/prospect-imports";
+  on(prospectRoute, "add their list to their workbook", (_, t) => addRequest(t.workbook, { type: "list", listId: t.list }));
+  on(prospectRoute, "add my list to their workbook", (m, t) => addRequest(t.workbook, { type: "list", listId: m.list }));
+  on(prospectRoute, "add their prospect to their workbook", (_, t) => addRequest(t.workbook, { type: "search" }, { prospectIds: [t.prospect] }));
+  on(prospectRoute, "add my prospect to their workbook", (m, t) => addRequest(t.workbook, { type: "search" }, { prospectIds: [m.prospect] }));
+
   // Runs and CRM pushes: there is no engine yet, so an owner's valid request answers 501.
   for (const [route, path, column] of [
     ["POST /workbooks-v2/:id/runs", "runs", "enrichment"],
@@ -312,6 +337,9 @@ function referenceCases(): Array<Case & { status: number; code: string }> {
 
   on(422, "INVALID_IMPORT_MAPPING")("POST /workbooks-v2/:id/imports/:importId/confirm", "import my file into their column", (m, t) => confirmRequest(m.workbook, m.waiting, t.input));
 
+  on(422, "UNKNOWN_SOURCE")("POST /workbooks-v2/:id/prospect-imports", "add their list to my workbook", (m, t) => addRequest(m.workbook, { type: "list", listId: t.list }));
+  on(422, "UNKNOWN_SOURCE")("POST /workbooks-v2/:id/prospect-imports", "add their smart list to my workbook", (m, t) => addRequest(m.workbook, { type: "smart_list", smartListId: t.smartList }));
+
   const swapped = (m: Ids, t: Ids) => allColumns(m).map((id) => (id === m.spare ? t.spare : id));
   conflict("POST /workbooks-v2/:id/columns/reorder", "order their column into my workbook", (m, t) => ({ method: "POST", path: `/${m.workbook}/columns/reorder`, body: { columnIds: swapped(m, t) } }));
   conflict("POST /workbooks-v2/:id/columns/reorder", "claim their column was in my previous order", (m, t) => ({
@@ -339,6 +367,9 @@ const workspaceClaims: Case[] = [
     name: "confirm as their workspace",
     send: (m, t) => ({ method: "POST", path: `/${m.workbook}/imports/${m.waiting}/confirm`, body: { columns: [{ header: 0, columnId: m.input }], dedupe: { key: "none" }, workspaceId: t.workspace } }),
   },
+  { route: "POST /workbooks-v2/:id/prospect-imports", name: "add prospects as their workspace", send: (m, t) => addRequest(m.workbook, { type: "list", listId: m.list }, { all: true }, { workspaceId: t.workspace }) },
+  { route: "GET /workbooks-v2/:id/sources/lists/:sourceId/prospects", name: "browse a list as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/sources/lists/${m.list}/prospects?workspaceId=${t.workspace}` }) },
+  { route: "GET /workbooks-v2/:id/sources/smart-lists/:sourceId/prospects", name: "browse a smart list as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/sources/smart-lists/${m.smartList}/prospects?workspaceId=${t.workspace}` }) },
   { route: "POST /workbooks-v2/:id/runs", name: "run as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/runs`, body: { columnId: m.enrichment, workspaceId: t.workspace } }) },
 ];
 
@@ -418,6 +449,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     await db.insert(creditBalances).values({ workspaceId: ids.workspace, balance: 500 });
     await db.insert(sequences).values({ id: ids.sequence, workspaceId: ids.workspace, name: marker });
     await db.insert(lists).values({ id: ids.list, workspaceId: ids.workspace, name: marker });
+    await db.insert(prospectActivations).values({ workspaceId: ids.workspace, prospectId: ids.prospect, companyId: ids.prospect, snapshot: { fullName: `${marker} person` } });
+    await db.insert(listMembers).values({ listId: ids.list, prospectId: ids.prospect });
+    await db.insert(smartLists).values({ id: ids.smartList, workspaceId: ids.workspace, name: marker, filters: { companyDomain: "example1.com" } });
     await db.insert(crmConnections).values({ workspaceId: ids.workspace, provider: "hubspot", externalAccountId: marker });
     await db.insert(workspaceIntegrations).values({ workspaceId: ids.workspace, provider: "hunter", encryptedApiKey: marker, keyHint: marker });
 
@@ -446,7 +480,7 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     // Rows get large, unmistakable ids, so one cannot appear in an answer by coincidence.
     for (const [position, rowId] of [ids.row1, ids.row2, ids.row3].entries()) {
       await sql`insert into workbook_rows (id, workbook_id, position, source, prospect_id, crm_ref) overriding system value
-        values (${rowId}, ${ids.workbook}, ${position}, ${JSON.stringify({ type: "csv", file: `${marker}.csv` })}::text::jsonb, ${marker}, ${JSON.stringify({ provider: "hubspot", id: marker })}::text::jsonb)`;
+        values (${rowId}, ${ids.workbook}, ${position}, ${JSON.stringify({ type: "csv", file: `${marker}.csv` })}::text::jsonb, ${`${marker}-${position}`}, ${JSON.stringify({ provider: "hubspot", id: marker })}::text::jsonb)`;
       await db.insert(workbookCells).values([
         { workbookId: ids.workbook, rowId, columnId: ids.input, state: "found", value: `${marker} value ${position}` },
         { workbookId: ids.workbook, rowId, columnId: ids.enrichment, state: "found", value: `${marker}.example.com`, internalProvenance: { provider: marker } },
@@ -506,6 +540,8 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         'credits', (select jsonb_agg(x order by x.id) from credit_transactions x where x.workspace_id = ${w}),
         'jobs', (select count(*) from async_jobs x where x.workspace_id = ${w}) + (select count(*) from enrichment_jobs x where x.workspace_id = ${w}),
         'lists', (select jsonb_agg(x order by x.id) from lists x where x.workspace_id = ${w}),
+        'activations', (select jsonb_agg(x order by x.id) from prospect_activations x where x.workspace_id = ${w}),
+        'smartLists', (select jsonb_agg(x order by x.id) from smart_lists x where x.workspace_id = ${w}),
         'listMembers', (select count(*) from list_members x join lists l on l.id = x.list_id where l.workspace_id = ${w}),
         'sequences', (select jsonb_agg(x order by x.id) from sequences x where x.workspace_id = ${w}),
         'crm', (select jsonb_agg(x order by x.id) from crm_connections x where x.workspace_id = ${w}),
@@ -589,7 +625,7 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     if (created.length) {
       // Deleting a workbook takes its columns, rows, cells, runs, imports, views and webhooks with it.
       await db.delete(workbooks).where(inArray(workbooks.workspaceId, created));
-      for (const table of [lists, sequences, crmConnections, workspaceIntegrations]) await db.delete(table).where(inArray(table.workspaceId, created));
+      for (const table of [lists, sequences, crmConnections, workspaceIntegrations, prospectActivations, smartLists]) await db.delete(table).where(inArray(table.workspaceId, created));
     }
     await app?.close();
     await sql?.end();

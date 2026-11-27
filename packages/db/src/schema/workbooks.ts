@@ -14,6 +14,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { users } from "./users.js";
@@ -136,6 +137,8 @@ export const workbookRows = pgTable(
   (t) => [
     unique("workbook_rows_workbook_id_id_key").on(t.workbookId, t.id),
     index("workbook_rows_workbook_position_idx").on(t.workbookId, t.position),
+    // A prospect is in a workbook once (WB2-021).
+    uniqueIndex("workbook_rows_workbook_prospect_key").on(t.workbookId, t.prospectId).where(sql`${t.prospectId} IS NOT NULL`),
   ]
 );
 
@@ -155,6 +158,8 @@ export const workbookCells = pgTable(
     confidence: real("confidence"),
     creditsCharged: integer("credits_charged").notNull().default(0),
     foundVia: text("found_via").$type<WorkbookFoundVia>(),
+    /** For an email or phone copied from stored data: how it was verified (valid, catch_all, risky, unknown, unverified). */
+    verification: text("verification"),
     /** SERVER ONLY: managed provider name and retrieval time. Never send to a browser (PRD SEC-3). */
     internalProvenance: jsonb("internal_provenance").$type<Record<string, unknown>>(),
     errorCode: text("error_code"),
@@ -280,6 +285,23 @@ export const workbookImportIssues = pgTable(
   (t) => [primaryKey({ name: "workbook_import_issues_pkey", columns: [t.importId, t.record] })]
 );
 
+/**
+ * The prospects a list, smart list or search addition is working through, in order, fixed when it starts so a retry
+ * resumes exactly where it stopped. Removed when the addition finishes.
+ */
+export const workbookImportItems = pgTable(
+  "workbook_import_items",
+  {
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => workbookImports.id, { onDelete: "cascade" }),
+    /** Position in the selection, from 1. */
+    seq: integer("seq").notNull(),
+    prospectId: text("prospect_id").notNull(),
+  },
+  (t) => [primaryKey({ name: "workbook_import_items_pkey", columns: [t.importId, t.seq] })]
+);
+
 export const workbookViews = pgTable(
   "workbook_views",
   {
@@ -329,6 +351,7 @@ export const publicWorkbookCellColumns = {
   confidence: workbookCells.confidence,
   creditsCharged: workbookCells.creditsCharged,
   foundVia: workbookCells.foundVia,
+  verification: workbookCells.verification,
   errorCode: workbookCells.errorCode,
   updatedAt: workbookCells.updatedAt,
 } as const;

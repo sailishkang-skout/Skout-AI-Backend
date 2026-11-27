@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016) and CSV import (WB2-020)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -64,7 +64,7 @@ NewRow = { cells?: { [columnId]: string | number | boolean | null },   // at mos
            source?: { type: string, ...up to 19 text/number/boolean/null fields },  // default { type: "manual" }
            crmRef?: { provider: string, id: string } }
 Row    = { id, position, source, prospectId, crmRef, suppressed, createdAt,
-           cells: { [columnId]: { value, state, confidence, creditsCharged, foundVia, errorCode, updatedAt } } }
+           cells: { [columnId]: { value, state, confidence, creditsCharged, foundVia, verification, errorCode, updatedAt } } }
 Window = { data: (Row & { index })[],
            window: { offset, limit, returned, matched, total, hasMore, nextOffset } }
 ```
@@ -242,7 +242,7 @@ Three steps: send the file, confirm how it maps, follow it. Nothing is added to 
 | `GET /:id/imports/:importId/report` | `enrichment:read` | | the skipped-rows CSV | `404 NOT_FOUND` / `REPORT_NOT_AVAILABLE` |
 
 ```ts
-Import = { id, workbookId, status, fileName, fileBytes,
+Import = { id, workbookId, sourceType /* csv | list | smart_list | search */, sourceName, truncated, status, fileName, fileBytes,
            counts: { total, processed, imported, duplicates, skipped, failed },
            progress /* 0-100, processed / total */, background, error: { code, message } | null,
            report: { available, rows },
@@ -289,4 +289,31 @@ Every row not imported is in the report: line in the file, result, reason and th
 - Production needs `EXPORTS_BUCKET` and Redis; without storage the routes answer `503`, without Redis large imports answer `503` and nothing changes.
 - One `rows.added` activity entry (`source: "csv"`) is written when an import ends having added rows; new columns are recorded as `column.added`.
 - At most 10 unfinished imports per workspace.
+
+## Rows from Skout lists, smart lists and Search
+
+| Method and path | Permission | Body | Success | Errors besides 401/403 |
+|---|---|---|---|---|
+| `GET /:id/sources/lists/:listId/prospects?page=&pageSize=` | `enrichment:read` | | `200 { source, data: Prospect[], total, page, pageSize }` | `404`, `422` |
+| `GET /:id/sources/smart-lists/:smartListId/prospects?page=&pageSize=` | `enrichment:read` | | the same | `404`, `422 PAGE_OUT_OF_RANGE` (past 10,000), `503 SEARCH_UNAVAILABLE` |
+| `POST /:id/prospect-imports` | `enrichment:capture` | `{ source, selection }`, optional `Idempotency-Key` | `200` finished (up to 1,000) or `202` queued, `{ data: Import }` | `404`, `422 UNKNOWN_SOURCE` / `NOTHING_TO_ADD` / `ROW_LIMIT_EXCEEDED`, `429`, `503 IMPORT_UNAVAILABLE` / `SEARCH_UNAVAILABLE` |
+
+```ts
+Prospect  = { prospectId, fullName, title, companyName, companyDomain, inWorkbook }   // no contact details
+source    = { type: "list", listId } | { type: "smart_list", smartListId } | { type: "search" }
+selection = { prospectIds: string[] /* 1 to 10,000 */ } | { all: true /* not for search */ }
+```
+`pageSize` is 1–100 (default 25). Progress, the list of imports and the skipped-rows report are the import routes above; an addition cannot be confirmed or cancelled.
+
+### What is added
+- Each row has `prospectId` and `source = { type, importId, addedAt, listId?, listName?, smartListId?, smartListName? }`. A prospect is in a workbook once (a unique index backs this); adding again counts as `duplicates`.
+- A prospect must be one the workspace already holds, or one the shared search index has. One the index supplies is activated for the workspace, as adding it to a list does; one already held is not changed. Anything else, another workspace's own prospects included, is `skipped` as "Prospect not found".
+- A list selection is checked against the list's members, and a chosen smart list selection against its filters. `all` fixes a list's members when the request is made, and reads a smart list's matches in the job. At most the workspace's row limit is considered (`truncated` says so); rows past the workbook's limit are `failed`.
+- Columns: each fact goes into the first input column whose name means the same (for email and phone, a `find_email` or `find_phone` column first), otherwise a new input column, made only when somebody has that fact. Facts: full name, title, company, company domain, LinkedIn URL, email, phone. A value that does not fit its column is stored and flagged.
+
+### Stored enrichment, free
+Email and phone come only from what the workspace already holds (enrichment results, verification verdicts, dated CRM values), found or verified within **30 days**, and never an address verified invalid. A CRM value with no recorded date is left out unless recently verified. The search index's contact details are never copied. Those cells have `foundVia: "cache"` (shown as "From your Skout data"), `creditsCharged: 0`, and for email `verification` (`valid`, `catch_all`, `risky`, `unknown`, `unverified`). The supplying provider is kept in server-only provenance. No provider is called and nothing is charged. Editing the cell clears the label.
+
+### Processing
+Up to 1,000 run during the request; more are queued on the import queue and processed in chunks of 500, each one transaction, resuming after the last whole chunk. Without a search index in production, Search and smart list additions answer `503`; list additions use the workspace's own records.
 

@@ -6,6 +6,9 @@ import { WorkbookV2Error, getWorkspaceRowLimit, lockLiveWorkbook } from "./workb
 import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, csvLine, csvRecords, type CsvRecord } from "./workbook-import-csv.js";
 import { classifyRow, dedupeValue, duplicateReason, type ClassifiedRow, type ImportPlan, type MatchKey } from "./workbook-import-plan.js";
+import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, Superseded, countsOf, describeFailure, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
+import { addProspects } from "./workbook-prospect-runner.js";
+import type { ProspectDirectory } from "./prospect-directory.js";
 import { removeStaleTempFiles, reportKey, saveStream, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
 import { recordWorkbookActivity } from "./workbook-activity-log.js";
 
@@ -17,8 +20,10 @@ import { recordWorkbookActivity } from "./workbook-activity-log.js";
  * the file again and starts after `processed`: nothing is imported twice. The workbook is locked only for the length
  * of a chunk, so people can keep working in it.
  */
-const { workbooks, workbookColumns, workbookRows, workbookCells, workbookImports, workbookImportIssues } = schema;
+const { workbooks, workbookColumns, workbookRows, workbookCells, workbookImports, workbookImportIssues, workbookImportItems } = schema;
 const log = createLogger("workbook-import");
+
+export { ImportFailure, countsOf, describeFailure, type ImportCounts } from "./workbook-import-core.js";
 
 export const CHUNK_ROWS = 1_000;
 /** Wide files use smaller chunks, so a chunk stays a short transaction. */
@@ -38,20 +43,6 @@ const STALE_TEMP_AFTER_MS = 2 * 60 * 60 * 1000;
 export const IMPORT_FAILED_MESSAGE =
   "The import stopped because of a problem on our side. Rows already imported are in the workbook. To add the rest, upload the file again and choose a deduplication key so rows are not added twice.";
 
-export interface ImportCounts {
-  total: number;
-  processed: number;
-  imported: number;
-  duplicates: number;
-  skipped: number;
-  failed: number;
-}
-
-export function countsOf(stored: Record<string, number> | null | undefined): ImportCounts {
-  const n = (key: keyof ImportCounts) => stored?.[key] ?? 0;
-  return { total: n("total"), processed: n("processed"), imported: n("imported"), duplicates: n("duplicates"), skipped: n("skipped"), failed: n("failed") };
-}
-
 export interface ImportJob {
   importId: string;
   workspaceId: string;
@@ -63,51 +54,17 @@ export interface ImportQueue {
   enqueue(job: ImportJob): Promise<void>;
 }
 
-/**
- * What may be logged about a failure: its kind and code only. A database error's own text quotes the statement and its
- * values, which here are the rows of someone's file, and a file error's text names where files are kept.
- */
-export function describeFailure(error: unknown): string {
-  const e = (error ?? {}) as { name?: unknown; code?: unknown; cause?: { code?: unknown; constraint_name?: unknown } };
-  return [e.name, e.cause?.code ?? e.code, e.cause?.constraint_name].filter((part) => typeof part === "string" && part).join(" ") || "unknown error";
-}
-
-/** An unexpected failure with nothing from the original error but what `describeFailure` allows. */
-export class ImportFailure extends Error {
-  readonly code?: string;
-  constructor(what: string, error: unknown) {
-    super(`${what} (${describeFailure(error)})`);
-    this.name = "ImportFailure";
-    const code = (error as { code?: unknown } | null)?.code;
-    if (typeof code === "string") this.code = code;
-  }
-}
-
-/** Something retrying cannot fix. */
-class ImportStopped extends Error {
-  constructor(
-    readonly code: string,
-    message: string
-  ) {
-    super(message);
-    this.name = "ImportStopped";
-  }
-}
-
-/** Another worker moved this import on, or it finished: this attempt has nothing left to do. */
-class Superseded extends Error {}
+const anyImport = inArray(workbookImports.sourceType, [...IMPORT_SOURCE_TYPES]);
 
 async function loadImport(db: Db, importId: string) {
   const [found] = await db
     .select({ record: workbookImports, workspaceId: workbooks.workspaceId })
     .from(workbookImports)
     .innerJoin(workbooks, eq(workbooks.id, workbookImports.workbookId))
-    .where(and(eq(workbookImports.id, importId), eq(workbookImports.sourceType, "csv")))
+    .where(and(eq(workbookImports.id, importId), anyImport))
     .limit(1);
   return found ?? null;
 }
-
-const lockImport = async (tx: Db, importId: string) => (await tx.select().from(workbookImports).where(eq(workbookImports.id, importId)).limit(1).for("no key update"))[0];
 
 /** The deduplication values already in the key column, brought up to date with rows added since the last look. */
 class KeyIndex {
@@ -156,7 +113,6 @@ interface Run {
 }
 
 type Pending = CsvRecord & { record: number };
-type Issue = { record: number; line: number; kind: (typeof schema.WORKBOOK_IMPORT_ISSUE_KINDS)[number]; reason: string; values: string[] };
 
 async function checkColumns(tx: Db, run: Run) {
   const found = await tx
@@ -225,24 +181,7 @@ async function importChunk(db: Db, run: Run, chunk: Pending[]): Promise<void> {
       }
       await tx.update(workbooks).set({ rowCount: existing + accepted.length, updatedAt: sql`now()` }).where(eq(workbooks.id, run.workbookId));
     }
-    if (issues.length) {
-      await tx.execute(sql`
-        INSERT INTO workbook_import_issues (import_id, record, line, kind, reason, "values")
-        SELECT ${run.importId}::uuid, x.record, x.line, x.kind, x.reason, x."values"
-        FROM jsonb_to_recordset(${JSON.stringify(issues)}::text::jsonb) AS x (record int, line int, kind text, reason text, "values" jsonb)`);
-    }
-
-    const duplicates = issues.filter((i) => i.kind === "duplicate").length;
-    const skipped = issues.filter((i) => i.kind === "skipped").length;
-    const next: ImportCounts = {
-      total: counts.total,
-      processed: counts.processed + chunk.length,
-      imported: counts.imported + accepted.length,
-      duplicates: counts.duplicates + duplicates,
-      skipped: counts.skipped + skipped,
-      failed: counts.failed + issues.length - duplicates - skipped,
-    };
-    await tx.update(workbookImports).set({ counts: { ...next }, updatedAt: sql`now()` }).where(eq(workbookImports.id, run.importId));
+    await recordChunk(tx, run.importId, counts, { processed: chunk.length, imported: accepted.length }, issues);
     return keys;
   });
   for (const key of newKeys) run.keys?.add(key);
@@ -263,20 +202,31 @@ async function claim(db: Db, importId: string) {
  * Works through a confirmed import and finishes it. Safe to call again at any point. Throws only for problems worth
  * retrying; anything else ends the import as failed.
  */
-export async function processImport(db: Db, storage: ImportStorage, importId: string): Promise<void> {
+export async function processImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory): Promise<void> {
   try {
-    await attemptImport(db, storage, importId);
+    await attemptImport(db, storage, importId, directory);
   } catch (error) {
     throw new ImportFailure(`Import ${importId} could not be processed`, error);
   }
 }
 
-async function attemptImport(db: Db, storage: ImportStorage, importId: string): Promise<void> {
+async function attemptImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory): Promise<void> {
   const found = await loadImport(db, importId);
   if (!found) return;
   if (FINISHED.has(found.record.status)) return housekeepImport(db, storage, importId);
   const record = await claim(db, importId);
   if (!record) return;
+  if (record.sourceType !== "csv") {
+    if (!directory) throw new Error("adding prospects needs the prospect directory");
+    try {
+      await addProspects(db, directory, found.workspaceId, record);
+    } catch (error) {
+      if (error instanceof Superseded) return;
+      if (error instanceof ImportStopped) return finishImport(db, storage, importId, { status: "failed", code: error.code, message: error.message });
+      throw error;
+    }
+    return finishImport(db, storage, importId, { status: "completed" });
+  }
 
   const plan = record.plan as unknown as ImportPlan;
   const run: Run = {
@@ -321,9 +271,9 @@ async function attemptImport(db: Db, storage: ImportStorage, importId: string): 
 }
 
 /** One attempt by the background worker. After the last one the import is marked failed. */
-export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean): Promise<void> {
+export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean, directory?: ProspectDirectory): Promise<void> {
   try {
-    await processImport(db, storage, importId);
+    await processImport(db, storage, importId, directory);
   } catch (error) {
     if (lastAttempt) {
       await finishImport(db, storage, importId, { status: "failed", code: "IMPORT_FAILED", message: IMPORT_FAILED_MESSAGE }).catch((failure) =>
@@ -334,6 +284,9 @@ export async function runImportJob(db: Db, storage: ImportStorage, importId: str
     throw error;
   }
 }
+
+/** What the report's first column counts. */
+const positionLabel = (sourceType: string) => (sourceType === "csv" ? "Line in file" : "Position in selection");
 
 const RESULT_LABEL: Record<Issue["kind"], string> = {
   duplicate: "Duplicate",
@@ -347,7 +300,7 @@ const RESULT_LABEL: Record<Issue["kind"], string> = {
  * Writes the downloadable report from the recorded issues, stores it and notes it on the import. False when there is
  * nothing to report. The issues are removed only by the caller, once the report is safely stored.
  */
-async function writeReport(db: Db, storage: ImportStorage, workspaceId: string, importId: string, headers: string[]): Promise<boolean> {
+async function writeReport(db: Db, storage: ImportStorage, workspaceId: string, importId: string, headers: string[], position: string): Promise<boolean> {
   const [any] = await db.select({ record: workbookImportIssues.record }).from(workbookImportIssues).where(eq(workbookImportIssues.importId, importId)).limit(1);
   if (!any) return false;
   const key = reportKey(workspaceId, importId);
@@ -355,7 +308,7 @@ async function writeReport(db: Db, storage: ImportStorage, workspaceId: string, 
     const out = await open(file, "w", 0o600);
     try {
       // A byte-order mark makes spreadsheet programs read the file as UTF-8.
-      await out.write(`\uFEFF${csvLine(["Line in file", "Result", "Reason", ...headers])}`);
+      await out.write(`\uFEFF${csvLine([position, "Result", "Reason", ...headers])}`);
       let after = 0;
       for (;;) {
         const page = await db
@@ -391,7 +344,7 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
     const reportedUpTo = countsOf(found.record.counts).processed;
     let reported = false;
     try {
-      reported = await writeReport(db, storage, found.workspaceId, importId, headers);
+      reported = await writeReport(db, storage, found.workspaceId, importId, headers, positionLabel(found.record.sourceType));
     } catch (error) {
       // A completed import comes with its report, so try the whole step again. A failure is recorded regardless; the
       // sweep writes its report later.
@@ -415,13 +368,14 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
         })
         .where(eq(workbookImports.id, importId));
       if (reported) await tx.delete(workbookImportIssues).where(eq(workbookImportIssues.importId, importId));
+      await tx.delete(workbookImportItems).where(eq(workbookImportItems.importId, importId));
       const added = countsOf(record.counts).imported;
       if (added > 0) {
         const [workbook] = await tx.select({ rowCount: workbooks.rowCount }).from(workbooks).where(eq(workbooks.id, record.workbookId));
         const requestId = (record.plan as unknown as ImportPlan | null)?.requestId ?? undefined;
         await recordWorkbookActivity(tx, { workspaceId: found.workspaceId, userId: record.createdBy, requestId }, record.workbookId, {
           action: "workbook.rows.added",
-          after: { source: "csv", rows: added, rowCount: workbook?.rowCount ?? added },
+          after: { source: record.sourceType, rows: added, rowCount: workbook?.rowCount ?? added },
           channel: "worker",
         });
       }
@@ -439,7 +393,9 @@ export async function housekeepImport(db: Db, storage: ImportStorage, importId: 
   if (!found || !FINISHED.has(found.record.status)) return;
   try {
     const headers = (found.record.plan as unknown as ImportPlan | null)?.headers ?? [];
-    if (await writeReport(db, storage, found.workspaceId, importId, headers)) await db.delete(workbookImportIssues).where(eq(workbookImportIssues.importId, importId));
+    if (await writeReport(db, storage, found.workspaceId, importId, headers, positionLabel(found.record.sourceType))) {
+      await db.delete(workbookImportIssues).where(eq(workbookImportIssues.importId, importId));
+    }
   } catch (error) {
     log.error("could not write the import report", undefined, { importId, failure: describeFailure(error) });
   }
@@ -474,14 +430,14 @@ export async function sweepImports(db: Db, storage: ImportStorage, queue: Import
       finishedAt: sql`now()`,
       updatedAt: sql`now()`,
     })
-    .where(and(eq(workbookImports.sourceType, "csv"), eq(workbookImports.status, "awaiting_confirmation"), lt(workbookImports.createdAt, before(ABANDONED_AFTER_MS))))
+    .where(and(anyImport, eq(workbookImports.status, "awaiting_confirmation"), lt(workbookImports.createdAt, before(ABANDONED_AFTER_MS))))
     .returning({ id: workbookImports.id });
 
   const stalled = await db
     .select({ id: workbookImports.id, confirmedAt: workbookImports.confirmedAt, workspaceId: workbooks.workspaceId })
     .from(workbookImports)
     .innerJoin(workbooks, eq(workbooks.id, workbookImports.workbookId))
-    .where(and(eq(workbookImports.sourceType, "csv"), inArray(workbookImports.status, ["queued", "processing"]), lt(workbookImports.updatedAt, before(REQUEUE_AFTER_MS))));
+    .where(and(anyImport, inArray(workbookImports.status, ["queued", "processing"]), lt(workbookImports.updatedAt, before(REQUEUE_AFTER_MS))));
   let requeued = 0;
   let gaveUp = 0;
   for (const item of stalled) {
@@ -498,7 +454,7 @@ export async function sweepImports(db: Db, storage: ImportStorage, queue: Import
     }
   }
 
-  const finished = and(eq(workbookImports.sourceType, "csv"), isNotNull(workbookImports.finishedAt));
+  const finished = and(anyImport, isNotNull(workbookImports.finishedAt));
   const holdingFile = await db.select({ id: workbookImports.id }).from(workbookImports).where(and(finished, isNotNull(workbookImports.fileKey)));
   // Issues are removed when a report is written, so any left on a finished import still need one.
   const unreported = await db

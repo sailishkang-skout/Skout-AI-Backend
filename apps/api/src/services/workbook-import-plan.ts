@@ -235,6 +235,9 @@ const SAME_AS: string[][] = [
 const flat = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 const meaning = (name: string) => SAME_AS.findIndex((group) => group.includes(flat(name)));
 
+/** Whether two column names mean the same thing, e.g. "Website" and "Company domain". */
+export const namedLike = (name: string, other: string) => flat(name) === flat(other) || (meaning(name) >= 0 && meaning(name) === meaning(other));
+
 /** The type a new column should start as: the most specific one every value fits. */
 export function suggestedType(header: Pick<CsvHeader, "name" | "fits">): InputDataType {
   const name = flat(header.name);

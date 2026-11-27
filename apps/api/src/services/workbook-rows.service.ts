@@ -34,6 +34,7 @@ export interface CellDto {
   confidence: number | null;
   creditsCharged: number;
   foundVia: string | null;
+  verification: string | null;
   errorCode: string | null;
   updatedAt: string;
 }
@@ -109,6 +110,7 @@ async function loadRows(db: Db, workbookId: string, ids: number[], columnIds?: s
       confidence: c.confidence,
       creditsCharged: c.creditsCharged,
       foundVia: c.foundVia,
+      verification: c.verification,
       errorCode: c.errorCode,
       updatedAt: c.updatedAt.toISOString(),
     };
@@ -162,6 +164,7 @@ function cellRecord(workbookId: string, rowId: number, columnId: string, cell: E
     confidence: null,
     creditsCharged: 0,
     foundVia: null,
+    verification: null,
     internalProvenance: null,
   };
 }

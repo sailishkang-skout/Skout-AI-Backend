@@ -36,6 +36,9 @@ const ROUTES: Record<string, Access> = {
   "GET /workbooks-v2/:id/imports/:importId": "view",
   "GET /workbooks-v2/:id/imports/:importId/report": "view",
   "POST /workbooks-v2/:id/imports": "edit",
+  "GET /workbooks-v2/:id/sources/lists/:sourceId/prospects": "view",
+  "GET /workbooks-v2/:id/sources/smart-lists/:sourceId/prospects": "view",
+  "POST /workbooks-v2/:id/prospect-imports": "edit",
   "POST /workbooks-v2/:id/imports/:importId/confirm": "edit",
   "DELETE /workbooks-v2/:id/imports/:importId": "edit",
   "POST /workbooks-v2": "edit",
@@ -144,7 +147,12 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     const done = await make("a,b\n,\n");
     const confirmed = await call(owner, "POST", `/${b.id}/imports/${done}/confirm`, { columns: [{ header: 0, columnId: b.input }], dedupe: { key: "none" } });
     expect(confirmed.json().data.report.available, confirmed.body).toBe(true);
-    return { done, waiting: await make("a\n1\n"), unwanted: await make("a\n1\n") };
+    const prospectId = `perm-${randomUUID()}`;
+    await db.insert(schema.prospectActivations).values({ workspaceId: owner.workspaceId, prospectId, companyId: prospectId, snapshot: { fullName: "Perm Person" } });
+    const [list] = await db.insert(schema.lists).values({ workspaceId: owner.workspaceId, name: "perm" }).returning();
+    await db.insert(schema.listMembers).values({ listId: list!.id, prospectId });
+    const [smart] = await db.insert(schema.smartLists).values({ workspaceId: owner.workspaceId, name: "perm", filters: { companyDomain: "example1.com" } }).returning();
+    return { done, waiting: await make("a\n1\n"), unwanted: await make("a\n1\n"), list: list!.id, smartList: smart!.id };
   }
   type Imports = Awaited<ReturnType<typeof importsFor>>;
 
@@ -460,6 +468,9 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
         ["GET /workbooks-v2/:id/imports/:importId/report", "GET", `/${b.id}/imports/${imports.done}/report`],
         // Sent as a file, not JSON.
         ["POST /workbooks-v2/:id/imports", "POST", `/${b.id}/imports`],
+        ["GET /workbooks-v2/:id/sources/lists/:sourceId/prospects", "GET", `/${b.id}/sources/lists/${imports.list}/prospects`],
+        ["GET /workbooks-v2/:id/sources/smart-lists/:sourceId/prospects", "GET", `/${b.id}/sources/smart-lists/${imports.smartList}/prospects`],
+        ["POST /workbooks-v2/:id/prospect-imports", "POST", `/${b.id}/prospect-imports`, { source: { type: "list", listId: imports.list }, selection: { all: true } }],
         ["POST /workbooks-v2/:id/imports/:importId/confirm", "POST", `/${b.id}/imports/${imports.waiting}/confirm`, { columns: [{ header: 0, columnId: b.input }], dedupe: { key: "none" } }],
         ["DELETE /workbooks-v2/:id/imports/:importId", "DELETE", `/${b.id}/imports/${imports.unwanted}`],
         ["POST /workbooks-v2", "POST", "", { name: "Mine" }],
