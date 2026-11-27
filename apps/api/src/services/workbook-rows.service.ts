@@ -205,7 +205,14 @@ export const getRows = (db: Db, workbookId: string, ids: number[]) => loadRows(d
  * Appends rows with their input values. All or nothing: any bad cell, an unknown column or the row limit refuses the
  * whole request, so a retry never has half a batch to reconcile.
  */
-export async function addRows(db: Db, actor: WorkbookActor, workbookId: string, input: NewRow[]): Promise<AddedRows> {
+export async function addRows(
+  db: Db,
+  actor: WorkbookActor,
+  workbookId: string,
+  input: NewRow[],
+  /** More counts for the activity entry, such as what a webhook request left out (WB2-026). */
+  counts: Record<string, number> = {}
+): Promise<AddedRows> {
   return db.transaction(async (rawTx) => {
     const tx = rawTx as unknown as Db;
     await lockLiveWorkbook(tx, actor.workspaceId, workbookId);
@@ -241,7 +248,7 @@ export async function addRows(db: Db, actor: WorkbookActor, workbookId: string, 
     const rowCount = existing + input.length;
     await touchWorkbook(tx, workbookId, rowCount);
     for (const added of rowsBySource(input)) {
-      await recordWorkbookActivity(tx, actor, workbookId, { action: "workbook.rows.added", after: { ...added, rowCount } });
+      await recordWorkbookActivity(tx, actor, workbookId, { action: "workbook.rows.added", after: { ...added, rowCount, ...counts } });
     }
     return {
       added: input.length,

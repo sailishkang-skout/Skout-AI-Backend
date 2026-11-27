@@ -31,7 +31,7 @@ import { importStorage, reportKey, uploadKey, withTempFile } from "../services/w
  *  - a `workspaceId` in a body or query: 422, the field is refused;
  *  - an `x-workspace-id` the caller does not belong to: 403 from sign-in, before any workbook is looked up.
  *
- * There are no run-history, export or webhook routes yet. B has such records so their ids can be watched, and the
+ * There are no run-history or export routes yet. B has such records so their ids can be watched, and the
  * first test fails as soon as any route is registered without a case here. B also has activity log entries, a finished
  * CSV import with a report and one waiting to be confirmed.
  */
@@ -233,6 +233,12 @@ function notFoundCases(): Case[] {
   on(forgetSheet, "stop their workbook pulling from a sheet", (_, t) => ({ method: "DELETE", path: `/${t.workbook}/sheet-sources/${t.sheetSource}` }));
   on(forgetSheet, "remove their sheet through my workbook", (m, t) => ({ method: "DELETE", path: `/${m.workbook}/sheet-sources/${t.sheetSource}` }));
 
+  on("GET /workbooks-v2/:id/webhook", "see their webhook", (_, t) => ({ method: "GET", path: `/${t.workbook}/webhook` }));
+  // Both tenants already have a webhook, so an owner is told that (409).
+  on("POST /workbooks-v2/:id/webhook", "give their workbook a webhook", (_, t) => ({ method: "POST", path: `/${t.workbook}/webhook` }), 409);
+  on("POST /workbooks-v2/:id/webhook/regenerate", "take a new token for their webhook", (_, t) => ({ method: "POST", path: `/${t.workbook}/webhook/regenerate` }));
+  on("PATCH /workbooks-v2/:id/webhook", "turn their webhook off", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/webhook`, body: { enabled: false } }));
+
   const editRow = "PATCH /workbooks-v2/:id/rows/:rowId";
   on(editRow, "edit their cell", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${t.row1}`, body: { cells: { [t.input]: "overwritten" } } }));
   on(editRow, "edit my row inside their workbook", (m, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${m.row1}`, body: { cells: { [m.input]: "x" } } }));
@@ -362,6 +368,8 @@ function referenceCases(): Array<Case & { status: number; code: string }> {
   moved("POST /workbooks-v2/:id/paste", "paste over their rows through my workbook", (m, t) => pasteOver(m.workbook, m.input, t.row1, t.row2));
   moved("POST /workbooks-v2/:id/paste", "start on my row and end on theirs", (m, t) => pasteOver(m.workbook, m.input, m.row1, t.row2));
 
+  on(422, "DEDUPE_COLUMN_INVALID")("PATCH /workbooks-v2/:id/webhook", "check my webhook's duplicates on their column", (m, t) => ({ method: "PATCH", path: `/${m.workbook}/webhook`, body: { dedupe: { key: "email", columnId: t.input } } }));
+
   const addConfig = (name: string, column: (m: Ids, t: Ids) => Record<string, unknown>) =>
     config("POST /workbooks-v2/:id/columns", name, (m, t) => ({ method: "POST", path: `/${m.workbook}/columns`, body: { name: "x", ...column(m, t) } }));
   addConfig("formula on their column", (_, t) => ({ type: "formula", config: formula(t.input) }));
@@ -404,6 +412,9 @@ const workspaceClaims: Case[] = [
   { route: "POST /workbooks-v2/:id/rows/query", name: "query as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/rows/query`, body: { workspaceId: t.workspace } }) },
   { route: "POST /workbooks-v2/:id/rows", name: "add a row as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/rows`, body: { workspaceId: t.workspace } }) },
   { route: "POST /workbooks-v2/:id/columns", name: "add a column as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/columns`, body: { ...textColumn, workspaceId: t.workspace } }) },
+  { route: "PATCH /workbooks-v2/:id/webhook", name: "change my webhook as their workspace", send: (m, t) => ({ method: "PATCH", path: `/${m.workbook}/webhook`, body: { enabled: false, workspaceId: t.workspace } }) },
+  { route: "POST /workbooks-v2/:id/webhook", name: "make a webhook as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/webhook`, body: { workspaceId: t.workspace } }) },
+  { route: "POST /workbooks-v2/:id/webhook/regenerate", name: "regenerate as their workspace", send: (m, t) => ({ method: "POST", path: `/${m.workbook}/webhook/regenerate`, body: { workspaceId: t.workspace } }) },
   { route: "GET /workbooks-v2/:id/activity", name: "read activity as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/activity?workspaceId=${t.workspace}` }) },
   { route: "GET /workbooks-v2/:id/imports", name: "list imports as their workspace", send: (m, t) => ({ method: "GET", path: `/${m.workbook}/imports?workspaceId=${t.workspace}` }) },
   { route: "POST /workbooks-v2/:id/imports", name: "upload as their workspace", send: (m, t) => uploadRequest(m.workbook, `?workspaceId=${t.workspace}`) },
@@ -857,7 +868,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
   });
 
   describe("belonging to both workspaces does not widen a session", () => {
-    it("acting in A, a member of both gets the same refusals for B's resources", async () => {
+    let both: Person;
+
+    beforeAll(async () => {
       const userId = randomUUID();
       const email = `both-${userId}@example.com`;
       await db.insert(users).values({ id: userId, email, fullName: "Both", status: "active" });
@@ -865,15 +878,21 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
         await db.insert(workspaceMembers).values({ workspaceId, userId, role: "owner" });
         await grantSystemMemberRole(db, workspaceId, userId, "owner");
       }
-      const both: Person = { userId, email, workspaceId: A.workspaceId };
-      // The membership of B is real: acting in B, the same person can open B's workbook.
+      both = { userId, email, workspaceId: A.workspaceId };
+    });
+
+    it("the membership of B is real: acting in B, the same person can open B's workbook", async () => {
       expect((await send({ ...both, workspaceId: B.workspaceId }, { method: "GET", path: `/${B.ids.workbook}` })).statusCode).toBe(200);
-      const cases = [...NOT_FOUND.map((c) => ({ c, status: 404 })), ...REFERENCES.map((c) => ({ c, status: c.status }))];
-      for (const { c, status } of cases) {
+    });
+
+    // One test for each case: a single test walking all of them outgrew its time limit as routes were added.
+    it.each([...NOT_FOUND.map((c) => ({ c, status: 404 })), ...REFERENCES.map((c) => ({ c, status: c.status }))].map((x) => [...label(x.c), x] as const))(
+      "acting in A, a member of both gets the same refusal for B's resources: %s: %s",
+      async (_route, _name, { c, status }) => {
         const res = await attack(both, c);
         expect(res.statusCode, `${c.route}: ${c.name} ${res.body}`).toBe(status);
       }
-    }, 120_000);
+    );
   });
 
   // ── Proof the cases are real requests ───────────────────────────────────────

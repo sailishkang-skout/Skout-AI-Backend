@@ -12,7 +12,7 @@ export type DedupeKey = (typeof DEDUPE_KEYS)[number];
 export type MatchKey = Exclude<DedupeKey, "none">;
 
 /** The column types a deduplication key can be read from. Files often arrive as plain text. */
-const KEY_COLUMN_TYPES: Record<MatchKey, InputDataType[]> = {
+export const KEY_COLUMN_TYPES: Record<MatchKey, InputDataType[]> = {
   email: ["email", "text"],
   linkedin_url: ["linkedin_url", "url", "text"],
   domain: ["domain", "url", "text"],

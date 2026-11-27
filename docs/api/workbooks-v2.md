@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022), CRM import (WB2-023)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022), CRM import (WB2-023) — inbound webhook (WB2-026)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -197,7 +197,7 @@ Event = { id, type, occurredAt, actor: { id, name, email } | null, details }
 
 | `type` | `details` |
 |---|---|
-| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request. CRM imports add `object` and `viewName?`; Apollo imports also add `status`, `duplicates`, `skipped` and `failed` (see [Apollo import](#apollo-import)); Google Sheets imports add those and `spreadsheetName`, `tabName`, `pull` and `alreadyImported` (see [Google Sheets](#google-sheets)) |
+| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request. CRM imports add `object` and `viewName?`; webhook requests add `duplicates`, `skipped` and `rejected` (see [Inbound webhook](#inbound-webhook)); Apollo imports also add `status`, `duplicates`, `skipped` and `failed` (see [Apollo import](#apollo-import)); Google Sheets imports add those and `spreadsheetName`, `tabName`, `pull` and `alreadyImported` (see [Google Sheets](#google-sheets)) |
 | `rows.deleted` | `rows`, `rowCount` |
 | `column.added` | `columnId`, `columnName`, `columnType`, `operation`, `copiedFromWorkbookId?` |
 | `column.updated` | `columnId`, `columnName`, `renamedFrom?`, `settingsChanged?` (setting names), `dataType?: { from, to }` |
@@ -619,3 +619,103 @@ later and given up after six hours.
 
 A separate project matters: revoking at Google removes everything the person granted that project, so sharing the
 Calendar and mailbox app would disconnect those too.
+
+## Inbound webhook
+
+An outside system adds rows to one workbook by posting JSON to that workbook's webhook (WB2-026, PRD ROW-7 and SEC-5).
+Receiving rows only adds them: no enrichment, formula, AI or action column runs, and nothing is charged (D6).
+
+### Managing it
+
+All under `/api/v1/workbooks-v2/:id/webhook`, behind the `workbooks_v2` switch.
+
+| Method and path | Needs | Does |
+|---|---|---|
+| `GET …/webhook` | `enrichment:read` | `{ data: webhook }`, or `{ data: null }` |
+| `POST …/webhook` | `enrichment:capture` | Makes it. `201 { data: { webhook, token } }`; `409 WEBHOOK_EXISTS` if there is one |
+| `POST …/webhook/regenerate` | `enrichment:capture` | New token; the old one stops at once. `{ data: { webhook, token } }` |
+| `PATCH …/webhook` | `enrichment:capture` | `{ enabled?, dedupe?: { key, columnId? } }`. Returns the webhook |
+
+`webhook` is `{ id, url, enabled, dedupe, createdAt, tokenCreatedAt, lastUsedAt, lastResult }`. A workbook has at most
+one. `url` is built from `API_PUBLIC_URL` (without it, `http://localhost:PORT`) and holds no secret.
+
+- **The token is shown only in the answer that makes it.** Only its SHA-256 hash is stored, and these answers are not
+  kept for idempotent replay (an `Idempotency-Key` is ignored). A lost token is replaced by regenerating.
+- Regenerating keeps the address, and keeps a disabled webhook disabled.
+- `dedupe.key` is `none` (default), `email`, `linkedin_url` or `domain`; the others need `columnId`, an input column of
+  this workbook of a type that can hold the key (`422 DEDUPE_COLUMN_INVALID`).
+- Copying a workbook does not copy its webhook. A deleted workbook's webhook answers `401` until the workbook is
+  restored.
+
+### Sending rows
+
+```bash
+curl -X POST "https://<api>/api/v1/webhooks/workbooks/<webhookId>" \
+  -H "Authorization: Bearer $SKOUT_WEBHOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: crm-export-2026-11-27-001" \
+  --data '[{"Name": "Ada Lovelace", "Email": "ada@example.com"}]'
+```
+
+No Skout sign-in is used. The webhook decides the workbook; nothing in the request can name another.
+
+- **Body:** a JSON array of 1 to 1,000 row objects, at most 5 MB.
+- **Fields** are matched to input column names, ignoring letter case and surrounding spaces. Other fields are left out
+  and listed in `ignoredFields` (up to 50); no columns are created. A missing field leaves its cell empty.
+- **Each row** is added only if every value fits its column's type (as in [Rows](#rows)). A row is rejected if two of
+  its fields name one column, a field matches two columns with the same name, it has more than 200 fields, or none of
+  its fields matches an input column. An empty object, or a row whose matched fields are all empty, is skipped.
+- **Duplicates:** with a check set, a row whose key the workbook already holds, or an earlier row of the request
+  supplied, is left out. A row without the key is added.
+- **Row limit:** rows are added in order until the workbook is full; the rest are rejected.
+- **All or nothing on failure:** the accepted rows of a request are saved in one transaction. After a `5xx`, nothing
+  from the request was saved.
+- **Retries:** with `Idempotency-Key` (8–128 characters), a repeat of a successful request returns the first answer,
+  with `Idempotency-Replayed: true`, and adds nothing, for 24 hours. The rows and the saved answer are committed
+  together. Refused requests are not remembered. **Without the header, sending a request twice adds its rows twice**
+  unless the duplicate check catches them.
+
+`200`:
+
+```json
+{ "data": { "received": 3, "inserted": 1, "duplicates": 0, "skipped": 0, "rejected": 2, "rowCount": 41,
+            "ignoredFields": ["Nickname"],
+            "errors": [{ "row": 2, "code": "INVALID_VALUE", "message": "Email: not a valid email address" }] } }
+```
+
+`errors` gives the first 100 rows not added, by their place in the array from 1. Messages name fields and columns, never
+values. Row codes: `NOT_AN_OBJECT`, `INVALID_VALUE`, `REPEATED_FIELD`, `AMBIGUOUS_FIELD`, `TOO_MANY_FIELDS`,
+`NO_MATCHING_FIELDS`, `EMPTY_ROW`, `DUPLICATE`, `ROW_LIMIT_EXCEEDED`.
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `INVALID_JSON` | The body is empty or not JSON |
+| 401 | `INVALID_WEBHOOK_TOKEN` | Token missing, wrong or replaced; webhook disabled or unknown; workbook deleted. All answered alike |
+| 403 | `feature_disabled` | The workspace doesn't have Workbooks V2 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | The key was used with another body, or its request is still running |
+| 413 | `TOO_MANY_ROWS` / `PAYLOAD_TOO_LARGE` | Over 1,000 rows / over 5 MB. Nothing is added |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | `Content-Type` is not JSON |
+| 422 | `INVALID_PAYLOAD` | Not an array, or an empty one |
+| 422 | `NO_ROWS_ACCEPTED` | Every row was rejected (or skipped, with at least one rejected); `details` holds the counts and errors |
+| 422 | `ROW_LIMIT_EXCEEDED` | The workbook is full |
+| 422 | `DEDUPE_COLUMN_INVALID` | The column the duplicate check uses was deleted or changed |
+| 429 | `RATE_LIMITED` | See below; `Retry-After` gives seconds |
+
+### Limits
+
+- **60 requests a minute per webhook**, over a sliding minute, counted in the database so it holds across API
+  instances. Every request with a valid token counts, whatever its outcome; `429` answers and requests with a bad token
+  do not. Regenerating does not reset the count.
+- Separately, **600 requests a minute per client address** on this path, whatever the token. This one is the API's
+  general limiter: counted in each instance's memory, and the address is only as reliable as the proxy setup
+  (`TRUST_PROXY`).
+
+### Records
+
+- Added rows: a `rows.added` activity entry with `source: "webhook"`, `rows`, `rowCount`, `duplicates`, `skipped` and
+  `rejected`. Each row's `source` is `{ type: "webhook", webhookId, receivedAt }`.
+- Audit log, action `workbook.webhook.*`: `created`, `token_regenerated`, `enabled`, `disabled`, `settings_changed`,
+  `request_accepted` (counts), `request_rejected` (the code, for an authenticated request refused as a whole) and
+  `rate_limited` (at most once a minute). Requests with a bad token are not audited.
+- No token, token hash or received value is logged or audited.
+

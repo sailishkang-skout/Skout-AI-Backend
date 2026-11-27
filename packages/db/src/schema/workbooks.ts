@@ -383,11 +383,21 @@ export const workbookWebhooks = pgTable(
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Which rows are duplicates: `{ key: "none" }`, or a key and the column that holds it (WB2-026). */
+    dedupe: jsonb("dedupe").$type<{ key: string; columnId?: string }>().notNull().default({ key: "none" }),
+    tokenCreatedAt: timestamp("token_created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the requests of the last minute arrived, in milliseconds by the database's clock: the rate limit. */
+    recentRequests: jsonb("recent_requests").$type<number[]>().notNull().default([]),
+    /** What the last request did: counts only. */
+    lastResult: jsonb("last_result").$type<Record<string, unknown>>(),
+    /** When running into the rate limit was last written to the audit log, so a flood is noted once a minute. */
+    rateLimitNotedAt: timestamp("rate_limit_noted_at", { withTimezone: true }),
   },
   (t) => [
     // An inbound request is looked up by its token's hash, so it must name exactly one webhook.
     unique("workbook_webhooks_token_hash_key").on(t.tokenHash),
-    index("workbook_webhooks_workbook_idx").on(t.workbookId),
+    // A workbook has one webhook.
+    uniqueIndex("workbook_webhooks_workbook_key").on(t.workbookId),
   ]
 );
 
