@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, desc, eq, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { postCreditTransaction, schema, type Db } from "@skout/db";
 import { getMemberPermissions, invalidateWorkspaceAccess, loadWorkspaceAccess, recordPrivilegedAction } from "@skout/auth";
-import { PRODUCT_FEATURES, copsErrorBody, copsErrorStatus, resolveCorrelationId, type ProductFeature } from "@skout/shared";
+import { PRODUCT_FEATURES, copsErrorBody, isOptInFeature, copsErrorStatus, resolveCorrelationId, type ProductFeature } from "@skout/shared";
 import { copsIdempotencyStore, requireAnyCopsPermission, writeCopsAudit } from "../services/cops-platform.service.js";
 import { withCopsIdempotentReply, type CopsCapturingReply } from "../services/cops-idempotent.js";
 import { productAppUrl } from "../services/cops-onboarding.service.js";
@@ -20,7 +20,10 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PLAN = z.enum(["full", "multichannel"]);
 const featureShape = Object.fromEntries(PRODUCT_FEATURES.map((f) => [f, z.boolean()])) as Record<ProductFeature, z.ZodBoolean>;
-const fullFeatures = z.object(featureShape).strict();
+// Approval must state every general feature; opt-in ones (WORKBOOKS_V2) may be left out and stay off.
+const fullFeatures = z
+  .object(Object.fromEntries(PRODUCT_FEATURES.map((f) => [f, isOptInFeature(f) ? z.boolean().optional() : z.boolean()])) as Record<ProductFeature, z.ZodTypeAny>)
+  .strict();
 const partialFeatures = z.object(featureShape).partial().strict();
 
 const approveSchema = z

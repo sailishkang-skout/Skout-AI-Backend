@@ -1,3 +1,5 @@
+import type { CrmRecordSource } from "./crm-record-source.js";
+
 export interface CrmAuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -42,7 +44,7 @@ export interface CrmRateLimitState {
 }
 
 export interface CrmConnectorAuth {
-  buildAuthorizeUrl(params: { clientId: string; redirectUri: string; state: string }): string;
+  buildAuthorizeUrl(params: { clientId: string; redirectUri: string; state: string; companyScopes?: boolean }): string;
   exchangeCode(params: { clientId: string; clientSecret: string; redirectUri: string; code: string }): Promise<CrmAuthTokens>;
   refreshToken(params: { clientId: string; clientSecret: string; refreshToken: string }): Promise<CrmAuthTokens>;
   getPortalId(accessToken: string): Promise<string>;
@@ -69,5 +71,7 @@ export interface CrmConnector {
   readonly auth: CrmConnectorAuth;
   readonly webhook: CrmConnectorWebhook;
   readonly client: CrmConnectorClient;
+  /** Reading contacts and companies for import (WB2-023). Absent where that isn't supported. */
+  readonly records?: CrmRecordSource;
 }
 

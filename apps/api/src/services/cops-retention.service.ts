@@ -85,6 +85,11 @@ export async function loadDataInventory(db: Db): Promise<InventoryRow[]> {
     from information_schema.columns c
     join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name
     where c.table_schema = 'public' and t.table_type = 'BASE TABLE' and c.table_name not like '%drizzle%'
+      -- a partitioned table is listed once, not once per partition
+      and not exists (
+        select 1 from pg_class p join pg_namespace n on n.oid = p.relnamespace
+        where n.nspname = c.table_schema and p.relname = c.table_name and p.relispartition
+      )
     group by c.table_name
     order by c.table_name`)) as unknown as Array<{ table: string; columns: string[] }>;
   const automatic = new Set(RETENTION_TARGETS.map((t) => t.table));

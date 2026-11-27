@@ -345,7 +345,9 @@ export const enrichmentResults = pgTable("enrichment_results", {
   validationStatus: text("validation_status"),
   isPrimary: boolean("is_primary").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+},
+  (table) => [index("enrichment_results_workspace_prospect_idx").on(table.workspaceId, table.prospectId)]
+);
 
 /**
  * A reusable, named enrichment configuration (8.3) — waterfall fields, an optional

@@ -20,10 +20,12 @@ import {
 } from "../hubspot.client.js";
 import { isCrmGrantExpiredError } from "../crm-auth-lifecycle.service.js";
 import { verifyHubSpotWebhook } from "../crm-hubspot-webhook.service.js";
+import { hubspotRecords } from "./hubspot.records.js";
 
 export const hubspotConnector: CrmConnector = {
   provider: "hubspot",
   label: "HubSpot",
+  records: hubspotRecords,
 
   auth: {
     buildAuthorizeUrl(params) {

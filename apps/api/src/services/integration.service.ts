@@ -290,6 +290,28 @@ export class IntegrationService {
     return this.getDecryptedKey(workspaceId, provider);
   }
 
+  /**
+   * A workspace's saved key with a mark of which saved key it is, which changes whenever one is saved again, so long
+   * work can tell that the connection was replaced under it. The mark says nothing about the key itself. `apiKey` is
+   * null when the stored key can no longer be read.
+   */
+  async getProviderConnection(workspaceId: string, provider: IntegrationProviderId): Promise<{ apiKey: string | null; status: string; revision: string } | null> {
+    if (!this.db) return null;
+    const [row] = await this.db
+      .select()
+      .from(workspaceIntegrations)
+      .where(scopedTo(workspaceIntegrations, workspaceId, eq(workspaceIntegrations.provider, provider)))
+      .limit(1);
+    if (!row) return null;
+    let apiKey: string | null = null;
+    try {
+      apiKey = this.decryptStored(row.encryptedApiKey);
+    } catch {
+      // Left null: the key has to be saved again.
+    }
+    return { apiKey, status: row.status, revision: createHash("sha256").update(row.encryptedApiKey).digest("hex").slice(0, 32) };
+  }
+
   private async getDecryptedKey(
     workspaceId: string,
     provider: IntegrationProviderId

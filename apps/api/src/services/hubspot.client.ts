@@ -11,10 +11,15 @@ export interface HubSpotTokens {
   portalId?: string;
 }
 
+/** Reading companies (WB2-023). Asked for as optional, so a portal that cannot grant them still connects. */
+export const HUBSPOT_COMPANY_SCOPES = "crm.objects.companies.read crm.schemas.companies.read";
+
 export function buildHubSpotAuthorizeUrl(params: {
   clientId: string;
   redirectUri: string;
   state: string;
+  /** Only once the HubSpot app itself lists these scopes: HubSpot refuses to connect an app asking for others. */
+  companyScopes?: boolean;
 }): string {
   const url = new URL(HUBSPOT_AUTH_URL);
   url.searchParams.set("client_id", params.clientId);
@@ -24,6 +29,7 @@ export function buildHubSpotAuthorizeUrl(params: {
     // crm.schemas.*.read: the COPS-09 mapping check and schema-drift check read the property lists.
     "oauth crm.objects.contacts.read crm.objects.contacts.write crm.objects.deals.read crm.objects.deals.write crm.lists.read crm.schemas.contacts.read crm.schemas.deals.read"
   );
+  if (params.companyScopes) url.searchParams.set("optional_scope", HUBSPOT_COMPANY_SCOPES);
   url.searchParams.set("state", params.state);
   return url.toString();
 }
@@ -417,6 +423,20 @@ export interface HubSpotListSummary {
   size: number;
 }
 
+/** A refused HubSpot call. The message quotes HubSpot's answer, so it is for logs and checks, never for a browser. */
+export class HubSpotApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    body: string
+  ) {
+    super(message);
+    this.name = "HubSpotApiError";
+    this.missingScope = body.includes("MISSING_SCOPES");
+  }
+  readonly missingScope: boolean;
+}
+
 async function hubspotFetch<T>(
   accessToken: string,
   path: string,
@@ -434,7 +454,7 @@ async function hubspotFetch<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`HubSpot API ${path} failed: ${res.status} ${text}`);
+    throw new HubSpotApiError(`HubSpot API ${path} failed: ${res.status} ${text}`, res.status, text);
   }
   return res.json() as Promise<T>;
 }
@@ -812,3 +832,106 @@ export function verifyHubSpotWebhookSignature(
     return expected === signatureHeader;
   }
 }
+
+// ── Reading records of any kind (WB2-023) ───────────────────────────────────
+
+export type HubSpotObjectType = "contacts" | "companies";
+/** HubSpot's ids for the two kinds, as the lists API names them. */
+const OBJECT_TYPE_ID: Record<HubSpotObjectType, string> = { contacts: "0-1", companies: "0-2" };
+const READ_TIMEOUT_MS = 30_000;
+const LIST_PAGE = 250;
+const MAX_LISTS = 1_000;
+
+export interface HubSpotProperty {
+  name: string;
+  label: string;
+  type: string;
+  fieldType: string;
+  hidden?: boolean;
+}
+
+export interface HubSpotObject {
+  id: string;
+  properties: Record<string, string | null>;
+}
+
+export interface HubSpotObjectPage {
+  results: HubSpotObject[];
+  after: string | null;
+}
+
+const read = <T>(accessToken: string, path: string, init?: RequestInit) => hubspotFetch<T>(accessToken, path, { ...init, signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
+
+export async function fetchHubSpotProperties(accessToken: string, objectType: HubSpotObjectType): Promise<HubSpotProperty[]> {
+  const data = await read<{ results?: HubSpotProperty[] }>(accessToken, `/crm/v3/properties/${objectType}`);
+  return data.results ?? [];
+}
+
+/** The portal's lists of contacts or of companies (HubSpot's saved selections; its saved views have no API). */
+export async function fetchHubSpotObjectLists(accessToken: string, objectType: HubSpotObjectType): Promise<HubSpotListSummary[]> {
+  const found: HubSpotListSummary[] = [];
+  for (let offset = 0; offset < MAX_LISTS; offset += LIST_PAGE) {
+    const data = await read<{ lists?: Array<{ listId: string; name: string; objectTypeId?: string; additionalProperties?: { hs_list_size?: string } }>; hasMore?: boolean }>(
+      accessToken,
+      "/crm/v3/lists/search",
+      { method: "POST", body: JSON.stringify({ query: "", objectTypeId: OBJECT_TYPE_ID[objectType], count: LIST_PAGE, offset, processingTypes: ["MANUAL", "SNAPSHOT", "DYNAMIC"] }) }
+    );
+    for (const list of data.lists ?? []) {
+      if (list.objectTypeId && list.objectTypeId !== OBJECT_TYPE_ID[objectType]) continue;
+      found.push({ listId: String(list.listId), name: list.name, size: Number(list.additionalProperties?.hs_list_size ?? 0) });
+    }
+    if (!data.hasMore) break;
+  }
+  return found;
+}
+
+/** One page of every record of a kind. */
+export async function fetchHubSpotObjectsPage(accessToken: string, objectType: HubSpotObjectType, properties: string[], after: string | null, limit: number): Promise<HubSpotObjectPage> {
+  const qs = new URLSearchParams({ limit: String(limit), properties: properties.join(",") });
+  if (after) qs.set("after", after);
+  const data = await read<{ results?: HubSpotObject[]; paging?: { next?: { after?: string } } }>(accessToken, `/crm/v3/objects/${objectType}?${qs}`);
+  return { results: data.results ?? [], after: data.paging?.next?.after ?? null };
+}
+
+/** One page of a list's members, as record ids. */
+export async function fetchHubSpotListMemberPage(accessToken: string, listId: string, after: string | null, limit: number): Promise<{ ids: string[]; after: string | null }> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (after) qs.set("after", after);
+  const data = await read<{ results?: Array<{ recordId: string }>; paging?: { next?: { after?: string } } }>(accessToken, `/crm/v3/lists/${encodeURIComponent(listId)}/memberships?${qs}`);
+  return { ids: (data.results ?? []).map((r) => String(r.recordId)).filter(Boolean), after: data.paging?.next?.after ?? null };
+}
+
+/** Up to 100 records by id. Ids HubSpot no longer has are simply absent from the answer. */
+export async function fetchHubSpotObjectsById(accessToken: string, objectType: HubSpotObjectType, ids: string[], properties: string[]): Promise<HubSpotObject[]> {
+  if (!ids.length) return [];
+  const data = await read<{ results?: HubSpotObject[] }>(accessToken, `/crm/v3/objects/${objectType}/batch/read`, {
+    method: "POST",
+    body: JSON.stringify({ properties, inputs: ids.map((id) => ({ id })) }),
+  });
+  return data.results ?? [];
+}
+
+export interface HubSpotFilter {
+  propertyName: string;
+  operator: string;
+  value?: string;
+}
+
+/**
+ * Records matching every filter, in record-id order. HubSpot search only pages through the first 10,000 matches, so
+ * callers walk further by also filtering on ids above the last one seen.
+ */
+export async function searchHubSpotObjects(
+  accessToken: string,
+  objectType: HubSpotObjectType,
+  filters: HubSpotFilter[],
+  properties: string[],
+  limit: number
+): Promise<{ total: number; results: HubSpotObject[] }> {
+  const data = await read<{ total?: number; results?: HubSpotObject[] }>(accessToken, `/crm/v3/objects/${objectType}/search`, {
+    method: "POST",
+    body: JSON.stringify({ filterGroups: filters.length ? [{ filters }] : [], sorts: [{ propertyName: "hs_object_id", direction: "ASCENDING" }], properties, limit }),
+  });
+  return { total: data.total ?? 0, results: data.results ?? [] };
+}
+
