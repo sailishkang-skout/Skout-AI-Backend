@@ -69,3 +69,4 @@ deploy/hetzner/env-enc/
 
 # Contract PDFs stored locally in dev (POST /contracts/documents)
 .cops-documents/
+.workbook-imports/
