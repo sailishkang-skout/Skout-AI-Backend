@@ -1,7 +1,8 @@
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import cookie from "@fastify/cookie";
-import cors from "@fastify/cors";
+import cors, { type FastifyCorsOptions } from "@fastify/cors";
+import { isPublicApiPath } from "./routes/public-api.routes.js";
 import { ZodError } from "zod";
 import { buildPinoOptions, captureException } from "@skout/observability";
 import { resolveCorrelationId } from "@skout/shared";
@@ -9,6 +10,14 @@ import type { Env } from "./config/env.js";
 import { authPlugin } from "./plugins/auth.js";
 import { configPlugin } from "./plugins/config.js";
 import { dbPlugin } from "./plugins/db.js";
+import { publicKeyCachePlugin } from "./plugins/public-key-cache.js";
+import { creditAlertsPlugin } from "./plugins/credit-alerts.js";
+
+declare module "fastify" {
+  interface FastifyInstance {
+    routeTable(): { url: string; methods: string[] }[];
+  }
+}
 import { loggingPlugin } from "./plugins/logging.js";
 import { securityPlugin } from "./plugins/security.js";
 import { registerRoutes } from "./routes/index.js";
@@ -33,13 +42,17 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     }),
     trustProxy: config.TRUST_PROXY,
     bodyLimit: config.REQUEST_BODY_LIMIT_BYTES,
-    requestIdHeader: "x-request-id",
+    // genReqId below reads X-Request-Id itself (and ignores it on the public API), so Fastify must not
+    // take the header directly.
+    requestIdHeader: false,
     // Default find-my-way maxParamLength (100) is too short for HMAC-signed
     // tracking/unsubscribe tokens, which routinely exceed it (the click token
     // embeds the destination URL in its payload).
     routerOptions: { maxParamLength: 1000 },
     genReqId: (req) =>
-      (typeof req.headers["x-request-id"] === "string"
+      // The public API never takes a client's request id: it keys credit holds, so a reused id would
+      // replay an already-committed hold (PAPI-043 / CRED-4). Elsewhere a caller's id is kept for tracing.
+      (typeof req.headers["x-request-id"] === "string" && !(req.url ?? "").startsWith("/api/public")
         ? req.headers["x-request-id"]
         : undefined) ?? randomUUID(),
     // Remote databases (e.g. Supabase) need more than the 10 s default.
@@ -153,6 +166,9 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   // { error }, { error, message }, { ok, error, statusCode } etc.
   app.addHook("onSend", async (request, reply, payload) => {
     if (reply.statusCode < 400 || typeof payload !== "string") return payload;
+    // The public API has its own error shape (CONV-6: { error: { type, code, message, request_id,
+    // doc_url } }) and req_ request ids; rewriting it here would break the contract.
+    if (isPublicApiPath(request.url)) return payload;
     const contentType = String(reply.getHeader("content-type") ?? "");
     if (!contentType.includes("application/json")) return payload;
     try {
@@ -182,13 +198,15 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
   await app.register(configPlugin, config);
   app.decorate("onDbQuery", options.onDbQuery ?? null);
   await app.register(dbPlugin);
+  await app.register(publicKeyCachePlugin);
+  await app.register(creditAlertsPlugin);
   await app.register(authPlugin);
   // COPS-08: a suspended or closed subscription closes product use; billing and sign-in stay open.
   registerSubscriptionSuspensionGate(app);
 
   const allowedOrigins = config.CORS_ORIGIN.map((o) => o.toLowerCase());
 
-  await app.register(cors, {
+  const internalCors: FastifyCorsOptions = {
     origin: (origin, cb) => {
       if (!origin) {
         cb(null, true);
@@ -202,6 +220,13 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     },
     credentials: true,
     exposedHeaders: ["x-request-id"],
+  };
+
+  // PRD §9.3: the public API sends no CORS headers, so a browser on another site can't call it with a key.
+  await app.register(cors, {
+    delegator: (request, cb) => {
+      cb(null, isPublicApiPath(request.url) ? { origin: false } : internalCors);
+    },
   });
 
   // Track registered routes so the not-found handler can distinguish a genuinely
@@ -213,6 +238,8 @@ export async function buildApp(config: Env, options: { onDbQuery?: (query: strin
     for (const m of methods) existing.add(m.toUpperCase());
     routeMethods.set(route.url, existing);
   });
+  /** Every registered route and its methods (used by the PAPI-024 route-table test). */
+  app.decorate("routeTable", () => [...routeMethods].map(([url, methods]) => ({ url, methods: [...methods] })));
 
   function matchKnownPath(pathname: string): Set<string> | undefined {
     if (routeMethods.has(pathname)) return routeMethods.get(pathname);

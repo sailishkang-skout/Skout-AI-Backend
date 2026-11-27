@@ -23,7 +23,19 @@ import {
   searchVendors,
   toProspectDocument,
   wizaDeepMax,
+  type VendorCallRecorder,
 } from "./vendor-search.service.js";
+import { createProviderCostRecorder, type ProviderCall, type ProviderCostContext } from "./provider-cost.service.js";
+import { suppressedEmailsAmong } from "./suppression.service.js";
+
+/** Who a search runs for, so the vendor calls it triggers can be costed (PAPI-013). */
+export type SearchCostContext = Omit<ProviderCostContext, "source"> & {
+  /**
+   * PAPI-051 (PRD §9.6): leave out people whose email this workspace has suppressed. Used by the
+   * public API; the app's own search is unchanged.
+   */
+  excludeSuppressed?: boolean;
+};
 import { 
   listSignalsForEntities, 
   computeSignalStackScore, 
@@ -264,6 +276,12 @@ async function releaseDeepFetch(env: Env, key: string): Promise<void> {
 export class SearchService {
   constructor(private readonly env: Env, private readonly db: Db) {}
 
+  /** Emails of documents seen in this search (summaries don't carry them), for the suppression filter. */
+  private readonly emailsByProspect = new Map<string, string>();
+  private rememberEmails(docs: { prospectId: string; email?: string }[]) {
+    for (const d of docs) if (d.email) this.emailsByProspect.set(d.prospectId, d.email);
+  }
+
   /**
    * §8.2 SS-04 — same per-hit signal-stack computation `searchProspects` already does for list
    * results, but for a single doc, so `timingScore` isn't silently undefined on detail/lookup
@@ -299,7 +317,11 @@ export class SearchService {
     return doc ? mapDocToDetail(doc, await this.computeStackScoreForDoc(doc)) : null;
   }
 
-  async searchProspects(body: SearchProspectsRequest): Promise<SearchProspectsResponse> {
+  /**
+   * @param ctx who the search runs for; vendor calls it triggers are recorded against this
+   *   workspace (and API key / request, for public API calls) in provider_cost_events (PAPI-013).
+   */
+  async searchProspects(body: SearchProspectsRequest, ctx: SearchCostContext = {}): Promise<SearchProspectsResponse> {
     const page = body.page ?? 1;
     const pageSize = body.pageSize ?? 25;
     const cfg = osConfig(this.env);
@@ -307,7 +329,15 @@ export class SearchService {
     // Real data: when any vendor key is configured, serve real people only — from our own
     // index first (free), topping up from Wiza/ContactOut/Datagma when the index is thin.
     if (enabledVendors(this.env).length > 0) {
-      return this.vendorBackedSearch(body, page, pageSize, cfg);
+      const calls: ProviderCall[] = [];
+      try {
+        const res = await this.vendorBackedSearch(body, page, pageSize, cfg, (call) => calls.push(call));
+        return ctx.excludeSuppressed && ctx.workspaceId ? await this.withoutSuppressed(res, ctx.workspaceId) : res;
+      } finally {
+        if (calls.length > 0) {
+          await createProviderCostRecorder(this.db, this.env.PROVIDER_UNIT_COSTS_JSON)(calls, { source: "search", ...ctx });
+        }
+      }
     }
 
     if (cfg) {
@@ -396,7 +426,8 @@ export class SearchService {
     body: SearchProspectsRequest,
     page: number,
     pageSize: number,
-    cfg: OpenSearchConfig | null
+    cfg: OpenSearchConfig | null,
+    onCall?: VendorCallRecorder
   ): Promise<SearchProspectsResponse> {
     const filters = toFilters(body);
     // Real people only: vendor results and LinkedIn captures from every workspace.
@@ -412,11 +443,20 @@ export class SearchService {
     };
 
     let stored = await lookup();
+    this.rememberEmails(stored.hits);
     if (stored.hits.length >= pageSize) {
-      return { results: stored.hits.map((h) => mapDocToSummary(h)), total: stored.total, page, pageSize, cached: false, source: "opensearch" };
+      return {
+        results: stored.hits.map((h) => ({ ...mapDocToSummary(h), resultSource: "index" as const })),
+        sourceCounts: { index: stored.hits.length, vendor: 0 },
+        total: stored.total,
+        page,
+        pageSize,
+        cached: false,
+        source: "opensearch",
+      };
     }
 
-    const outcome = await searchVendors(this.env, filters, pageSize, page);
+    const outcome = await searchVendors(this.env, filters, pageSize, page, onCall);
     if (outcome.attempted.length > 0 && outcome.failed.length === outcome.attempted.length && stored.hits.length === 0) {
       // Provider names and errors are logged by searchVendors; the user only needs to know to retry.
       throw new HttpError("vendor_search_unavailable", 502, "Prospect data is temporarily unavailable. Please try again.");
@@ -430,7 +470,7 @@ export class SearchService {
       const claim = deepClaimKey(filters);
       if (await claimDeepFetch(this.env, claim)) {
         try {
-          people = mergePeople([...people, ...(await fetchWizaDeepList(this.env, filters, deepMax))]);
+          people = mergePeople([...people, ...(await fetchWizaDeepList(this.env, filters, deepMax, { onCall }))]);
         } catch (err) {
           log.error("deeper results fetch failed", err, { page });
           await releaseDeepFetch(this.env, claim);
@@ -439,6 +479,7 @@ export class SearchService {
     }
 
     const fresh = people.map(toProspectDocument);
+    this.rememberEmails(fresh);
     let hits = stored.hits;
     let total = Math.max(stored.total, outcome.total ?? 0);
     if (fresh.length > 0) {
@@ -447,6 +488,7 @@ export class SearchService {
           const r = await bulkCreateProspects(cfg, fresh);
           log.info("vendor prospects saved", { ...r, vendors: outcome.attempted, page });
           stored = await lookup(); // now includes the new docs, in stable order
+          this.rememberEmails(stored.hits);
           hits = stored.hits;
         } catch (err) {
           log.error("saving vendor prospects failed", err);
@@ -456,14 +498,34 @@ export class SearchService {
       total = Math.max(total, stored.total, hits.length);
     }
 
+    // PAPI-050: a result is "vendor" when a vendor call in this request returned it, else "index".
+    const fromVendors = new Set(fresh.map((d) => d.prospectId));
+    const results = hits.map((h) => ({ ...mapDocToSummary(h), resultSource: fromVendors.has(h.prospectId) ? ("vendor" as const) : ("index" as const) }));
+    const vendorCount = results.filter((r) => r.resultSource === "vendor").length;
     return {
-      results: hits.map((h) => mapDocToSummary(h)),
+      results,
+      sourceCounts: { index: results.length - vendorCount, vendor: vendorCount },
       total,
       page,
       pageSize,
       cached: false,
       source: fresh.length > 0 ? "vendor" : "opensearch",
     };
+  }
+
+  /** Drops results whose email the workspace has suppressed, and recounts the sources. */
+  private async withoutSuppressed(res: SearchProspectsResponse, workspaceId: string): Promise<SearchProspectsResponse> {
+    const emails = new Map<string, string>();
+    for (const r of res.results) {
+      const email = (r as { email?: string }).email ?? this.emailsByProspect.get(r.prospectId);
+      if (email) emails.set(r.prospectId, email.toLowerCase());
+    }
+    if (emails.size === 0 || !this.db || typeof this.db.select !== "function") return res;
+    const suppressed = await suppressedEmailsAmong(this.db, workspaceId, [...emails.values()]);
+    if (suppressed.size === 0) return res;
+    const results = res.results.filter((r) => !suppressed.has(emails.get(r.prospectId) ?? ""));
+    const vendor = results.filter((r) => r.resultSource === "vendor").length;
+    return { ...res, results, sourceCounts: res.sourceCounts ? { index: results.length - vendor, vendor } : undefined };
   }
 
   async getProspectById(prospectId: string) {

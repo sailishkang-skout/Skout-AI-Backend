@@ -10,6 +10,8 @@ import { crmImportRoutes } from "./crm-import.routes.js";
 import { crmNativeRoutes } from "./crm-native.routes.js";
 import { workbookColumnRoutes } from "./workbook-column.routes.js";
 import { webhookRoutes } from "./webhooks.routes.js";
+import { developerApiAddonRoutes } from "./developer-api-addon.routes.js";
+import { developerApiKeysRoutes } from "./developer-api-keys.routes.js";
 import { enrichmentRoutes } from "./enrichment.routes.js";
 import { enrichmentCaptureRoutes } from "./enrichment-capture.routes.js";
 import { enrichmentResearchRoutes } from "./enrichment-research.routes.js";
@@ -21,6 +23,7 @@ import { scrapeRoutes } from "./scrape.routes.js";
 import { signalRoutes } from "./signal.routes.js";
 import { notificationRoutes } from "./notification.routes.js";
 import { healthRoutes } from "./health.routes.js";
+import { registerPublicApi } from "../public-api/index.js";
 import { inboxRoutes } from "./inbox.routes.js";
 import { listRoutes } from "./list.routes.js";
 import { prospectRoutes } from "./prospect.routes.js";
@@ -110,6 +113,8 @@ import { authDiscoveryRoutes } from "./auth-discovery.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes, { prefix: "/api/v1" });
+  // PAPI-001 / PAPI-040: customer-facing public API, kept apart from the internal /api/v1 routes.
+  await registerPublicApi(app);
   // AUTH-BE-12 — true root path, not under /api/v1 (standard .well-known convention).
   await app.register(jwksRoutes);
 
@@ -156,6 +161,8 @@ export async function registerRoutes(app: FastifyInstance) {
     await v1.register(crmImportRoutes);
     await v1.register(crmNativeRoutes);
     await v1.register(webhookRoutes);
+    await v1.register(developerApiAddonRoutes);
+    await v1.register(developerApiKeysRoutes);
     await v1.register(integrationRoutes);
     await v1.register(trackingRoutes);
     await v1.register(unsubscribeRoutes);

@@ -1,5 +1,5 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { digestsEqual, newKeyPrefix, newKeySecret, sha256Hex } from "../lib/api-key-crypto.js";
 import { schema, type Db } from "@skout/db";
 import { writeCopsAudit } from "./cops-platform.service.js";
 
@@ -40,13 +40,11 @@ export interface CredCtx {
   requestId: string;
 }
 
-const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
-
 /** A new key: the full secret (shown once), its lookup prefix and stored hash. */
 export function generateApiKey(): { key: string; prefix: string; hash: string } {
-  const prefix = randomBytes(6).toString("hex");
-  const key = `${KEY_PREFIX}${prefix}_${randomBytes(24).toString("base64url")}`;
-  return { key, prefix, hash: sha256(key) };
+  const prefix = newKeyPrefix();
+  const key = `${KEY_PREFIX}${prefix}_${newKeySecret(24)}`;
+  return { key, prefix, hash: sha256Hex(key) };
 }
 
 export function parseApiKey(token: string): { prefix: string } | null {
@@ -55,9 +53,7 @@ export function parseApiKey(token: string): { prefix: string } | null {
 }
 
 export function keyMatches(token: string, storedHash: string): boolean {
-  const a = Buffer.from(sha256(token));
-  const b = Buffer.from(storedHash);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return digestsEqual(sha256Hex(token), storedHash);
 }
 
 /** True when one of the scopes allows this method on this /api/v1 path. */

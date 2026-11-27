@@ -72,6 +72,8 @@ export const webhookEndpoints = pgTable("webhook_endpoints", {
   enabled: boolean("enabled").notNull().default(true),
   /** jsonb array of subscribed event type strings */
   eventTypes: jsonb("event_types").notNull().default([]),
+  /** Where it was created: "app" (Settings) or "public_api" (POST /webhooks, PAPI-062); each manages its own. */
+  source: text("source").notNull().default("app"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

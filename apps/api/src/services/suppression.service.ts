@@ -127,3 +127,18 @@ export function buildUnsubscribeUrl(config: Env, workspaceId: string, email: str
 export function decodeUnsubscribeToken(config: Env, token: string): UnsubscribeTokenPayload | null {
   return verifyToken<UnsubscribeTokenPayload>(token, trackingSecret(config));
 }
+
+/**
+ * Which of `emails` this workspace has suppressed (lower-cased), in one query. For keeping suppressed
+ * people out of data the public API returns (PRD §9.6: never returned by search or find). This is
+ * not a sending decision: anything that contacts someone still goes through canContact().
+ */
+export async function suppressedEmailsAmong(db: Db, workspaceId: string, emails: string[]): Promise<Set<string>> {
+  const wanted = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  if (wanted.length === 0) return new Set();
+  const rows = await db
+    .select({ email: suppressions.email })
+    .from(suppressions)
+    .where(scopedTo(suppressions, workspaceId, sql`lower(${suppressions.email}) in (${sql.join(wanted.map((e) => sql`${e}`), sql`, `)})`));
+  return new Set(rows.map((r) => r.email.toLowerCase()));
+}

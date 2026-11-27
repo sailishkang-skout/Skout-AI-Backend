@@ -38,3 +38,21 @@ test("Caddy does not send api-owned paths to crm", () => {
   assert.ok(!actual.includes("/api/v1/dashboard/summary*"), "dashboard/summary belongs to the api service");
   assert.ok(!actual.includes("/api/*"));
 });
+
+// PAPI-001 / public API PRD §9.3: /api/public/* goes to the api service with cookies stripped on the way in,
+// and CORS and Set-Cookie headers stripped on the way out. It must come before the general /api/* rule.
+function publicApiBlock() {
+  const start = caddy.indexOf("handle /api/public/* {");
+  assert.ok(start > 0, "Caddyfile has no `handle /api/public/*` block");
+  const end = caddy.indexOf("\n\t}\n", start);
+  return { start, body: caddy.slice(start, end) };
+}
+
+test("Caddy sends the public API to the api service without cookies or CORS", () => {
+  const { start, body } = publicApiBlock();
+  assert.ok(start < caddy.indexOf("handle /api/* {"), "the public API rule must come before /api/*");
+  assert.match(body, /request_header -Cookie/);
+  assert.match(body, /reverse_proxy api:3001/);
+  assert.match(body, /header_down -Access-Control-\*/);
+  assert.match(body, /header_down -Set-Cookie/);
+});

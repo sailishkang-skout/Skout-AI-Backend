@@ -22,6 +22,8 @@ import type { EnrichmentStore } from "./types.js";
 import type { ProspectSnapshot as ActivateSnapshot } from "./service.js";
 import { applyEnrichmentAutoFill } from "../enrichment-autofill.service.js";
 import { withEmailIntel } from "./email-intel-providers.js";
+import type { AttemptLog } from "@skout/pal";
+import { createProviderCostRecorder, providerCallsFromAttempts } from "../provider-cost.service.js";
 
 export * from "./types.js";
 export { EnrichmentService, SCORE_CREDIT_COST } from "./service.js";
@@ -104,34 +106,29 @@ export async function resolveEmailVerifier(
   return createRegistryFromConfig(platform, workspacePal).emailVerifiers[0]!;
 }
 
+/**
+ * The provider waterfall for a workspace: its own BYOK keys when it has any, else the platform's.
+ * In production, refuses (503) rather than fall back to stub providers that invent contacts.
+ */
+export async function resolveWorkspaceEngine(db: Db | null, config: Env, workspaceId: string): Promise<EnrichmentEngine> {
+  const platform = palConfigFromEnv(config);
+  let workspacePal: Partial<PalConfig> = {};
+  if (db) {
+    workspacePal = await createIntegrationService(db, config).loadWorkspacePalConfig(workspaceId);
+  }
+
+  // Production must not invent contacts via stub providers when no API keys exist.
+  if (config.NODE_ENV === "production" && !hasLiveProviders(platform) && !hasWorkspacePalKeys(workspacePal)) {
+    throw new HttpError("enrichment_providers_not_configured", 503, "No enrichment provider API keys are configured for this environment.");
+  }
+
+  if (!db || !hasWorkspacePalKeys(workspacePal)) return buildEngine(config);
+  return buildEngine(config, workspacePal);
+}
+
 /** Build a request-scoped EnrichmentService bound to the right store + providers. */
 export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentService {
-  const platform = palConfigFromEnv(config);
-  const platformEngine = buildEngine(config);
-  const integrationSvc = createIntegrationService(db, config);
-
-  const resolveEngine = async (workspaceId: string): Promise<EnrichmentEngine> => {
-    let workspacePal: Partial<PalConfig> = {};
-    if (db) {
-      workspacePal = await integrationSvc.loadWorkspacePalConfig(workspaceId);
-    }
-
-    // Production must not invent contacts via stub providers when no API keys exist.
-    if (
-      config.NODE_ENV === "production" &&
-      !hasLiveProviders(platform) &&
-      !hasWorkspacePalKeys(workspacePal)
-    ) {
-      throw new HttpError(
-        "enrichment_providers_not_configured",
-        503,
-        "No enrichment provider API keys are configured for this environment."
-      );
-    }
-
-    if (!db || !hasWorkspacePalKeys(workspacePal)) return platformEngine;
-    return buildEngine(config, workspacePal);
-  };
+  const resolveEngine = (workspaceId: string): Promise<EnrichmentEngine> => resolveWorkspaceEngine(db, config, workspaceId);
 
   return new EnrichmentService(
     getStore(db),
@@ -162,6 +159,14 @@ export function buildEnrichmentService(db: Db | null, config: Env): EnrichmentSe
             snapshot as ActivateSnapshot & { prospectId: string; companyId: string },
             config
           )
-      : undefined
+      : undefined,
+    db ? recordEnrichmentProviderCalls(db, config) : undefined
   );
+}
+
+/** PAPI-013: one provider_cost_events row per real provider call in the enrichment waterfall. */
+export function recordEnrichmentProviderCalls(db: Db, config: Env) {
+  const record = createProviderCostRecorder(db, config.PROVIDER_UNIT_COSTS_JSON);
+  return (workspaceId: string, attempts: AttemptLog[]) =>
+    record(providerCallsFromAttempts(attempts), { source: "enrichment", workspaceId });
 }

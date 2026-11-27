@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { AuthErrorCode, authErrorResponse } from "@skout/auth";
 import type { Env } from "../config/env.js";
+import { getRedis, isRedisAvailable } from "../lib/redis.js";
 
 /** Own-auth routes get their own bucket so a login storm cannot exhaust the global API limit. */
 const AUTH_ROUTE_LIMIT = 30;
@@ -37,12 +38,20 @@ export const securityPlugin = fp(async (app: FastifyInstance, config: Env) => {
     crossOriginResourcePolicy: { policy: "cross-origin" },
   });
 
+  // PAPI-041 (RL-1): with Redis, every API instance shares one counter; without it (local dev, CI)
+  // each instance counts on its own. Test runs keep per-instance counters so separate test apps on
+  // one machine don't share a budget.
+  const redis = config.NODE_ENV !== "test" && config.REDIS_URL && (await isRedisAvailable(config)) ? getRedis(config) : null;
+
   await app.register(rateLimit, {
     global: true,
+    ...(redis ? { redis, nameSpace: "skout-rl:" } : {}),
     max: (req: FastifyRequest) =>
       isAuthRoute(req.url) ? Math.min(config.RATE_LIMIT_MAX, AUTH_ROUTE_LIMIT) : config.RATE_LIMIT_MAX,
     timeWindow: config.RATE_LIMIT_WINDOW_MS,
     allowList: (req) =>
+      // The public API has its own per-key limits (PAPI-041).
+      req.url.startsWith("/api/public/") ||
       req.url.startsWith("/api/v1/health") ||
       req.url.startsWith("/api/v1/slo") ||
       req.url.startsWith("/api/v1/metrics") ||

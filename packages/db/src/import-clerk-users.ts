@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { createDb } from "./client.js";
 import { resolveDatabaseUrl } from "./database-url.js";
 import { importClerkUsers, type ClerkExportUser } from "./clerk-user-import.js";
+import { isMainModule } from "./is-main-module.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 try {
@@ -146,7 +147,7 @@ async function main() {
   }
 }
 
-if (process.env.NODE_ENV !== "test") {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error("Fatal error during Clerk user import:", err.message);
     process.exit(1);

@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ClerkExportUser } from "./clerk-user-import.js";
+import { isMainModule } from "./is-main-module.js";
 
 function parseCliArgs(): { inputPath: string; outputPath: string } {
   const [inputPath, outputPath] = process.argv.slice(2);
@@ -157,6 +158,6 @@ function main(): void {
   console.log("\nNo hash values were printed above. Next: pnpm --filter @skout/db import-clerk-users " + outputPath + " (dry run, no --apply).");
 }
 
-if (process.env.NODE_ENV !== "test") {
+if (isMainModule(import.meta.url)) {
   main();
 }

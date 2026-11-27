@@ -52,7 +52,24 @@ export const WEBHOOK_EVENT_TYPES = [
   "task.created",
   "ticket.created",
   "ticket.resolved",
+  // ── Public API (PAPI-022, PAPI-062, JOB-3) ───────────────────────────────
+  "api_key.expiring",
+  "api_key.expired",
+  "api_key.revoked",
+  "credits.low",
+  "api.job.completed",
+  "api.job.failed",
 ] as const;
+
+/** The events a webhook created through the public API can subscribe to (PRD JOB-3). */
+export const PUBLIC_API_WEBHOOK_EVENTS = [
+  "api.job.completed",
+  "api.job.failed",
+  "credits.low",
+  "api_key.expiring",
+  "api_key.expired",
+  "api_key.revoked",
+] as const satisfies readonly (typeof WEBHOOK_EVENT_TYPES)[number][];
 
 /** CustomerOps domain events that are also sent to customer webhooks, by their public name. */
 export const COPS_WEBHOOK_EVENTS: Record<string, WebhookEventType> = {
@@ -91,6 +108,8 @@ export interface CreateEndpointInput {
   url: string;
   description?: string;
   eventTypes: WebhookEventType[];
+  /** "public_api" for endpoints made through POST /webhooks (PAPI-062); default "app". */
+  source?: "app" | "public_api";
 }
 
 export interface UpdateEndpointInput {
@@ -139,6 +158,7 @@ export function buildWebhookService(db: DbClient | null) {
           secret,
           description: input.description ?? null,
           eventTypes: input.eventTypes,
+          source: input.source ?? "app",
         })
         .returning();
       if (!row) throw new Error("insert returned no row");

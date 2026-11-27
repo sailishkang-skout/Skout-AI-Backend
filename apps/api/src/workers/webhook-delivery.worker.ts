@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
@@ -7,6 +9,7 @@ import { createLogger, extractTraceContext, withSpan } from "@skout/observabilit
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
+import { assertPublicAddress, guardedLookup, type LookupAllFn } from "../services/webhook-url-guard.js";
 import {
   WEBHOOK_DELIVERY_QUEUE,
   enqueueWebhookDelivery,
@@ -17,9 +20,12 @@ const log = createLogger("webhook-delivery.worker");
 
 const { webhookDeliveries } = schema;
 
-/** Retry delays in ms: 30 s, 5 min */
-const RETRY_DELAYS_MS = [30_000, 300_000];
-const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1; // 3 total attempts
+/**
+ * Retry delays after each failed attempt (JOB-5): exponential backoff for about 24 hours —
+ * 30 s, 5 min, 30 min, 2 h, 6 h, 15 h (≈ 23.6 h), then the delivery is marked dead.
+ */
+export const RETRY_DELAYS_MS = [30_000, 300_000, 1_800_000, 7_200_000, 21_600_000, 54_000_000];
+export const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1; // 7 total attempts
 
 /** Build the HMAC-SHA256 signature header value.
  *  Signed string: `<timestamp>.<body>` (Stripe-style, replay-resistant).
@@ -27,6 +33,32 @@ const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1; // 3 total attempts
 export function signPayload(secret: string, timestampSec: number, body: string): string {
   const signed = `${timestampSec}.${body}`;
   return "sha256=" + createHmac("sha256", secret).update(signed).digest("hex");
+}
+
+/**
+ * The `Skout-Signature` header (JOB-4, PAPI-070): `t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + body)>`.
+ * Same HMAC as `x-skout-signature` (which stays, unchanged, for existing receivers); only the
+ * header format differs. A future scheme gets its own `v2=` entry beside `v1=`.
+ */
+export function skoutSignatureHeader(secret: string, timestampSec: number, body: string): string {
+  return `t=${timestampSec},v1=${signPayload(secret, timestampSec, body).slice("sha256=".length)}`;
+}
+
+/**
+ * Checks a `Skout-Signature` header: the timestamp must be within `toleranceSec` (default 5 minutes)
+ * and one of the `v1=` signatures must match. The reference verifier for the docs.
+ */
+export function verifySkoutSignatureHeader(secret: string, header: string, body: string, toleranceSec = 300, nowSec = Date.now() / 1000): boolean {
+  const parts = header.split(",").map((p) => p.trim().split("="));
+  const t = Number(parts.find(([k]) => k === "t")?.[1]);
+  if (!Number.isInteger(t) || Math.abs(nowSec - t) > toleranceSec) return false;
+  const expected = Buffer.from(signPayload(secret, t, body).slice("sha256=".length));
+  return parts
+    .filter(([k]) => k === "v1")
+    .some(([, v]) => {
+      const got = Buffer.from(v ?? "");
+      return got.length === expected.length && timingSafeEqual(got, expected);
+    });
 }
 
 /** Verify an inbound Skout-Webhook signature — useful for receiver-side validation. */
@@ -52,10 +84,29 @@ interface DeliveryResult {
   durationMs: number;
 }
 
-/** One signed POST to an endpoint (also used by "Send test event" in admin). */
+/** Test seams for deliverOnce; production passes nothing. */
+export interface DeliverOptions {
+  /** DNS resolver (all addresses). */
+  resolve?: LookupAllFn;
+  /** Which addresses are refused; defaults to isPrivateAddress. */
+  isBlocked?: (address: string) => boolean;
+  timeoutMs?: number;
+}
+
+const MAX_RESPONSE_BYTES = 64 * 1024;
+
+/**
+ * One signed POST to an endpoint (also used by "Send test event" in admin).
+ *
+ * PAPI-071 / JOB-6: the host's resolved addresses are checked inside the socket's own DNS lookup
+ * (guardedLookup), so the address checked is the address connected to, and a host that resolves to
+ * a private, loopback, link-local or metadata address is refused with BlockedAddressError, even if it
+ * was public when the endpoint was saved (DNS rebinding). Redirects are not followed.
+ */
 export async function deliverOnce(
   deliveryId: string,
-  job: WebhookDeliveryJobPayload
+  job: WebhookDeliveryJobPayload,
+  options: DeliverOptions = {}
 ): Promise<DeliveryResult> {
   const body = JSON.stringify({
     id: job.eventId,
@@ -67,34 +118,64 @@ export async function deliverOnce(
 
   const timestampSec = Math.floor(Date.now() / 1000);
   const signature = signPayload(job.secret, timestampSec, body);
+  const url = new URL(job.url);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(`Unsupported webhook URL scheme: ${url.protocol}`);
+  assertPublicAddress(url.hostname, options.isBlocked);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
   const start = Date.now();
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const send = url.protocol === "https:" ? httpsRequest : httpRequest;
 
-  try {
-    const res = await fetch(job.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-skout-event": job.eventType,
-        "x-skout-delivery": deliveryId,
-        "x-skout-timestamp": String(timestampSec),
-        "x-skout-signature": signature,
-        "user-agent": "Skout-Webhook/1.0",
+  return new Promise<DeliveryResult>((resolve, reject) => {
+    const req = send(
+      url,
+      {
+        method: "POST",
+        lookup: guardedLookup(options.resolve, options.isBlocked) as never,
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          "x-skout-event": job.eventType,
+          "x-skout-delivery": deliveryId,
+          "x-skout-timestamp": String(timestampSec),
+          "x-skout-signature": signature,
+          // JOB-4: the documented header; x-skout-signature/-timestamp stay for existing receivers.
+          "skout-signature": skoutSignatureHeader(job.secret, timestampSec, body),
+          "user-agent": "Skout-Webhook/1.0",
+        },
       },
-      body,
-      signal: controller.signal,
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (c: Buffer) => {
+          if (size < MAX_RESPONSE_BYTES) chunks.push(c);
+          size += c.length;
+        });
+        res.on("end", () => {
+          clearTimeout(timer);
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            responseBody: Buffer.concat(chunks).toString("utf8").slice(0, 1000),
+            durationMs: Date.now() - start,
+          });
+        });
+        res.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      const err = new Error(`No answer within ${timeoutMs / 1000} seconds`);
+      err.name = "AbortError"; // the test-send route reports this as a timeout
+      req.destroy(err);
+    }, timeoutMs);
+    req.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
     });
-    const responseBody = await res.text().catch(() => "");
-    return {
-      statusCode: res.status,
-      responseBody: responseBody.slice(0, 1000),
-      durationMs: Date.now() - start,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+    req.end(body);
+  });
 }
 
 type DbClient = ReturnType<typeof createDb>["db"];
@@ -138,7 +219,7 @@ async function processDelivery(
     });
 
     if (!isLastAttempt) {
-      const delayMs = RETRY_DELAYS_MS[job.attempt - 1] ?? 300_000;
+      const delayMs = RETRY_DELAYS_MS[job.attempt - 1] ?? RETRY_DELAYS_MS.at(-1)!;
       await enqueueWebhookDelivery(config, { ...job, attempt: job.attempt + 1 }, delayMs);
     }
     return;
@@ -167,7 +248,7 @@ async function processDelivery(
   });
 
   if (!success && !isLastAttempt) {
-    const delayMs = RETRY_DELAYS_MS[job.attempt - 1] ?? 300_000;
+    const delayMs = RETRY_DELAYS_MS[job.attempt - 1] ?? RETRY_DELAYS_MS.at(-1)!;
     await enqueueWebhookDelivery(config, { ...job, attempt: job.attempt + 1 }, delayMs);
   }
 }

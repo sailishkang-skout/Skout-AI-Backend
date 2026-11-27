@@ -5,6 +5,7 @@ import { ensureClickHouseSchema } from "./lib/clickhouse.js";
 import { buildApp } from "./app.js";
 import { startCrmExportWorker } from "./workers/crm-export.worker.js";
 import { startListScoreWorker } from "./workers/list-score.worker.js";
+import { startPublicApiJobsWorker } from "./workers/public-api-jobs.worker.js";
 import { startWorkspaceRescoreWorker } from "./workers/workspace-rescore.worker.js";
 import { startSequenceEnrollmentWorker } from "./workers/sequence-enrollment.worker.js";
 import { startAutomationRunWorker } from "./workers/automation-run.worker.js";
@@ -23,6 +24,9 @@ import { startAlertDigestSweepWorker } from "./workers/alert-digest-sweep.worker
 import { startCopsOutboxRelayWorker } from "./workers/cops-outbox-relay.worker.js";
 import { startRiskDecaySweepWorker } from "./workers/risk-decay-sweep.worker.js";
 import { startCreditReconciliationWorker } from "./workers/credit-reconciliation.worker.js";
+import { startPublicApiMaintenanceWorker } from "./workers/public-api-maintenance.worker.js";
+import { startPublicApiKeyExpiryWorker } from "./workers/public-api-key-expiry.worker.js";
+import { startCreditHoldSweeperWorker } from "./workers/credit-hold-sweeper.worker.js";
 import { startCopsOnboardingEvaluatorWorker } from "./workers/cops-onboarding-evaluator.worker.js";
 import { startRetentionSignalsSweepWorker } from "./workers/retention-signals-sweep.worker.js";
 import { startEnrichmentEvidenceRetentionWorker } from "./workers/enrichment-evidence-retention.worker.js";
@@ -61,6 +65,7 @@ async function main() {
 
   const stopCrmWorker = await startCrmExportWorker(config);
   const stopListScoreWorker = await startListScoreWorker(config);
+  const stopPublicApiJobsWorker = await startPublicApiJobsWorker(config);
   const stopWorkspaceRescoreWorker = await startWorkspaceRescoreWorker(config);
   const stopSeqWorker = await startSequenceEnrollmentWorker(config);
   const stopAutomationRunWorker = await startAutomationRunWorker(config);
@@ -78,6 +83,9 @@ async function main() {
   const stopAlertDigestSweepWorker = await startAlertDigestSweepWorker(config);
   const stopRiskDecaySweepWorker = await startRiskDecaySweepWorker(config);
   const stopCreditReconciliationWorker = await startCreditReconciliationWorker(config);
+  const stopPublicApiMaintenanceWorker = await startPublicApiMaintenanceWorker(config);
+  const stopPublicApiKeyExpiryWorker = await startPublicApiKeyExpiryWorker(config);
+  const stopCreditHoldSweeperWorker = await startCreditHoldSweeperWorker(config);
   const stopCopsOnboardingEvaluatorWorker = await startCopsOnboardingEvaluatorWorker(config);
   const stopRetentionSignalsSweepWorker = await startRetentionSignalsSweepWorker(config);
   const stopEnrichmentEvidenceRetentionWorker = await startEnrichmentEvidenceRetentionWorker(config);
@@ -149,6 +157,9 @@ async function main() {
     await stopCaptureAutoWorker();
     await stopRiskDecaySweepWorker();
     await stopCreditReconciliationWorker();
+    await stopPublicApiMaintenanceWorker();
+    await stopPublicApiKeyExpiryWorker();
+    await stopCreditHoldSweeperWorker();
     await stopCopsOnboardingEvaluatorWorker();
     await stopAlertDigestSweepWorker();
     await stopSignalActivationSweepWorker();
@@ -166,6 +177,7 @@ async function main() {
     await stopDexterOrchestratorWorker();
     await stopWorkspaceRescoreWorker();
     await stopListScoreWorker();
+    await stopPublicApiJobsWorker();
     await stopCrmWorker();
     await app.close();
   };

@@ -93,6 +93,28 @@ describe("EnrichmentEngine", () => {
     });
   });
 
+  it("tags every provider call attempt with whose key made it, failed calls included (PAPI-013)", async () => {
+    class FailPhone implements PhoneProvider {
+      readonly credentialSource = "workspace" as const;
+      constructor(readonly name: string) {}
+      async fetchPhone(): Promise<PhoneData | null> {
+        throw new Error("boom");
+      }
+    }
+    const engine = new EnrichmentEngine({ ...createStubRegistry(), phone: [new FailPhone("lusha")] });
+    const out = await engine.enrich({
+      prospectId: "p1",
+      fullName: "Jane Doe",
+      companyDomain: "example.com",
+      fields: ["company", "phone"],
+      leadScore: 95,
+    });
+    const calls = out.attempts.filter((a) => a.status !== "skipped" && a.provider !== "internal_graph" && a.provider !== "phone-gate");
+    expect(calls.length).toBeGreaterThan(0);
+    for (const a of calls) expect(a.credentialSource).toMatch(/^(platform|workspace)$/);
+    expect(out.attempts.find((a) => a.provider === "lusha")).toMatchObject({ status: "error", credentialSource: "workspace" });
+  });
+
   it("bills workspace keys at 75% of platform rate", () => {
     const fourWorkspaceSteps = 4 * 3;
     const fourPlatformSteps = 4 * 4;

@@ -24,5 +24,17 @@ export {
   type PostCreditInput,
   type PostCreditResult,
   type CreditMismatch,
+  type ApiCreditMismatch,
+  reconcileApiCredits,
+  STALE_HOLD_GRACE_MS,
   type CreditTransactionRow,
 } from "./credit-ledger.js";
+export {
+  maintainPublicApiTables,
+  API_REQUEST_LOG_RETENTION_DAYS,
+  API_IDEMPOTENCY_RETENTION_HOURS,
+  API_REQUEST_LOG_MONTHS_AHEAD,
+  API_DATUM_CACHE_DAYS,
+  API_SEARCH_PAGE_CACHE_HOURS,
+  type PublicApiMaintenanceResult,
+} from "./public-api-maintenance.js";

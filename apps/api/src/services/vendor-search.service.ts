@@ -4,6 +4,7 @@ import { generateCompanyId, normalizeDomain } from "@skout/shared";
 import type { ProspectDocument, SearchFilters } from "@skout/opensearch";
 import { createLogger } from "@skout/observability";
 import type { Env } from "../config/env.js";
+import type { ProviderCall } from "./provider-cost.service.js";
 
 const log = createLogger("vendor-search.service");
 
@@ -36,6 +37,9 @@ export interface VendorSearchOutcome {
 }
 
 type Json = Record<string, unknown>;
+
+/** Reports each external vendor call, so its cost can be recorded (PAPI-013). Must not throw. */
+export type VendorCallRecorder = (call: ProviderCall) => void;
 
 const TIMEOUT_MS = 15_000;
 
@@ -219,7 +223,37 @@ export async function fetchWizaDeepList(
   env: Env,
   f: SearchFilters,
   maxProfiles: number,
-  opts: { pollMs?: number; timeoutMs?: number } = {}
+  opts: { pollMs?: number; timeoutMs?: number; onCall?: VendorCallRecorder } = {}
+): Promise<VendorPerson[]> {
+  const started = Date.now();
+  try {
+    const people = await fetchWizaDeepListOnce(env, f, maxProfiles, opts);
+    opts.onCall?.({
+      provider: "wiza",
+      operation: "deep_list",
+      outcome: people.length > 0 ? "ok" : "miss",
+      units: people.length,
+      latencyMs: Date.now() - started,
+    });
+    return people;
+  } catch (err) {
+    opts.onCall?.({
+      provider: "wiza",
+      operation: "deep_list",
+      outcome: "error",
+      units: 0,
+      latencyMs: Date.now() - started,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+async function fetchWizaDeepListOnce(
+  env: Env,
+  f: SearchFilters,
+  maxProfiles: number,
+  opts: { pollMs?: number; timeoutMs?: number }
 ): Promise<VendorPerson[]> {
   const filters = buildWizaFilters(f);
   if (Object.keys(filters).length === 0 || maxProfiles <= 0) return [];
@@ -380,14 +414,40 @@ export async function searchVendors(
   env: Env,
   filters: SearchFilters,
   pageSize: number,
-  page = 1
+  page = 1,
+  onCall?: VendorCallRecorder
 ): Promise<VendorSearchOutcome> {
   const attempted = enabledVendors(env);
   const tasks: Record<VendorName, () => Promise<VendorPage>> = {
     wiza: () => searchWiza(env, filters, pageSize, page),
     contactout: () => searchContactOut(env, filters, pageSize, page),
   };
-  const settled = await Promise.allSettled(attempted.map((v) => tasks[v]()));
+  // PAPI-013: every vendor call is reported, including empty and failed ones.
+  const timed = async (vendor: VendorName): Promise<VendorPage> => {
+    const started = Date.now();
+    try {
+      const result = await tasks[vendor]();
+      onCall?.({
+        provider: vendor,
+        operation: "search",
+        outcome: result.people.length > 0 ? "ok" : "miss",
+        units: result.people.length,
+        latencyMs: Date.now() - started,
+      });
+      return result;
+    } catch (err) {
+      onCall?.({
+        provider: vendor,
+        operation: "search",
+        outcome: "error",
+        units: 0,
+        latencyMs: Date.now() - started,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+  const settled = await Promise.allSettled(attempted.map((v) => timed(v)));
   const people: VendorPerson[] = [];
   const failed: VendorSearchOutcome["failed"] = [];
   let total: number | undefined;
