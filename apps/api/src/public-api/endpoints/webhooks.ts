@@ -65,7 +65,7 @@ export function createListWebhooksEndpoint(deps: { env: Env; db: Db }): PublicEn
 
 const createInput = z
   .object({
-    // JOB-6: https only. Private / loopback address blocking (at save and delivery) is PAPI-073.
+    // JOB-6: https only. Private / loopback address blocking (at save and delivery) is PAPI-071.
     url: z
       .string()
       .trim()
