@@ -110,6 +110,7 @@ interface Ids {
   rowKey: string;
   bulkKey: string;
   columnKey: string;
+  pasteKey: string;
 }
 
 const COLUMN_KEYS = ["input", "spare", "formula", "enrichment", "ai", "action", "crm"] as const;
@@ -122,7 +123,7 @@ function ghostIds(): Ids {
   return {
     workspace: id(), workbook: id(), deleted: id(), input: id(), spare: id(), formula: id(), enrichment: id(), ai: id(), action: id(), crm: id(),
     row1: row, row2: row + 1, row3: row + 2, sequence: id(), list: id(), run: id(), import: id(), waiting: id(), smartList: id(), prospect: id(), view: id(), webhook: id(), activity: id(),
-    duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(),
+    duplicateKey: id(), rowKey: id(), bulkKey: id(), columnKey: id(), pasteKey: id(),
   };
 }
 
@@ -144,6 +145,13 @@ const duplicateRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.wor
 const rowRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows`, body: { cells: { [ids.input]: "keyed" } }, headers: { "idempotency-key": ids.rowKey } });
 const bulkRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/rows/bulk`, body: { rows: [{ cells: { [ids.input]: "keyed" } }] }, headers: { "idempotency-key": ids.bulkKey } });
 const columnRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/columns`, body: textColumn, headers: { "idempotency-key": ids.columnKey } });
+const pasteRequest = (ids: Ids): Req => ({ method: "POST", path: `/${ids.workbook}/paste`, body: { columnIds: [ids.input], values: [["keyed"]] }, headers: { "idempotency-key": ids.pasteKey } });
+/** A paste over two existing rows, plus one more. */
+const pasteOver = (workbook: string, columnId: string, first: number, last: number): Req => ({
+  method: "POST",
+  path: `/${workbook}/paste`,
+  body: { columnIds: [columnId], values: [["over"], ["over"], ["new"]], start: { rowId: first, endRowId: last, rows: 2 } },
+});
 const addRequest = (workbook: string, source: Record<string, unknown>, selection: Record<string, unknown> = { all: true }, extra: Record<string, unknown> = {}): Req => ({
   method: "POST",
   path: `/${workbook}/prospect-imports`,
@@ -192,6 +200,12 @@ function notFoundCases(): Case[] {
   const bulk = "POST /workbooks-v2/:id/rows/bulk";
   on(bulk, "bulk add to their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/rows/bulk`, body: { rows: [{ cells: { [t.input]: "injected" } }, {}] } }));
   on(bulk, "replay their keyed bulk add", (_, t) => bulkRequest(t));
+
+  const paste = "POST /workbooks-v2/:id/paste";
+  on(paste, "paste new rows into their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/paste`, body: { columnIds: [t.input], values: [["injected"]] } }));
+  on(paste, "paste over their rows", (_, t) => pasteOver(t.workbook, t.input, t.row1, t.row2));
+  on(paste, "paste into their workbook with my column", (m, t) => pasteOver(t.workbook, m.input, m.row1, m.row2));
+  on(paste, "replay their keyed paste", (_, t) => pasteRequest(t));
 
   const editRow = "PATCH /workbooks-v2/:id/rows/:rowId";
   on(editRow, "edit their cell", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${t.row1}`, body: { cells: { [t.input]: "overwritten" } } }));
@@ -316,6 +330,11 @@ function referenceCases(): Array<Case & { status: number; code: string }> {
     body: { rows: [{ cells: { [m.input]: "a" } }, { cells: { [t.input]: "b" } }] },
   }));
   unknown("PATCH /workbooks-v2/:id/rows/:rowId", "edit my row's cell in their column", (m, t) => ({ method: "PATCH", path: `/${m.workbook}/rows/${m.row1}`, body: { cells: { [t.input]: "x" } } }));
+
+  unknown("POST /workbooks-v2/:id/paste", "paste into their column through my workbook", (m, t) => ({ method: "POST", path: `/${m.workbook}/paste`, body: { columnIds: [m.input, t.spare], values: [["a", "b"]] } }));
+  const moved = on(409, "ROWS_CHANGED");
+  moved("POST /workbooks-v2/:id/paste", "paste over their rows through my workbook", (m, t) => pasteOver(m.workbook, m.input, t.row1, t.row2));
+  moved("POST /workbooks-v2/:id/paste", "start on my row and end on theirs", (m, t) => pasteOver(m.workbook, m.input, m.row1, t.row2));
 
   const addConfig = (name: string, column: (m: Ids, t: Ids) => Record<string, unknown>) =>
     config("POST /workbooks-v2/:id/columns", name, (m, t) => ({ method: "POST", path: `/${m.workbook}/columns`, body: { name: "x", ...column(m, t) } }));
@@ -612,9 +631,9 @@ describe.skipIf(!hasDatabase && !mustRun)("Workbooks V2 tenant isolation", () =>
     B = await tenant("B");
     // Sign both in once, and let B use its idempotency keys, before anything is compared.
     expect((await send(A, { method: "GET", path: `/${A.ids.workbook}` })).statusCode).toBe(200);
-    for (const req of [duplicateRequest(B.ids), rowRequest(B.ids), bulkRequest(B.ids), columnRequest(B.ids)]) {
+    for (const req of [duplicateRequest(B.ids), rowRequest(B.ids), bulkRequest(B.ids), columnRequest(B.ids), pasteRequest(B.ids)]) {
       const res = await send(B, req);
-      expect(res.statusCode, `${req.path} ${res.body}`).toBe(201);
+      expect(res.statusCode, `${req.path} ${res.body}`).toBe(req.path.endsWith("/paste") ? 200 : 201);
     }
     // The copy B just made is B's too.
     const copies = await db.select({ id: workbooks.id }).from(workbooks).where(eq(workbooks.workspaceId, B.workspaceId));

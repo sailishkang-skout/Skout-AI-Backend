@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INPUT_DATA_TYPES, MAX_CELL_TEXT_LENGTH, inputDataType, normalizeInputValue, type InputDataType } from "./workbook-cell-values.js";
+import { INPUT_DATA_TYPES, MAX_CELL_TEXT_LENGTH, inputDataType, looksLike, normalizeInputValue, type InputDataType } from "./workbook-cell-values.js";
 
 /** WB2-012: what an input cell accepts, flags and refuses. */
 describe("inputDataType", () => {
@@ -74,5 +74,27 @@ describe("normalizeInputValue", () => {
   ];
   it.each(flagged)("%s keeps %j and flags it", (type, raw) => {
     expect(normalizeInputValue(raw, type)).toEqual({ kind: "value", value: raw, errorCode: `invalid_${type}` });
+  });
+});
+
+/** WB2-022: what a pasted column that went to the wrong place probably holds. */
+describe("looksLike", () => {
+  const cases: Array<[string[], InputDataType | null]> = [
+    [["a@example.com", "b@example.org"], "email"],
+    [["linkedin.com/in/ada", "https://www.linkedin.com/in/grace"], "linkedin_url"],
+    [["example.com", "sub.example.org"], "domain"],
+    [["https://example.com/a"], "url"],
+    [["+44 20 7946 0958"], "phone"],
+    [["42", "-1.5"], "number"],
+    [["2026-01-31"], "date"],
+    [["a@example.com", "b@example.org", "Ada"], "email"],
+    [["a@example.com", "Ada"], null],
+    [["Ada", "Grace"], null],
+    [["", "  ", "a@example.com"], "email"],
+    [["", " "], null],
+    [[], null],
+  ];
+  it.each(cases)("%j -> %s", (values, type) => {
+    expect(looksLike(values)).toBe(type);
   });
 });

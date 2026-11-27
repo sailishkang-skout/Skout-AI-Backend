@@ -104,3 +104,13 @@ export function normalizeInputValue(raw: unknown, type: InputDataType): Normaliz
   const value = coerce(raw as CellScalar, type);
   return value === null ? { kind: "value", value: raw as CellScalar, errorCode: `invalid_${type}` } : { kind: "value", value, errorCode: null };
 }
+
+/** Types a column of unknown values can be recognised as, the narrower before the broader. */
+const RECOGNISABLE = ["email", "linkedin_url", "domain", "url", "date", "phone", "number"] as const;
+
+/** The type most of these values fit, if any: what a pasted column that went to the wrong place probably holds. */
+export function looksLike(values: string[]): InputDataType | null {
+  const filled = values.filter((v) => v.length <= MAX_CELL_TEXT_LENGTH && v.trim() !== "");
+  if (!filled.length) return null;
+  return RECOGNISABLE.find((type) => filled.filter((v) => coerce(v, type) !== null).length * 2 > filled.length) ?? null;
+}

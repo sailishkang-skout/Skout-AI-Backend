@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -316,4 +316,54 @@ Email and phone come only from what the workspace already holds (enrichment resu
 
 ### Processing
 Up to 1,000 run during the request; more are queued on the import queue and processed in chunks of 500, each one transaction, resuming after the last whole chunk. Without a search index in production, Search and smart list additions answer `503`; list additions use the workspace's own records.
+
+## Paste and type
+
+Typing a new row uses `POST /:id/rows` (its source is `manual`); editing a cell uses `PATCH /:id/rows/:rowId`. A paste
+is one request.
+
+| Method and path | Permission | Idempotency |
+| --- | --- | --- |
+| `POST /:id/paste` | `enrichment:capture` | `Idempotency-Key` accepted; send one so a retry adds nothing twice |
+
+```json
+{
+  "columnIds": ["<column>", "<column>"],
+  "values": [["ada@example.com", "example.com"], ["", "example.org"]],
+  "start": { "rowId": 12, "endRowId": 15, "rows": 4 }
+}
+```
+
+- `columnIds` are the destination columns, left to right (1 to 200, each once). `values` holds one string per column
+  for every row: at most 10,000 rows and 100,000 cells (body limit 10 MB).
+- `start` names the existing rows under the top of the block, in position order: how many, the first and the last. Leave
+  it out and every row is new. If those rows are no longer what it says, nothing is pasted (`409 ROWS_CHANGED`).
+- Existing rows are overwritten; an empty value clears its cell. An overwritten cell loses its `foundVia` and
+  `verification`. Cells outside the block are not touched.
+- Rows of the block past those become new rows with source `{ "type": "paste" }`. A row with nothing in it is not
+  created. The activity log records `rows.added` with source `paste`; changes to existing cells are not logged.
+- Values for a column that is not an input column are left out and counted. An unknown column refuses the paste
+  (`422 UNKNOWN_COLUMN`).
+- A value that does not fit its column's type is kept and flagged. If more than half the values pasted into a typed
+  column do not fit it, nothing is pasted: `422 INCOMPATIBLE_COLUMN`, with
+  `details.columns[]` of `{ columnId, dataType, values, invalid, looksLike }`.
+- A value a cell cannot hold (over 10,000 characters, or containing NUL) is not stored; the cell keeps what it had.
+- Past the row limit nothing is pasted (`422 ROW_LIMIT_EXCEEDED`).
+- The paste is one transaction. It starts no enrichment, AI, formula or action work.
+- Rows are not deduplicated (only imports are).
+
+The answer:
+
+```json
+{
+  "data": {
+    "added": 1, "updated": 4, "cellsWritten": 8, "cellsCleared": 1, "rowCount": 120, "blankRows": 0,
+    "invalid": { "count": 1, "cells": [{ "row": 2, "columnId": "<column>", "errorCode": "invalid_email" }] },
+    "rejected": { "count": 0, "cells": [] },
+    "skippedColumns": [{ "columnId": "<column>", "values": 3 }]
+  }
+}
+```
+
+`row` counts from the top of the block, from 0; each list holds the first 100.
 

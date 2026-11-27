@@ -3,12 +3,15 @@ import { z } from "zod";
 import { schema } from "@skout/db";
 import { MAX_ROWS_PER_DELETE, MAX_ROWS_PER_REQUEST, addRows, deleteRows, getRowWindow, getRows, updateRowCells } from "../services/workbook-rows.service.js";
 import { COMPARISON_OPERATORS } from "../services/workbook-rows.query.js";
+import { MAX_PASTE_CELLS, MAX_PASTE_COLUMNS, MAX_PASTE_ROWS, pasteIntoWorkbook } from "../services/workbook-paste.service.js";
 import { workbookRouteHelpers } from "./workbook-v2.common.js";
 
 export const WINDOW_DEFAULT = 200;
 export const WINDOW_MAX = 500;
 /** A bulk request may carry 1,000 rows of text, more than the global 1 MB body limit allows. */
 const BULK_BODY_LIMIT = 5 * 1024 * 1024;
+/** The largest paste is 100,000 cells. */
+const PASTE_BODY_LIMIT = 10 * 1024 * 1024;
 
 /** Postgres text and jsonb cannot hold a NUL character; refuse it here rather than fail in the database. */
 const text = (max: number, min = 0) =>
@@ -43,6 +46,21 @@ const newRow = z.object({ cells: cells.optional(), source: source.optional(), cr
 const bulkBody = z.object({ rows: z.array(newRow).min(1).max(MAX_ROWS_PER_REQUEST) }).strict();
 const editBody = z.object({ cells: cells.refine((c) => Object.keys(c).length > 0, "send at least one cell") }).strict();
 const deleteBody = z.object({ rowIds: z.array(rowId).min(1).max(MAX_ROWS_PER_DELETE) }).strict();
+// What each value may hold is checked cell by cell by the service, so that one bad cell does not refuse the rest.
+const pasteBody = z
+  .object({
+    columnIds: z
+      .array(uuid)
+      .min(1)
+      .max(MAX_PASTE_COLUMNS)
+      .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, "name each column once"),
+    values: z.array(z.array(z.string()).min(1).max(MAX_PASTE_COLUMNS)).min(1).max(MAX_PASTE_ROWS),
+    start: z.object({ rowId, endRowId: rowId, rows: z.number().int().min(1).max(MAX_PASTE_ROWS) }).strict().optional(),
+  })
+  .strict()
+  .refine((b) => b.values.every((row) => row.length === b.columnIds.length), { path: ["values"], message: "every row needs one value per column" })
+  .refine((b) => b.values.length * b.columnIds.length <= MAX_PASTE_CELLS, { path: ["values"], message: `at most ${MAX_PASTE_CELLS} cells in one paste` })
+  .refine((b) => !b.start || b.start.rows <= b.values.length, { path: ["start", "rows"], message: "more existing rows than the paste has" });
 
 const scalar = z.union([text(1_000), z.number().finite(), z.boolean()]);
 const isoDate = text(40).refine((v) => /^\d{4}-\d{2}-\d{2}([T ].*)?$/.test(v), "an ISO date");
@@ -135,6 +153,15 @@ export async function workbookV2RowRoutes(app: FastifyInstance) {
       const { id } = idParams.parse(request.params);
       const body = bulkBody.parse(request.body ?? {});
       return { status: 201, body: { data: await addRows(db, actor, id, body.rows) } };
+    })
+  );
+
+  app.post(
+    "/workbooks-v2/:id/paste",
+    { bodyLimit: PASTE_BODY_LIMIT },
+    handleOnce(async (request, { db, actor }) => {
+      const { id } = idParams.parse(request.params);
+      return { status: 200, body: { data: await pasteIntoWorkbook(db, actor, id, pasteBody.parse(request.body ?? {})) } };
     })
   );
 

@@ -52,6 +52,8 @@ export type WorkbookV2ErrorCode =
   | "NOTHING_TO_ADD"
   | "SEARCH_UNAVAILABLE"
   | "PAGE_OUT_OF_RANGE"
+  | "INCOMPATIBLE_COLUMN"
+  | "ROWS_CHANGED"
   | "NOT_IMPLEMENTED";
 
 export class WorkbookV2Error extends Error {

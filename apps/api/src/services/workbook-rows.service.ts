@@ -73,7 +73,7 @@ interface Column {
   config: Record<string, unknown>;
 }
 
-async function columnsOf(db: Db, workbookId: string): Promise<Map<string, Column>> {
+export async function columnsOf(db: Db, workbookId: string): Promise<Map<string, Column>> {
   const rows = await db
     .select({ id: workbookColumns.id, type: workbookColumns.type, config: workbookColumns.config })
     .from(workbookColumns)
@@ -81,7 +81,7 @@ async function columnsOf(db: Db, workbookId: string): Promise<Map<string, Column
   return new Map(rows.map((c) => [c.id, c]));
 }
 
-async function countRows(db: Db, workbookId: string): Promise<number> {
+export async function countRows(db: Db, workbookId: string): Promise<number> {
   const [r] = await db.select({ n: count() }).from(workbookRows).where(eq(workbookRows.workbookId, workbookId));
   return r?.n ?? 0;
 }
@@ -153,7 +153,7 @@ function failIfProblems(problems: CellProblem[]) {
 }
 
 /** The stored form of a typed value. A value that does not fit its column's type is kept and flagged. */
-function cellRecord(workbookId: string, rowId: number, columnId: string, cell: Extract<NormalizedCell, { kind: "value" }>) {
+export function cellRecord(workbookId: string, rowId: number, columnId: string, cell: Extract<NormalizedCell, { kind: "value" }>) {
   return {
     workbookId,
     rowId,
@@ -169,7 +169,7 @@ function cellRecord(workbookId: string, rowId: number, columnId: string, cell: E
   };
 }
 
-async function touchWorkbook(tx: Db, workbookId: string, rowCount?: number) {
+export async function touchWorkbook(tx: Db, workbookId: string, rowCount?: number) {
   await tx
     .update(workbooks)
     .set({ updatedAt: sql`now()`, ...(rowCount === undefined ? {} : { rowCount }) })
