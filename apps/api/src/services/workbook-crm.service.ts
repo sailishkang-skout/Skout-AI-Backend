@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
-import { WorkbookV2Error, findLiveWorkbook, type WorkbookActor, type WorkbookV2ErrorCode } from "./workbook-v2.service.js";
+import { WorkbookV2Error, findLiveWorkbook, type WorkbookActor } from "./workbook-v2.service.js";
 import { MAX_COLUMNS } from "./workbook-v2-columns.service.js";
 import { inputDataType, normalizeInputValue, type InputDataType } from "./workbook-cell-values.js";
 import { namedLike, suggestMapping, type ExistingColumn } from "./workbook-import-plan.js";
 import type { CsvHeader } from "./workbook-import-csv.js";
 import { assertRoomForAnotherImport, getImport, type ImportDto } from "./workbook-imports.service.js";
 import { CRM_PROVIDERS } from "./workbook-v2-column-config.js";
-import { crmMessage, type CrmAccess, type CrmConnectionStatus, type CrmSession } from "./workbook-crm-access.js";
+import { crmMessage, providerCode, type CrmAccess, type CrmConnectionStatus, type CrmSession } from "./workbook-crm-access.js";
 import {
   CRM_OBJECTS,
   CrmSourceError,
@@ -23,9 +23,9 @@ import {
 } from "./crm-record-source.js";
 
 /**
- * Importing a CRM's contacts and companies into a workbook (WB2-023): what can be chosen, and the preview. A preview
- * is an import waiting to be confirmed, so mapping, confirming, progress, cancelling and the report are the same as for
- * a CSV file (WB2-020). Nothing is added before the confirm.
+ * Importing a CRM's contacts and companies (WB2-023) or saved Apollo contacts (WB2-024) into a workbook: what can be
+ * chosen, and the preview. A preview is an import waiting to be confirmed, so mapping, confirming, progress, cancelling
+ * and the report are the same as for a CSV file (WB2-020). Nothing is added before the confirm.
  */
 const { workbookColumns, workbookImports } = schema;
 
@@ -43,17 +43,19 @@ export interface CrmPlan {
   accountId: string;
   query: CrmQuery;
   viewName: string | null;
+  /** The names of the stages searched by, as they were at the preview. */
+  searchStages?: string[];
   /** How many records the CRM said the selection holds; null when it did not say. */
   matched: number | null;
   /** Where the next page starts, saved with each chunk of rows. */
   cursor: string | null;
   done: boolean;
-  /** Set when the workbook filled up before the selection ended. */
-  truncated?: { matched: number; considered: number };
+  /** Set when the workbook filled up before the selection ended, or the source would not be read any further. */
+  truncated?: { matched: number; considered: number; reason?: "source_limit" };
   background?: boolean;
 }
 
-const CODE: Record<CrmSourceError["failure"], [WorkbookV2ErrorCode, number]> = {
+const CODE = {
   // Not 401: that would read as the person's own Skout session ending.
   not_connected: ["CRM_NOT_CONNECTED", 409],
   reauth: ["CRM_RECONNECT_REQUIRED", 409],
@@ -62,7 +64,7 @@ const CODE: Record<CrmSourceError["failure"], [WorkbookV2ErrorCode, number]> = {
   unavailable: ["CRM_UNAVAILABLE", 502],
   not_found: ["CRM_UNKNOWN_VIEW", 422],
   rejected: ["CRM_QUERY_REJECTED", 422],
-};
+} as const satisfies Record<CrmSourceError["failure"], readonly [string, number]>;
 
 export const objectLabel = (object: CrmObject) => (object === "contact" ? "contacts" : "companies");
 
@@ -82,7 +84,7 @@ async function fromCrm<T>(access: CrmAccess, workspaceId: string, provider: stri
     if (!(error instanceof CrmSourceError)) throw error;
     if (error.failure === "reauth") await access.expired(workspaceId, provider);
     const [code, status] = CODE[error.failure];
-    throw new WorkbookV2Error(code, status, crmMessage(error.failure, access.label(provider)), error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : undefined);
+    throw new WorkbookV2Error(providerCode(provider, code), status, crmMessage(provider, error.failure, access.label(provider)), error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : undefined);
   }
 }
 
@@ -127,7 +129,7 @@ export async function describeCrmObject(access: CrmAccess, workspaceId: string, 
     items = await source.listViews(session.accessToken, object);
   } catch (error) {
     if (!(error instanceof CrmSourceError) || error.failure === "reauth") await fromCrm(access, workspaceId, provider, () => Promise.reject(error));
-    reason = crmMessage((error as CrmSourceError).failure, access.label(provider));
+    reason = crmMessage(provider, (error as CrmSourceError).failure, access.label(provider));
   }
   const names = new Set(fields.map((f) => f.name));
   return {
@@ -146,6 +148,7 @@ export interface CrmImportRequest {
   fields: string[];
   viewId?: string;
   filters?: Array<{ field: string; operator: CrmOperator; value?: string }>;
+  search?: { keywords?: string; stageIds?: string[] };
 }
 
 const invalidFilter = (message: string, index?: number) => new WorkbookV2Error("CRM_INVALID_FILTER", 422, message, index === undefined ? undefined : { filter: index });
@@ -184,6 +187,7 @@ const SIMPLE: Partial<Record<CrmField["type"], InputDataType>> = { number: "numb
 
 /** The kind of value a field is known to hold, from its type or its name. */
 function knownType(field: CrmField): InputDataType | null {
+  if (field.holds) return field.holds;
   if (field.type !== "string") return SIMPLE[field.type] ?? null;
   const name = field.name.toLowerCase();
   if (name === "email") return "email";
@@ -228,8 +232,8 @@ async function columnsOf(db: Db, workbookId: string): Promise<ExistingColumn[]> 
 export async function createCrmImport(db: Db, access: CrmAccess, actor: WorkbookActor, workbookId: string, input: CrmImportRequest): Promise<ImportDto> {
   await findLiveWorkbook(db, actor.workspaceId, workbookId);
   const source = requireSource(access, input.provider, input.object);
-  if (input.viewId !== undefined && input.filters?.length) {
-    throw invalidFilter(`A ${source.views.label} and filters can't be used together. Choose one.`);
+  if (input.viewId !== undefined && (input.filters?.length || input.search)) {
+    throw invalidFilter(`A ${source.views.label} and ${input.search ? "a search" : "filters"} can't be used together. Choose one.`);
   }
   await assertRoomForAnotherImport(db, actor.workspaceId);
   const label = access.label(input.provider);
@@ -238,22 +242,37 @@ export async function createCrmImport(db: Db, access: CrmAccess, actor: Workbook
 
   const available = new Map((await crm(() => source.listFields(session.accessToken, input.object))).map((f) => [f.name, f]));
   const unknown = input.fields.filter((name) => !available.has(name));
-  if (unknown.length) throw new WorkbookV2Error("CRM_UNKNOWN_FIELD", 422, `${label} has no field “${unknown[0]}” on ${objectLabel(input.object)}.`, { fields: unknown });
+  if (unknown.length) throw new WorkbookV2Error(providerCode(input.provider, "CRM_UNKNOWN_FIELD"), 422, `${label} has no field “${unknown[0]}” on ${objectLabel(input.object)}.`, { fields: unknown });
   const fields = input.fields.map((name) => available.get(name)!);
   const filters = checkFilters(source, available, input.filters ?? []);
 
   let view: CrmView | null = null;
   if (input.viewId !== undefined) {
     view = (await crm(() => source.listViews(session.accessToken, input.object))).find((v) => v.id === input.viewId) ?? null;
-    if (!view) throw new WorkbookV2Error("CRM_UNKNOWN_VIEW", 422, `That ${source.views.label} doesn't exist for ${objectLabel(input.object)}. Choose it again.`);
+    if (!view) throw new WorkbookV2Error(providerCode(input.provider, "CRM_UNKNOWN_VIEW"), 422, `That ${source.views.label} doesn't exist for ${objectLabel(input.object)}. Choose it again.`);
   }
-  const query: CrmQuery = { object: input.object, fields: input.fields, filters, ...(view ? { viewId: view.id } : {}) };
+  let search: CrmQuery["search"];
+  let searchStages: string[] = [];
+  if (input.search) {
+    const keywords = input.search.keywords?.trim();
+    const stageIds = input.search.stageIds ?? [];
+    if (stageIds.length) {
+      const stages = new Map((await crm(() => source.listStages!(session.accessToken))).map((s) => [s.id, s.name]));
+      const missing = stageIds.filter((id) => !stages.has(id));
+      if (missing.length) throw new WorkbookV2Error("APOLLO_UNKNOWN_STAGE", 422, `That contact stage no longer exists in ${label}. Choose it again.`, { stageIds: missing });
+      searchStages = stageIds.map((id) => stages.get(id)!);
+    }
+    search = { ...(keywords ? { keywords } : {}), ...(stageIds.length ? { stageIds } : {}) };
+  }
+  const query: CrmQuery = { object: input.object, fields: input.fields, filters, ...(view ? { viewId: view.id } : {}), ...(search ? { search } : {}) };
+  const narrowed = Boolean(view || filters.length || search?.keywords || search?.stageIds);
   const first = await crm(() => source.page(session.accessToken, query, null, CRM_PREVIEW_ROWS));
   const shown = first.records.flatMap((r) => (r.properties ? [r.properties] : []));
   if (!shown.length) {
-    throw new WorkbookV2Error("NOTHING_TO_ADD", 422, `${label} has no ${objectLabel(input.object)} ${view || filters.length ? "in this selection" : "yet"}.`);
+    throw new WorkbookV2Error("NOTHING_TO_ADD", 422, `${label} has no ${objectLabel(input.object)} ${narrowed ? "in this selection" : "yet"}.`);
   }
-  const counted = view ? view.count : await crm(() => source.count(session.accessToken, query));
+  // The page's own total, where it gives one, is newer than what a view says of itself.
+  const counted = first.total ?? (view ? view.count : await crm(() => source.count(session.accessToken, query)));
   // A CRM's count can lag behind; it is never less than what was just read.
   const matched = counted === null ? null : Math.max(counted, shown.length);
 
@@ -291,6 +310,7 @@ export async function createCrmImport(db: Db, access: CrmAccess, actor: Workbook
     accountId: session.accountId,
     query,
     viewName: view?.name ?? null,
+    ...(searchStages.length ? { searchStages } : {}),
     matched,
     cursor: null,
     done: false,
@@ -307,10 +327,10 @@ export async function createCrmImport(db: Db, access: CrmAccess, actor: Workbook
     sourceType: input.provider,
     status: "awaiting_confirmation",
     createdBy: actor.userId,
-    fileName: `${label} ${objectLabel(input.object)}${view ? ` · ${view.name}` : filters.length ? " · filtered" : ""}`.slice(0, 255),
+    fileName: `${label} ${objectLabel(input.object)}${view ? ` · ${view.name}` : filters.length ? " · filtered" : search && narrowed ? " · search" : ""}`.slice(0, 255),
     preview,
     plan: { crm: plan },
-    counts: { total: matched ?? 0, processed: 0, imported: 0, duplicates: 0, skipped: 0, failed: 0 },
+    counts: { total: Math.min(matched ?? 0, source.maxRecords ?? Infinity), processed: 0, imported: 0, duplicates: 0, skipped: 0, failed: 0 },
   });
   return getImport(db, actor.workspaceId, workbookId, id);
 }
@@ -319,7 +339,8 @@ export async function createCrmImport(db: Db, access: CrmAccess, actor: Workbook
 export async function assertSameCrmAccount(access: CrmAccess, workspaceId: string, plan: CrmPlan): Promise<void> {
   const session = await open(access, workspaceId, plan.provider);
   if (session.accountId !== plan.accountId) {
-    throw new WorkbookV2Error("CRM_ACCOUNT_CHANGED", 409, `${plan.providerLabel} was reconnected to a different account since this preview. Cancel it and start again.`);
+    const changed = plan.provider === "apollo" ? "The Apollo API key was saved again" : `${plan.providerLabel} was reconnected to a different account`;
+    throw new WorkbookV2Error(providerCode(plan.provider, "CRM_ACCOUNT_CHANGED"), 409, `${changed} since this preview. Cancel it and start again.`);
   }
 }
 

@@ -9,6 +9,7 @@ import { DEDUPE_KEYS } from "../services/workbook-import-plan.js";
 import { importStorage } from "../services/workbook-import-storage.js";
 import { cancelImport, confirmImport, createImport, getImport, listImports, openImportReport } from "../services/workbook-imports.service.js";
 import { workbookImportQueue } from "../workers/workbook-import.queue.js";
+import { isCrmSource } from "../services/workbook-import-core.js";
 import { crmAccess } from "../services/workbook-crm-access.js";
 import { assertSameCrmAccount } from "../services/workbook-crm.service.js";
 import { assertCrmFeature } from "./workbook-v2-crm.routes.js";
@@ -115,7 +116,8 @@ export async function workbookV2ImportRoutes(app: FastifyInstance) {
       const choice = confirmBody.parse(request.body ?? {});
       const crm = crmAccess(db, app.config);
       const { background, data } = await confirmImport(db, { storage: storage(), queue: workbookImportQueue(app.config), crm }, actor, id, importId, choice, async (plan) => {
-        await assertCrmFeature(db, actor.workspaceId);
+        // Apollo is connected in Settings → Integrations and is not part of the CRM feature.
+        if (isCrmSource(plan.provider)) await assertCrmFeature(db, actor.workspaceId);
         await assertSameCrmAccount(crm, actor.workspaceId, plan);
       });
       return { status: background ? 202 : 200, body: { data } };

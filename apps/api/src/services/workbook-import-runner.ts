@@ -9,7 +9,7 @@ import { classifyRow, duplicateReason, type ClassifiedRow, type ImportPlan, type
 import { KeyIndex } from "./workbook-import-keys.js";
 import { importFromCrm, type CrmImportPlan } from "./workbook-crm-runner.js";
 import type { CrmAccess } from "./workbook-crm-access.js";
-import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, RetryLater, Superseded, countsOf, describeFailure, isCrmSource, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
+import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, RetryLater, Superseded, countsOf, describeFailure, isRecordSource, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
 import { addProspects } from "./workbook-prospect-runner.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
 import { removeStaleTempFiles, reportKey, saveStream, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
@@ -46,7 +46,7 @@ export const IMPORT_FAILED_MESSAGE =
   "The import stopped because of a problem on our side. Rows already imported are in the workbook. To add the rest, upload the file again and choose a deduplication key so rows are not added twice.";
 const CRM_FAILED_MESSAGE = "The import stopped before it finished. Rows already imported are in the workbook. Import the same selection again to add the rest; records already there are skipped.";
 /** What to say when an import ends because it could not be completed. */
-export const failedMessage = (sourceType: string) => (isCrmSource(sourceType) ? CRM_FAILED_MESSAGE : IMPORT_FAILED_MESSAGE);
+export const failedMessage = (sourceType: string) => (isRecordSource(sourceType) ? CRM_FAILED_MESSAGE : IMPORT_FAILED_MESSAGE);
 
 export interface ImportJob {
   importId: string;
@@ -189,8 +189,8 @@ async function attemptImport(db: Db, storage: ImportStorage, importId: string, d
   if (!record) return;
   if (record.sourceType !== "csv") {
     try {
-      if (isCrmSource(record.sourceType)) {
-        if (!crm) throw new Error("a CRM import needs CRM access");
+      if (isRecordSource(record.sourceType)) {
+        if (!crm) throw new Error("a CRM or Apollo import needs access to it");
         await importFromCrm(db, crm, found.workspaceId, record);
       } else {
         if (!directory) throw new Error("adding prospects needs the prospect directory");
@@ -265,10 +265,11 @@ export async function runImportJob(db: Db, storage: ImportStorage, importId: str
 
 /** What the report's first column counts. */
 const positionLabel = (sourceType: string) => (sourceType === "csv" ? "Line in file" : "Position in selection");
-/** The report's other columns: those of the file or selection, after the record's id for a CRM. */
+/** The report's other columns: those of the file or selection, after the record's id for a CRM or Apollo. */
 function reportHeaders(record: { sourceType: string; plan: unknown }): string[] {
   const headers = (record.plan as ImportPlan | null)?.headers ?? [];
-  return isCrmSource(record.sourceType) ? ["CRM record ID", ...headers] : headers;
+  if (!isRecordSource(record.sourceType)) return headers;
+  return [record.sourceType === "apollo" ? "Apollo contact ID" : "CRM record ID", ...headers];
 }
 
 const RESULT_LABEL: Record<Issue["kind"], string> = {
@@ -352,14 +353,23 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
         .where(eq(workbookImports.id, importId));
       if (reported) await tx.delete(workbookImportIssues).where(eq(workbookImportIssues.importId, importId));
       await tx.delete(workbookImportItems).where(eq(workbookImportItems.importId, importId));
-      const added = countsOf(record.counts).imported;
-      if (added > 0) {
+      const counted = countsOf(record.counts);
+      const added = counted.imported;
+      // An Apollo import is recorded however it ends, with what became of every record (WB2-024).
+      const apollo = record.sourceType === "apollo";
+      if (added > 0 || apollo) {
         const [workbook] = await tx.select({ rowCount: workbooks.rowCount }).from(workbooks).where(eq(workbooks.id, record.workbookId));
         const requestId = (record.plan as unknown as ImportPlan | null)?.requestId ?? undefined;
-        const from = isCrmSource(record.sourceType) ? (record.plan as unknown as CrmImportPlan).crm : null;
+        const from = isRecordSource(record.sourceType) ? (record.plan as unknown as CrmImportPlan).crm : null;
         await recordWorkbookActivity(tx, { workspaceId: found.workspaceId, userId: record.createdBy, requestId }, record.workbookId, {
           action: "workbook.rows.added",
-          after: { source: record.sourceType, rows: added, rowCount: workbook?.rowCount ?? added, ...(from ? { object: from.object, ...(from.viewName ? { viewName: from.viewName } : {}) } : {}) },
+          after: {
+            source: record.sourceType,
+            rows: added,
+            rowCount: workbook?.rowCount ?? added,
+            ...(from ? { object: from.object, ...(from.viewName ? { viewName: from.viewName } : {}) } : {}),
+            ...(apollo ? { status: outcome.status, duplicates: counted.duplicates, skipped: counted.skipped, failed: counted.failed } : {}),
+          },
           channel: "worker",
         });
       }

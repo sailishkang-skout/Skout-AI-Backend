@@ -2,15 +2,18 @@ import { eq, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 
 /**
- * What every kind of workbook import (CSV, list, smart list, search, CRM) shares: its counts, how a chunk is recorded
- * exactly once, and how failures are described.
+ * What every kind of workbook import (CSV, list, smart list, search, CRM, Apollo) shares: its counts, how a chunk is
+ * recorded exactly once, and how failures are described.
  */
 const { workbookImports } = schema;
 
 /** The CRMs a workbook can be imported from (WB2-023); each is its own source type. */
 export const CRM_IMPORT_SOURCES = ["hubspot", "salesforce", "pipedrive"] as const;
-export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search", ...CRM_IMPORT_SOURCES] as const;
+/** Everything read from outside Skout a page at a time: the CRMs, and saved Apollo contacts (WB2-024). */
+const RECORD_IMPORT_SOURCES = [...CRM_IMPORT_SOURCES, "apollo"] as const;
+export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search", ...RECORD_IMPORT_SOURCES] as const;
 export const isCrmSource = (sourceType: string) => (CRM_IMPORT_SOURCES as readonly string[]).includes(sourceType);
+export const isRecordSource = (sourceType: string) => (RECORD_IMPORT_SOURCES as readonly string[]).includes(sourceType);
 export type ImportSourceType = (typeof IMPORT_SOURCE_TYPES)[number];
 
 export interface ImportCounts {

@@ -53,6 +53,9 @@ const ROUTES: Record<string, Access> = {
   "GET /workbooks-v2/:id/crm-sources": "edit",
   "GET /workbooks-v2/:id/crm-sources/:provider/:object": "edit",
   "POST /workbooks-v2/:id/crm-imports": "edit",
+  // So is reading Apollo.
+  "GET /workbooks-v2/:id/apollo-source": "edit",
+  "POST /workbooks-v2/:id/apollo-imports": "edit",
   "PATCH /workbooks-v2/:id/rows/:rowId": "edit",
   "DELETE /workbooks-v2/:id/rows/:rowId": "edit",
   "POST /workbooks-v2/:id/rows/delete": "edit",
@@ -488,6 +491,8 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
         // HubSpot isn't connected here, so an allowed caller is told that rather than reaching HubSpot.
         ["GET /workbooks-v2/:id/crm-sources/:provider/:object", "GET", `/${b.id}/crm-sources/hubspot/contact`],
         ["POST /workbooks-v2/:id/crm-imports", "POST", `/${b.id}/crm-imports`, { provider: "hubspot", object: "contact", fields: ["email"] }],
+        ["GET /workbooks-v2/:id/apollo-source", "GET", `/${b.id}/apollo-source`],
+        ["POST /workbooks-v2/:id/apollo-imports", "POST", `/${b.id}/apollo-imports`, { fields: ["email"], search: {} }],
         ["PATCH /workbooks-v2/:id/rows/:rowId", "PATCH", `/${b.id}/rows/${b.rows[0]}`, { cells: { [b.input]: "edited" } }],
         ["DELETE /workbooks-v2/:id/rows/:rowId", "DELETE", `/${b.id}/rows/${b.rows[1]}`],
         ["POST /workbooks-v2/:id/rows/delete", "POST", `/${b.id}/rows/delete`, { rowIds: [b.rows[0]] }],
@@ -513,10 +518,10 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     }
 
     const expected = (outcome: Record<Access, number | "ok">) => Object.fromEntries(Object.entries(ROUTES).map(([route, access]) => [route, outcome[access]]));
-    /** No CRM is connected here: being told so (409) means the caller was let through. */
-    const NEEDS_CRM = new Set(["GET /workbooks-v2/:id/crm-sources/:provider/:object", "POST /workbooks-v2/:id/crm-imports"]);
+    /** No CRM or Apollo is connected here: being told so (409) means the caller was let through. */
+    const NEEDS_CONNECTION = new Set(["GET /workbooks-v2/:id/crm-sources/:provider/:object", "POST /workbooks-v2/:id/crm-imports", "POST /workbooks-v2/:id/apollo-imports"]);
     const simplify = (results: Record<string, number>) =>
-      Object.fromEntries(Object.entries(results).map(([route, status]) => [route, status < 300 || (status === 409 && NEEDS_CRM.has(route)) ? "ok" : status]));
+      Object.fromEntries(Object.entries(results).map(([route, status]) => [route, status < 300 || (status === 409 && NEEDS_CONNECTION.has(route)) ? "ok" : status]));
 
     it("sends one request to every route", async () => {
       const owner = await user();

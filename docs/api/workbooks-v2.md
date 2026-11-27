@@ -197,7 +197,7 @@ Event = { id, type, occurredAt, actor: { id, name, email } | null, details }
 
 | `type` | `details` |
 |---|---|
-| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request |
+| `rows.added` | `source` (the rows' `source.type`; `duplicate` for a copy; `other` when one request names more than 20), `rows`, `rowCount`, `copiedFromWorkbookId?`. One event per source in a request. CRM imports add `object` and `viewName?`; Apollo imports also add `status`, `duplicates`, `skipped` and `failed` (see [Apollo import](#apollo-import)) |
 | `rows.deleted` | `rows`, `rowCount` |
 | `column.added` | `columnId`, `columnName`, `columnType`, `operation`, `copiedFromWorkbookId?` |
 | `column.updated` | `columnId`, `columnName`, `renamedFrom?`, `settingsChanged?` (setting names), `dataType?: { from, to }` |
@@ -242,7 +242,7 @@ Three steps: send the file, confirm how it maps, follow it. Nothing is added to 
 | `GET /:id/imports/:importId/report` | `enrichment:read` | | the skipped-rows CSV | `404 NOT_FOUND` / `REPORT_NOT_AVAILABLE` |
 
 ```ts
-Import = { id, workbookId, sourceType /* csv | list | smart_list | search */, sourceName, truncated, status, fileName, fileBytes,
+Import = { id, workbookId, sourceType /* csv | list | smart_list | search | hubspot | apollo */, sourceName, truncated, status, fileName, fileBytes,
            counts: { total, processed, imported, duplicates, skipped, failed },
            progress /* 0-100, processed / total */, background, error: { code, message } | null,
            report: { available, rows },
@@ -442,3 +442,79 @@ Companies need two more HubSpot permissions. Add `crm.objects.companies.read` an
 HubSpot app as **optional** scopes, then set `HUBSPOT_COMPANY_SCOPES=true`, then reconnect. Setting the variable before
 the app lists the scopes can stop people connecting HubSpot at all.
 
+## Apollo import
+
+People saved as contacts in the workspace's own Apollo account: one of its contact lists, or a search of its saved
+contacts. **Apollo's search of its whole people database is not offered.** It returns no email addresses, LinkedIn URLs
+or domains, and getting them spends Apollo credits. Apollo's saved searches have no API.
+
+| Method and path (`/api/v1/workbooks-v2`) | Permission |
+| --- | --- |
+| `GET /:id/apollo-source` | `enrichment:capture` |
+| `POST /:id/apollo-imports` (accepts `Idempotency-Key`) | `enrichment:capture` |
+
+The connection is the workspace's Apollo API key saved in Settings → Integrations (`PUT /integrations/apollo`), one per
+workspace. No request names a connection and no response carries a key. The CRM feature is not needed.
+
+1. `apollo-source` answers `connection.status` (`connected`, `needs_reauth` when the stored key can't be read, or
+   `not_connected`), the `fields` (`name`, `label`), `defaultFields`, `maxRecords` and, when connected, `lists` and
+   `stages`, each `{ available, reason, items }`. A key without access to one of them still imports by the other, or by
+   keywords.
+2. `apollo-imports` reads the first 20 contacts and returns an import `awaiting_confirmation`. Nothing is added yet.
+
+```json
+{ "fields": ["name", "email", "company_domain"], "search": { "keywords": "engineer", "stageIds": ["…"] } }
+```
+
+Send 1 to 50 `fields` and exactly one of `listId` or `search`. An empty `search` selects every saved contact.
+
+| Field | Column type offered |
+| --- | --- |
+| `name`, `first_name`, `last_name`, `email_status`, `title`, `headline`, `company`, `location`, `city`, `state`, `country` | text |
+| `email` | email |
+| `company_domain` | domain |
+| `company_website` | web address |
+| `linkedin_url` | LinkedIn URL |
+| `phone` | phone number |
+
+Text is always allowed. A value Apollo doesn't hold leaves the cell empty. `company_domain` comes from the contact's
+organisation or account, or its website. `location` is city, state and country, or else Apollo's raw address.
+
+3. Confirm, follow, cancel and download the report with the import routes (`/imports/:importId…`), as for
+   [CRM import](#crm-import): the mapping, deduplication keys, background running over 1,000 records, retries and row
+   limit are the same.
+
+An import's `sourceType` is `apollo`, `sourceName` the list's name and `crm` null.
+
+### What is stored
+
+Each row has `source` `{ type: "apollo", object: "contact", importId, importedAt, viewId?, viewName?, searchKeywords?,
+searchStages? }` and
+
+```json
+{ "crmRef": { "provider": "apollo", "object": "contact", "id": "<Apollo contact id>", "personId": "<Apollo person id>" } }
+```
+
+A workbook holds each Apollo contact once, whichever selection or saved key brought it. A later import adds only new
+contacts and changes none. Nothing runs on new rows and nothing is written to Apollo.
+
+The `rows.added` activity entry is written when a confirmed import ends, completed or failed, even if it added nothing.
+It never holds the words searched for, which can be someone's name or address.
+
+### Reading Apollo
+
+Contacts are read 100 at a time, oldest first, and at most 50,000 of them (Apollo's limit): `truncated.reason` is then
+`source_limit`. A background import waits out a rate limit of up to a minute, three times per page, and otherwise is
+retried later. Contacts deleted in Apollo while an import reads can shift its pages and be missed; importing again adds
+them.
+
+| Code | Meaning |
+| --- | --- |
+| `APOLLO_NOT_CONNECTED`, `APOLLO_RECONNECT_REQUIRED` (409) | No key saved, or Apollo rejects it |
+| `APOLLO_SCOPE_MISSING` (409) | The key or plan may not read this |
+| `APOLLO_CONNECTION_CHANGED` (409) | A key was saved again since the preview |
+| `APOLLO_UNKNOWN_FIELD`, `APOLLO_UNKNOWN_LIST`, `APOLLO_UNKNOWN_STAGE`, `APOLLO_SEARCH_REJECTED` (422) | The selection can't be used |
+| `APOLLO_RATE_LIMITED` (429), `APOLLO_UNAVAILABLE` (502) | Try again later |
+| `NOTHING_TO_ADD` (422) | The selection is empty |
+
+The key needs Apollo API access to contact search, plus lists and contact stages to offer those, or a master key.

@@ -9,11 +9,13 @@ import { markConnectionNeedsReauth } from "./crm-auth-lifecycle.service.js";
 import { ensureFreshTokens } from "./crm-export.runner.js";
 import { createHubSpotCredentialsStore } from "./hubspot-credentials.store.js";
 import { CrmSourceError, type CrmRecordSource } from "./crm-record-source.js";
+import { apolloContactSource } from "./import-adapters/apollo.adapter.js";
+import { createIntegrationService } from "./integration.service.js";
 
 /**
- * A workspace's way into its own CRM (WB2-023), through the connections and token handling the app already has. A
- * connection is always looked up by the workspace of the session or of the import, never by anything a client sends.
- * Tokens stay here: nothing returns them to a caller outside the server.
+ * A workspace's way into its own CRM (WB2-023) or Apollo account (WB2-024), through the connections, tokens and saved
+ * keys the app already has. A connection is always looked up by the workspace of the session or of the import, never by
+ * anything a client sends. Tokens and keys stay here: nothing returns them to a caller outside the server.
  */
 const { crmConnections } = schema;
 
@@ -63,7 +65,43 @@ async function accountOf(provider: string, accessToken: string): Promise<string>
   return id;
 }
 
+/** Apollo is connected with the workspace's own API key, saved in Settings → Integrations. */
+function apolloAccess(db: Db, config: Env): CrmAccess {
+  const connection = (workspaceId: string) => createIntegrationService(db, config).getProviderConnection(workspaceId, "apollo");
+  const status = async (workspaceId: string): Promise<CrmConnectionStatus> => {
+    const found = await connection(workspaceId);
+    if (!found) return "not_connected";
+    return found.status === "active" && found.apiKey ? "connected" : "needs_reauth";
+  };
+  return {
+    source: () => apolloContactSource,
+    label: () => "Apollo",
+    status,
+    // A rejected key is reported where it is used; the saved key is the workspace's to change.
+    expired: async () => {},
+    async open(workspaceId) {
+      const found = await connection(workspaceId);
+      if (!found) throw new CrmSourceError("not_connected");
+      if (found.status !== "active" || !found.apiKey) throw new CrmSourceError("reauth");
+      return { accessToken: found.apiKey, accountId: found.revision };
+    },
+  };
+}
+
 export function crmAccess(db: Db, config: Env): CrmAccess {
+  const apollo = apolloAccess(db, config);
+  const crm = connectorAccess(db, config);
+  const of = (provider: string) => (provider === "apollo" ? apollo : crm);
+  return {
+    source: (provider) => of(provider).source(provider),
+    label: (provider) => of(provider).label(provider),
+    status: (workspaceId, provider) => of(provider).status(workspaceId, provider),
+    open: (workspaceId, provider) => of(provider).open(workspaceId, provider),
+    expired: (workspaceId, provider) => of(provider).expired(workspaceId, provider),
+  };
+}
+
+function connectorAccess(db: Db, config: Env): CrmAccess {
   const source = (provider: string) => (TOKENS[provider] ? (getCrmConnector(provider)?.records ?? null) : null);
 
   async function status(workspaceId: string, provider: string): Promise<CrmConnectionStatus> {
@@ -112,6 +150,23 @@ export function crmAccess(db: Db, config: Env): CrmAccess {
   };
 }
 
+/** Apollo is not a CRM, so its refusals carry codes of their own. */
+const APOLLO_CODES = {
+  CRM_NOT_CONNECTED: "APOLLO_NOT_CONNECTED",
+  CRM_RECONNECT_REQUIRED: "APOLLO_RECONNECT_REQUIRED",
+  CRM_SCOPE_MISSING: "APOLLO_SCOPE_MISSING",
+  CRM_RATE_LIMITED: "APOLLO_RATE_LIMITED",
+  CRM_UNAVAILABLE: "APOLLO_UNAVAILABLE",
+  CRM_UNKNOWN_FIELD: "APOLLO_UNKNOWN_FIELD",
+  CRM_UNKNOWN_VIEW: "APOLLO_UNKNOWN_LIST",
+  CRM_VIEW_NOT_FOUND: "APOLLO_UNKNOWN_LIST",
+  CRM_QUERY_REJECTED: "APOLLO_SEARCH_REJECTED",
+  CRM_ACCOUNT_CHANGED: "APOLLO_CONNECTION_CHANGED",
+} as const;
+export type ApolloErrorCode = (typeof APOLLO_CODES)[keyof typeof APOLLO_CODES];
+
+export const providerCode = <C extends keyof typeof APOLLO_CODES>(provider: string, code: C): C | ApolloErrorCode => (provider === "apollo" ? APOLLO_CODES[code] : code);
+
 /** What a person is told. `{crm}` is the CRM's name. */
 const MESSAGES: Record<CrmSourceError["failure"], string> = {
   not_connected: "{crm} isn't connected. Connect it in Settings, then try again.",
@@ -123,4 +178,14 @@ const MESSAGES: Record<CrmSourceError["failure"], string> = {
   rejected: "{crm} refused the request. Check the fields and filters you chose.",
 };
 
-export const crmMessage = (failure: CrmSourceError["failure"], label: string) => MESSAGES[failure].replaceAll("{crm}", label);
+const APOLLO_MESSAGES: Partial<typeof MESSAGES> = {
+  not_connected: "Apollo isn't connected. Add your Apollo API key in Settings → Integrations, then try again.",
+  reauth: "Apollo rejected the saved API key. It may have been revoked or replaced. Save a valid key in Settings → Integrations, then try again.",
+  scope: "The Apollo API key isn't allowed to read this. Use a key with access to it, or a master key, on an Apollo plan that includes API access, and save it in Settings → Integrations.",
+  rate_limited: "Apollo is limiting requests right now. Try again later.",
+  not_found: "That Apollo list no longer exists. Choose it again.",
+  rejected: "Apollo refused the search. Change it and try again.",
+};
+
+export const crmMessage = (provider: string, failure: CrmSourceError["failure"], label: string) =>
+  ((provider === "apollo" ? APOLLO_MESSAGES[failure] : undefined) ?? MESSAGES[failure]).replaceAll("{crm}", label);

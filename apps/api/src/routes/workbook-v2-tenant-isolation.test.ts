@@ -213,6 +213,10 @@ function notFoundCases(): Case[] {
   on("GET /workbooks-v2/:id/crm-sources/:provider/:object", "read a CRM through their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/crm-sources/hubspot/contact` }), 409);
   on("POST /workbooks-v2/:id/crm-imports", "import from a CRM into their workbook", (_, t) => crmImport(t.workbook), 409);
 
+  on("GET /workbooks-v2/:id/apollo-source", "see Apollo through their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/apollo-source` }));
+  // Neither tenant has saved an Apollo key, so an owner is told that (409) and Apollo is not called.
+  on("POST /workbooks-v2/:id/apollo-imports", "import from Apollo into their workbook", (_, t) => ({ method: "POST", path: `/${t.workbook}/apollo-imports`, body: { fields: ["email"], search: {} } }), 409);
+
   const editRow = "PATCH /workbooks-v2/:id/rows/:rowId";
   on(editRow, "edit their cell", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${t.row1}`, body: { cells: { [t.input]: "overwritten" } } }));
   on(editRow, "edit my row inside their workbook", (m, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${m.row1}`, body: { cells: { [m.input]: "x" } } }));

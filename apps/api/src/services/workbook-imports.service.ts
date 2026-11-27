@@ -9,7 +9,7 @@ import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, MAX_IMPORT_BYTES, inspectCsv, type CsvDelimiter, type CsvInspection } from "./workbook-import-csv.js";
 import { checkMapping, suggestMapping, type ColumnMapping, type DedupeChoice, type ExistingColumn, type HeaderSuggestion, type ImportPlan, type MatchKey, type PlannedColumn } from "./workbook-import-plan.js";
 import { UploadTooLarge, receiveUpload, uploadKey, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
-import { IMPORT_SOURCE_TYPES, RetryLater, isCrmSource } from "./workbook-import-core.js";
+import { IMPORT_SOURCE_TYPES, RetryLater, isCrmSource, isRecordSource } from "./workbook-import-core.js";
 import type { CrmAccess } from "./workbook-crm-access.js";
 import type { CrmImportPlan } from "./workbook-crm-runner.js";
 import type { CrmPlan } from "./workbook-crm.service.js";
@@ -49,14 +49,17 @@ interface StoredPreview {
 export interface ImportDto {
   id: string;
   workbookId: string;
-  /** csv, list, smart_list, search or a CRM. */
+  /** csv, list, smart_list, search, a CRM or apollo. */
   sourceType: string;
-  /** The list, smart list or CRM view rows came from. */
+  /** The list, smart list, CRM view or Apollo list rows came from. */
   sourceName: string | null;
   /** For a CRM import, what is being read. */
   crm: { provider: string; object: "contact" | "company" } | null;
-  /** Set when a smart list matched more than the workbook can hold, so only the first were considered. */
-  truncated: { matched: number; considered: number } | null;
+  /**
+   * Set when only the first of what matched were considered: the workbook cannot hold more, or (`source_limit`) the
+   * source will not be read further.
+   */
+  truncated: { matched: number; considered: number; reason?: "source_limit" } | null;
   status: string;
   fileName: string;
   fileBytes: number;
@@ -78,25 +81,26 @@ export interface ImportDto {
 
 export function toImportDto(record: ImportRecord, opts: { preview?: boolean } = {}): ImportDto {
   const counts = countsOf(record.counts);
-  const crm = isCrmSource(record.sourceType) ? ((record.plan as unknown as { crm?: CrmPlan } | null)?.crm ?? null) : null;
-  // Only imports with columns to map have a mapping: files, and CRM selections once confirmed.
-  const mapped = record.sourceType === "csv" || (crm !== null && record.confirmedAt !== null);
+  // What was read from a CRM or Apollo, a page at a time.
+  const read = isRecordSource(record.sourceType) ? ((record.plan as unknown as { crm?: CrmPlan } | null)?.crm ?? null) : null;
+  // Only imports with columns to map have a mapping: files, and CRM or Apollo selections once confirmed.
+  const mapped = record.sourceType === "csv" || (read !== null && record.confirmedAt !== null);
   const plan = mapped ? (record.plan as unknown as ImportPlan | null) : null;
-  const addition = record.sourceType === "csv" || isCrmSource(record.sourceType) ? null : (record.plan as unknown as ProspectPlan | null);
+  const addition = record.sourceType === "csv" || isRecordSource(record.sourceType) ? null : (record.plan as unknown as ProspectPlan | null);
   const progress = record.status === "completed" ? 100 : counts.total ? Math.floor((counts.processed * 100) / counts.total) : 0;
   return {
     id: record.id,
     workbookId: record.workbookId,
     sourceType: record.sourceType,
-    sourceName: addition?.source.name ?? crm?.viewName ?? null,
-    crm: crm ? { provider: crm.provider, object: crm.object } : null,
-    truncated: addition?.truncated ?? crm?.truncated ?? null,
+    sourceName: addition?.source.name ?? read?.viewName ?? null,
+    crm: read && isCrmSource(record.sourceType) ? { provider: read.provider, object: read.object } : null,
+    truncated: addition?.truncated ?? read?.truncated ?? null,
     status: record.status,
     fileName: record.fileName ?? "",
     fileBytes: record.fileBytes ?? 0,
     counts,
     progress,
-    background: addition ? addition.background : (crm?.background ?? counts.total > SYNC_ROW_LIMIT),
+    background: addition ? addition.background : (read?.background ?? counts.total > SYNC_ROW_LIMIT),
     error: record.error,
     report: { available: record.errorReportFile !== null, rows: counts.duplicates + counts.skipped + counts.failed },
     preview: opts.preview && record.status === "awaiting_confirmation" ? (record.preview as unknown as StoredPreview | null) : null,
@@ -309,12 +313,12 @@ export async function confirmImport(
   workbookId: string,
   importId: string,
   choice: ImportChoice,
-  /** Runs before a CRM import starts: that the workspace may still read that CRM. */
+  /** Runs before a CRM or Apollo import starts: that the workspace may still read it. */
   checkCrm?: (plan: CrmPlan) => Promise<void>
 ): Promise<{ background: boolean; data: ImportDto }> {
   const waiting = await requireImport(db, actor.workspaceId, workbookId, importId);
   if (waiting.status !== "awaiting_confirmation") throw stateConflict(waiting.status);
-  const crm = isCrmSource(waiting.sourceType) ? (waiting.plan as unknown as { crm: CrmPlan }).crm : null;
+  const crm = isRecordSource(waiting.sourceType) ? (waiting.plan as unknown as { crm: CrmPlan }).crm : null;
   if (crm) await checkCrm?.(crm);
   // A selection the CRM would not count could be any size.
   const background = (crm !== null && crm.matched === null) || countsOf(waiting.counts).total > SYNC_ROW_LIMIT;
@@ -340,7 +344,7 @@ export async function confirmImport(
     const columns = await columnsOf(tx, workbookId);
     const { problems, keyHeader } = checkMapping(headers, columns, choice.columns, choice.dedupe, MAX_COLUMNS);
     if (crm && !problems.length) {
-      // A CRM field goes only into a column that can hold it.
+      // A CRM or Apollo field goes only into a column that can hold it.
       choice.columns.forEach((mapping, i) => {
         const dataType = mapping.columnId === undefined ? mapping.newColumn!.dataType : columns.find((c) => c.id === mapping.columnId!.toLowerCase())!.dataType;
         const header = preview.headers[mapping.header]!;
