@@ -31,6 +31,7 @@ import { startEnrichmentOpsWorker } from "./workers/enrichment-ops.worker.js";
 import { startCaptureAutoWorker } from "./workers/capture-auto.worker.js";
 import { describeRelease } from "./services/enrichment/release-gate.js";
 import { startWorkbookRunWorker } from "./workers/workbook-run.worker.js";
+import { startWorkbookImportWorker } from "./workers/workbook-import.worker.js";
 import { startReportDeliverySweepWorker } from "./workers/report-delivery-sweep.worker.js";
 import { startIdentityMergeDiscoveryWorker } from "./workers/identity-merge-discovery.worker.js";
 import { startDexterEventWorker } from "./workers/dexter-event.worker.js";
@@ -85,6 +86,7 @@ async function main() {
   const stopEnrichmentOpsWorker = await startEnrichmentOpsWorker(config);
   const stopCaptureAutoWorker = await startCaptureAutoWorker(config);
   const stopWorkbookRunWorker = await startWorkbookRunWorker(config);
+  const stopWorkbookImportWorker = await startWorkbookImportWorker(config);
   const stopReportDeliverySweepWorker = await startReportDeliverySweepWorker(config);
   const stopIdentityMergeDiscoveryWorker = await startIdentityMergeDiscoveryWorker(config);
   const stopDexterEventWorker = await startDexterEventWorker(config);
@@ -139,6 +141,7 @@ async function main() {
     await stopBounceAnomalySweepWorker();
     await stopReportDeliverySweepWorker();
     await stopWorkbookRunWorker();
+    await stopWorkbookImportWorker();
     await stopIdentityMergeDiscoveryWorker();
     await stopDexterEventWorker();
     await stopCopsOutboxRelayWorker();

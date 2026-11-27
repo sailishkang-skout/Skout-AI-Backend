@@ -1,5 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
@@ -307,4 +309,27 @@ export async function readCsvExport(bucket: string, key: string): Promise<string
   const client = createS3Client();
   const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   return (await res.Body?.transformToString()) ?? "";
+}
+
+/** Uploads a file from disk without reading it into memory. */
+export async function putObjectFromFile(bucket: string, key: string, filePath: string, contentType: string): Promise<void> {
+  const { size } = await stat(filePath);
+  const body = createReadStream(filePath);
+  try {
+    await createS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentLength: size, ContentType: contentType }));
+  } finally {
+    body.destroy();
+  }
+}
+
+/** The stored object as a stream, or null when it is not there. */
+export async function getObjectStream(bucket: string, key: string): Promise<Readable | null> {
+  try {
+    const res = await createS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    return (res.Body as Readable | undefined) ?? null;
+  } catch (error) {
+    const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (e.name === "NoSuchKey" || e.$metadata?.httpStatusCode === 404) return null;
+    throw error;
+  }
 }

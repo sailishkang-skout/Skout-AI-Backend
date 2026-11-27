@@ -36,15 +36,17 @@ describe.skipIf(!hasDatabase)("early access customer routes", () => {
     await sql.end();
   });
 
-  it("an active workspace sees active, every feature on and no request", async () => {
+  it("an active workspace sees active, every general feature on, opt-in WORKBOOKS_V2 off and no request", async () => {
     const email = `ea-routes-active-${suffix}@test.com`;
     const res = await app.inject({ method: "GET", url: "/api/v1/access-request", headers: as(email) });
     expect(res.statusCode).toBe(200);
     const { data } = res.json();
     expect(data.status).toBe("active");
     expect(data.request).toBeNull();
-    expect(Object.values(data.features).every(Boolean)).toBe(true);
-    expect(Object.keys(data.features)).toHaveLength(12);
+    const { workbooks_v2, ...general } = data.features;
+    expect(Object.values(general).every(Boolean)).toBe(true);
+    expect(workbooks_v2).toBe(false);
+    expect(Object.keys(data.features)).toHaveLength(13);
   });
 
   it("a pending user can save and read back their answers", async () => {
