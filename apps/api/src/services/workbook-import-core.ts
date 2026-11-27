@@ -2,12 +2,15 @@ import { eq, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 
 /**
- * What every kind of workbook import (CSV, list, smart list, search) shares: its counts, how a chunk is recorded
+ * What every kind of workbook import (CSV, list, smart list, search, CRM) shares: its counts, how a chunk is recorded
  * exactly once, and how failures are described.
  */
 const { workbookImports } = schema;
 
-export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search"] as const;
+/** The CRMs a workbook can be imported from (WB2-023); each is its own source type. */
+export const CRM_IMPORT_SOURCES = ["hubspot", "salesforce", "pipedrive"] as const;
+export const IMPORT_SOURCE_TYPES = ["csv", "list", "smart_list", "search", ...CRM_IMPORT_SOURCES] as const;
+export const isCrmSource = (sourceType: string) => (CRM_IMPORT_SOURCES as readonly string[]).includes(sourceType);
 export type ImportSourceType = (typeof IMPORT_SOURCE_TYPES)[number];
 
 export interface ImportCounts {
@@ -32,6 +35,18 @@ export class ImportStopped extends Error {
   ) {
     super(message);
     this.name = "ImportStopped";
+  }
+}
+
+/** Something outside Skout was busy or out of reach: the same work can be tried again later. */
+export class RetryLater extends Error {
+  constructor(
+    readonly code: string,
+    /** Safe to show if the import is given up on now. */
+    readonly userMessage: string
+  ) {
+    super(`Try later (${code})`);
+    this.name = "RetryLater";
   }
 }
 

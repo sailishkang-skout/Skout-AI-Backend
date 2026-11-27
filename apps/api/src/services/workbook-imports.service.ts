@@ -9,10 +9,13 @@ import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, MAX_IMPORT_BYTES, inspectCsv, type CsvDelimiter, type CsvInspection } from "./workbook-import-csv.js";
 import { checkMapping, suggestMapping, type ColumnMapping, type DedupeChoice, type ExistingColumn, type HeaderSuggestion, type ImportPlan, type MatchKey, type PlannedColumn } from "./workbook-import-plan.js";
 import { UploadTooLarge, receiveUpload, uploadKey, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
-import { IMPORT_SOURCE_TYPES } from "./workbook-import-core.js";
+import { IMPORT_SOURCE_TYPES, RetryLater, isCrmSource } from "./workbook-import-core.js";
+import type { CrmAccess } from "./workbook-crm-access.js";
+import type { CrmImportPlan } from "./workbook-crm-runner.js";
+import type { CrmPlan } from "./workbook-crm.service.js";
 import type { ProspectPlan } from "./workbook-prospect-runner.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
-import { IMPORT_FAILED_MESSAGE, ImportFailure, UNFINISHED_STATUSES, countsOf, describeFailure, finishImport, housekeepImport, processImport, type ImportCounts, type ImportQueue } from "./workbook-import-runner.js";
+import { ImportFailure, UNFINISHED_STATUSES, countsOf, describeFailure, failedMessage, finishImport, housekeepImport, processImport, type ImportCounts, type ImportQueue } from "./workbook-import-runner.js";
 
 /**
  * CSV import for Workbooks V2 (WB2-020): upload and check a file, confirm how its columns map, follow progress and
@@ -46,10 +49,12 @@ interface StoredPreview {
 export interface ImportDto {
   id: string;
   workbookId: string;
-  /** csv, list, smart_list or search. */
+  /** csv, list, smart_list, search or a CRM. */
   sourceType: string;
-  /** The list or smart list rows came from. */
+  /** The list, smart list or CRM view rows came from. */
   sourceName: string | null;
+  /** For a CRM import, what is being read. */
+  crm: { provider: string; object: "contact" | "company" } | null;
   /** Set when a smart list matched more than the workbook can hold, so only the first were considered. */
   truncated: { matched: number; considered: number } | null;
   status: string;
@@ -73,21 +78,25 @@ export interface ImportDto {
 
 export function toImportDto(record: ImportRecord, opts: { preview?: boolean } = {}): ImportDto {
   const counts = countsOf(record.counts);
-  const plan = record.sourceType === "csv" ? (record.plan as unknown as ImportPlan | null) : null;
-  const addition = record.sourceType === "csv" ? null : (record.plan as unknown as ProspectPlan | null);
+  const crm = isCrmSource(record.sourceType) ? ((record.plan as unknown as { crm?: CrmPlan } | null)?.crm ?? null) : null;
+  // Only imports with columns to map have a mapping: files, and CRM selections once confirmed.
+  const mapped = record.sourceType === "csv" || (crm !== null && record.confirmedAt !== null);
+  const plan = mapped ? (record.plan as unknown as ImportPlan | null) : null;
+  const addition = record.sourceType === "csv" || isCrmSource(record.sourceType) ? null : (record.plan as unknown as ProspectPlan | null);
   const progress = record.status === "completed" ? 100 : counts.total ? Math.floor((counts.processed * 100) / counts.total) : 0;
   return {
     id: record.id,
     workbookId: record.workbookId,
     sourceType: record.sourceType,
-    sourceName: addition?.source.name ?? null,
-    truncated: addition?.truncated ?? null,
+    sourceName: addition?.source.name ?? crm?.viewName ?? null,
+    crm: crm ? { provider: crm.provider, object: crm.object } : null,
+    truncated: addition?.truncated ?? crm?.truncated ?? null,
     status: record.status,
     fileName: record.fileName ?? "",
     fileBytes: record.fileBytes ?? 0,
     counts,
     progress,
-    background: addition ? addition.background : counts.total > SYNC_ROW_LIMIT,
+    background: addition ? addition.background : (crm?.background ?? counts.total > SYNC_ROW_LIMIT),
     error: record.error,
     report: { available: record.errorReportFile !== null, rows: counts.duplicates + counts.skipped + counts.failed },
     preview: opts.preview && record.status === "awaiting_confirmation" ? (record.preview as unknown as StoredPreview | null) : null,
@@ -156,7 +165,7 @@ export async function assertRoomForAnotherImport(db: Db, workspaceId: string): P
 /** Runs a confirmed import now, or queues it when it is large. */
 export async function startImport(
   db: Db,
-  deps: { storage: ImportStorage; queue: ImportQueue; directory?: ProspectDirectory },
+  deps: { storage: ImportStorage; queue: ImportQueue; directory?: ProspectDirectory; crm?: CrmAccess },
   job: { importId: string; workspaceId: string },
   background: boolean
 ): Promise<void> {
@@ -167,10 +176,17 @@ export async function startImport(
     return;
   }
   try {
-    await processImport(db, deps.storage, importId, deps.directory);
+    await processImport(db, deps.storage, importId, deps.directory, deps.crm);
   } catch (error) {
+    if (error instanceof RetryLater) {
+      // Carry on in the background, where there is time to wait.
+      if (await deps.queue.ready()) return startImport(db, deps, job, true);
+      await finishImport(db, deps.storage, importId, { status: "failed", code: error.code, message: error.userMessage });
+      return;
+    }
     log.error("import failed", undefined, { importId, failure: describeFailure(error) });
-    await finishImport(db, deps.storage, importId, { status: "failed", code: "IMPORT_FAILED", message: IMPORT_FAILED_MESSAGE });
+    const [record] = await db.select({ sourceType: workbookImports.sourceType }).from(workbookImports).where(eq(workbookImports.id, importId)).limit(1);
+    await finishImport(db, deps.storage, importId, { status: "failed", code: "IMPORT_FAILED", message: failedMessage(record?.sourceType ?? "csv") });
   }
 }
 
@@ -288,15 +304,20 @@ export interface ImportChoice {
  */
 export async function confirmImport(
   db: Db,
-  deps: { storage: ImportStorage; queue: ImportQueue },
+  deps: { storage: ImportStorage; queue: ImportQueue; crm?: CrmAccess },
   actor: WorkbookActor,
   workbookId: string,
   importId: string,
-  choice: ImportChoice
+  choice: ImportChoice,
+  /** Runs before a CRM import starts: that the workspace may still read that CRM. */
+  checkCrm?: (plan: CrmPlan) => Promise<void>
 ): Promise<{ background: boolean; data: ImportDto }> {
   const waiting = await requireImport(db, actor.workspaceId, workbookId, importId);
   if (waiting.status !== "awaiting_confirmation") throw stateConflict(waiting.status);
-  const background = countsOf(waiting.counts).total > SYNC_ROW_LIMIT;
+  const crm = isCrmSource(waiting.sourceType) ? (waiting.plan as unknown as { crm: CrmPlan }).crm : null;
+  if (crm) await checkCrm?.(crm);
+  // A selection the CRM would not count could be any size.
+  const background = (crm !== null && crm.matched === null) || countsOf(waiting.counts).total > SYNC_ROW_LIMIT;
   // Checked before anything changes, so an import is not left half-started.
   if (background && !(await deps.queue.ready())) {
     throw new WorkbookV2Error("IMPORT_UNAVAILABLE", 503, `Imports of more than ${SYNC_ROW_LIMIT.toLocaleString("en-US")} rows run in the background, which is unavailable right now. Try again shortly.`);
@@ -318,6 +339,16 @@ export async function confirmImport(
     const headers = preview.headers.map((h) => h.name);
     const columns = await columnsOf(tx, workbookId);
     const { problems, keyHeader } = checkMapping(headers, columns, choice.columns, choice.dedupe, MAX_COLUMNS);
+    if (crm && !problems.length) {
+      // A CRM field goes only into a column that can hold it.
+      choice.columns.forEach((mapping, i) => {
+        const dataType = mapping.columnId === undefined ? mapping.newColumn!.dataType : columns.find((c) => c.id === mapping.columnId!.toLowerCase())!.dataType;
+        const header = preview.headers[mapping.header]!;
+        if (!header.fits.includes(dataType)) {
+          problems.push({ path: `columns.${i}`, code: "INCOMPATIBLE_FIELD", message: `“${header.name}” can't be imported into a ${dataType.replace("_", " ")} column. Choose a text column or one that matches the field.` });
+        }
+      });
+    }
     if (problems.length) throw new WorkbookV2Error("INVALID_IMPORT_MAPPING", 422, problems[0]!.message, { errors: problems });
 
     const planned: PlannedColumn[] = [];
@@ -342,9 +373,10 @@ export async function confirmImport(
           : { key: choice.dedupe.key as MatchKey, header: keyHeader!, columnId: planned.find((c) => c.header === keyHeader)!.columnId },
       requestId: actor.requestId ?? null,
     };
+    const confirmed: ImportPlan | CrmImportPlan = crm ? { ...plan, crm: { ...crm, background } } : plan;
     await tx
       .update(workbookImports)
-      .set({ status: "queued", plan: plan as unknown as Record<string, unknown>, preview: null, createdBy: actor.userId, confirmedAt: sql`now()`, updatedAt: sql`now()` })
+      .set({ status: "queued", plan: confirmed as unknown as Record<string, unknown>, preview: null, createdBy: actor.userId, confirmedAt: sql`now()`, updatedAt: sql`now()` })
       .where(eq(workbookImports.id, importId));
   }));
 

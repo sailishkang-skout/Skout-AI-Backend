@@ -49,6 +49,10 @@ const ROUTES: Record<string, Access> = {
   "POST /workbooks-v2/:id/rows": "edit",
   "POST /workbooks-v2/:id/rows/bulk": "edit",
   "POST /workbooks-v2/:id/paste": "edit",
+  // Reading the CRM is part of importing from it.
+  "GET /workbooks-v2/:id/crm-sources": "edit",
+  "GET /workbooks-v2/:id/crm-sources/:provider/:object": "edit",
+  "POST /workbooks-v2/:id/crm-imports": "edit",
   "PATCH /workbooks-v2/:id/rows/:rowId": "edit",
   "DELETE /workbooks-v2/:id/rows/:rowId": "edit",
   "POST /workbooks-v2/:id/rows/delete": "edit",
@@ -480,6 +484,10 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
         ["POST /workbooks-v2/:id/rows", "POST", `/${b.id}/rows`, { cells: { [b.input]: "new" } }],
         ["POST /workbooks-v2/:id/rows/bulk", "POST", `/${b.id}/rows/bulk`, { rows: [{}] }],
         ["POST /workbooks-v2/:id/paste", "POST", `/${b.id}/paste`, { columnIds: [b.input], values: [["pasted"]] }],
+        ["GET /workbooks-v2/:id/crm-sources", "GET", `/${b.id}/crm-sources`],
+        // HubSpot isn't connected here, so an allowed caller is told that rather than reaching HubSpot.
+        ["GET /workbooks-v2/:id/crm-sources/:provider/:object", "GET", `/${b.id}/crm-sources/hubspot/contact`],
+        ["POST /workbooks-v2/:id/crm-imports", "POST", `/${b.id}/crm-imports`, { provider: "hubspot", object: "contact", fields: ["email"] }],
         ["PATCH /workbooks-v2/:id/rows/:rowId", "PATCH", `/${b.id}/rows/${b.rows[0]}`, { cells: { [b.input]: "edited" } }],
         ["DELETE /workbooks-v2/:id/rows/:rowId", "DELETE", `/${b.id}/rows/${b.rows[1]}`],
         ["POST /workbooks-v2/:id/rows/delete", "POST", `/${b.id}/rows/delete`, { rowIds: [b.rows[0]] }],
@@ -505,7 +513,10 @@ describe.skipIf(!hasDatabase)("Workbooks V2 permissions", () => {
     }
 
     const expected = (outcome: Record<Access, number | "ok">) => Object.fromEntries(Object.entries(ROUTES).map(([route, access]) => [route, outcome[access]]));
-    const simplify = (results: Record<string, number>) => Object.fromEntries(Object.entries(results).map(([route, status]) => [route, status < 300 ? "ok" : status]));
+    /** No CRM is connected here: being told so (409) means the caller was let through. */
+    const NEEDS_CRM = new Set(["GET /workbooks-v2/:id/crm-sources/:provider/:object", "POST /workbooks-v2/:id/crm-imports"]);
+    const simplify = (results: Record<string, number>) =>
+      Object.fromEntries(Object.entries(results).map(([route, status]) => [route, status < 300 || (status === 409 && NEEDS_CRM.has(route)) ? "ok" : status]));
 
     it("sends one request to every route", async () => {
       const owner = await user();

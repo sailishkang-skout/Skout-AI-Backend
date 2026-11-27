@@ -202,6 +202,7 @@ export class CrmService {
         clientId: this.config.HUBSPOT_CLIENT_ID!,
         redirectUri: this.redirectUri,
         state,
+        companyScopes: this.config.HUBSPOT_COMPANY_SCOPES === "true",
       }),
     };
   }

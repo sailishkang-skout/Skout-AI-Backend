@@ -9,6 +9,9 @@ import { DEDUPE_KEYS } from "../services/workbook-import-plan.js";
 import { importStorage } from "../services/workbook-import-storage.js";
 import { cancelImport, confirmImport, createImport, getImport, listImports, openImportReport } from "../services/workbook-imports.service.js";
 import { workbookImportQueue } from "../workers/workbook-import.queue.js";
+import { crmAccess } from "../services/workbook-crm-access.js";
+import { assertSameCrmAccount } from "../services/workbook-crm.service.js";
+import { assertCrmFeature } from "./workbook-v2-crm.routes.js";
 import { workbookRouteHelpers } from "./workbook-v2.common.js";
 
 const uuid = z.string().uuid();
@@ -110,7 +113,11 @@ export async function workbookV2ImportRoutes(app: FastifyInstance) {
       const { db, actor } = await authorize(request, "enrichment:capture");
       const { id, importId } = importParams.parse(request.params);
       const choice = confirmBody.parse(request.body ?? {});
-      const { background, data } = await confirmImport(db, { storage: storage(), queue: workbookImportQueue(app.config) }, actor, id, importId, choice);
+      const crm = crmAccess(db, app.config);
+      const { background, data } = await confirmImport(db, { storage: storage(), queue: workbookImportQueue(app.config), crm }, actor, id, importId, choice, async (plan) => {
+        await assertCrmFeature(db, actor.workspaceId);
+        await assertSameCrmAccount(crm, actor.workspaceId, plan);
+      });
       return { status: background ? 202 : 200, body: { data } };
     })
   );

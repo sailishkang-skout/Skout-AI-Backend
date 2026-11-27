@@ -1,12 +1,15 @@
 import { open } from "node:fs/promises";
-import { and, asc, count, eq, gt, inArray, isNotNull, lt, lte, max, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNotNull, lt, max, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import { createLogger } from "@skout/observability";
 import { WorkbookV2Error, getWorkspaceRowLimit, lockLiveWorkbook } from "./workbook-v2.service.js";
 import { inputDataType } from "./workbook-cell-values.js";
 import { CsvFileError, csvLine, csvRecords, type CsvRecord } from "./workbook-import-csv.js";
-import { classifyRow, dedupeValue, duplicateReason, type ClassifiedRow, type ImportPlan, type MatchKey } from "./workbook-import-plan.js";
-import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, Superseded, countsOf, describeFailure, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
+import { classifyRow, duplicateReason, type ClassifiedRow, type ImportPlan, type MatchKey } from "./workbook-import-plan.js";
+import { KeyIndex } from "./workbook-import-keys.js";
+import { importFromCrm, type CrmImportPlan } from "./workbook-crm-runner.js";
+import type { CrmAccess } from "./workbook-crm-access.js";
+import { IMPORT_SOURCE_TYPES, ImportFailure, ImportStopped, RetryLater, Superseded, countsOf, describeFailure, isCrmSource, lockImport, recordChunk, type Issue } from "./workbook-import-core.js";
 import { addProspects } from "./workbook-prospect-runner.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
 import { removeStaleTempFiles, reportKey, saveStream, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
@@ -20,7 +23,7 @@ import { recordWorkbookActivity } from "./workbook-activity-log.js";
  * the file again and starts after `processed`: nothing is imported twice. The workbook is locked only for the length
  * of a chunk, so people can keep working in it.
  */
-const { workbooks, workbookColumns, workbookRows, workbookCells, workbookImports, workbookImportIssues, workbookImportItems } = schema;
+const { workbooks, workbookColumns, workbookRows, workbookImports, workbookImportIssues, workbookImportItems } = schema;
 const log = createLogger("workbook-import");
 
 export { ImportFailure, countsOf, describeFailure, type ImportCounts } from "./workbook-import-core.js";
@@ -29,7 +32,6 @@ export const CHUNK_ROWS = 1_000;
 /** Wide files use smaller chunks, so a chunk stays a short transaction. */
 const CHUNK_CELLS = 20_000;
 const MIN_CHUNK_ROWS = 100;
-const KEY_PAGE = 20_000;
 const REPORT_PAGE = 2_000;
 
 export const UNFINISHED_STATUSES = ["awaiting_confirmation", "queued", "processing"] as const;
@@ -42,6 +44,9 @@ const STALE_TEMP_AFTER_MS = 2 * 60 * 60 * 1000;
 
 export const IMPORT_FAILED_MESSAGE =
   "The import stopped because of a problem on our side. Rows already imported are in the workbook. To add the rest, upload the file again and choose a deduplication key so rows are not added twice.";
+const CRM_FAILED_MESSAGE = "The import stopped before it finished. Rows already imported are in the workbook. Import the same selection again to add the rest; records already there are skipped.";
+/** What to say when an import ends because it could not be completed. */
+export const failedMessage = (sourceType: string) => (isCrmSource(sourceType) ? CRM_FAILED_MESSAGE : IMPORT_FAILED_MESSAGE);
 
 export interface ImportJob {
   importId: string;
@@ -64,42 +69,6 @@ async function loadImport(db: Db, importId: string) {
     .where(and(eq(workbookImports.id, importId), anyImport))
     .limit(1);
   return found ?? null;
-}
-
-/** The deduplication values already in the key column, brought up to date with rows added since the last look. */
-class KeyIndex {
-  private readonly values = new Set<string>();
-  private upToRowId = 0;
-
-  constructor(
-    private readonly workbookId: string,
-    private readonly columnId: string,
-    private readonly key: MatchKey
-  ) {}
-
-  has = (value: string) => this.values.has(value);
-  add = (value: string) => this.values.add(value);
-
-  async refresh(db: Db): Promise<void> {
-    const [latest] = await db.select({ id: max(workbookRows.id) }).from(workbookRows).where(eq(workbookRows.workbookId, this.workbookId));
-    const upTo = Number(latest?.id ?? 0);
-    let after = this.upToRowId;
-    while (after < upTo) {
-      const cells = await db
-        .select({ rowId: workbookCells.rowId, value: workbookCells.value })
-        .from(workbookCells)
-        .where(and(eq(workbookCells.workbookId, this.workbookId), eq(workbookCells.columnId, this.columnId), gt(workbookCells.rowId, after), lte(workbookCells.rowId, upTo)))
-        .orderBy(asc(workbookCells.rowId))
-        .limit(KEY_PAGE);
-      for (const cell of cells) {
-        const value = dedupeValue(this.key, String(cell.value ?? ""));
-        if (value !== null) this.values.add(value);
-      }
-      if (cells.length < KEY_PAGE) break;
-      after = cells[cells.length - 1]!.rowId;
-    }
-    this.upToRowId = Math.max(this.upToRowId, upTo);
-  }
 }
 
 interface Run {
@@ -202,24 +171,31 @@ async function claim(db: Db, importId: string) {
  * Works through a confirmed import and finishes it. Safe to call again at any point. Throws only for problems worth
  * retrying; anything else ends the import as failed.
  */
-export async function processImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory): Promise<void> {
+export async function processImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
   try {
-    await attemptImport(db, storage, importId, directory);
+    await attemptImport(db, storage, importId, directory, crm);
   } catch (error) {
+    // A CRM that is busy or out of reach is not a failure of the import.
+    if (error instanceof RetryLater) throw error;
     throw new ImportFailure(`Import ${importId} could not be processed`, error);
   }
 }
 
-async function attemptImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory): Promise<void> {
+async function attemptImport(db: Db, storage: ImportStorage, importId: string, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
   const found = await loadImport(db, importId);
   if (!found) return;
   if (FINISHED.has(found.record.status)) return housekeepImport(db, storage, importId);
   const record = await claim(db, importId);
   if (!record) return;
   if (record.sourceType !== "csv") {
-    if (!directory) throw new Error("adding prospects needs the prospect directory");
     try {
-      await addProspects(db, directory, found.workspaceId, record);
+      if (isCrmSource(record.sourceType)) {
+        if (!crm) throw new Error("a CRM import needs CRM access");
+        await importFromCrm(db, crm, found.workspaceId, record);
+      } else {
+        if (!directory) throw new Error("adding prospects needs the prospect directory");
+        await addProspects(db, directory, found.workspaceId, record);
+      }
     } catch (error) {
       if (error instanceof Superseded) return;
       if (error instanceof ImportStopped) return finishImport(db, storage, importId, { status: "failed", code: error.code, message: error.message });
@@ -271,12 +247,14 @@ async function attemptImport(db: Db, storage: ImportStorage, importId: string, d
 }
 
 /** One attempt by the background worker. After the last one the import is marked failed. */
-export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean, directory?: ProspectDirectory): Promise<void> {
+export async function runImportJob(db: Db, storage: ImportStorage, importId: string, lastAttempt: boolean, directory?: ProspectDirectory, crm?: CrmAccess): Promise<void> {
   try {
-    await processImport(db, storage, importId, directory);
+    await processImport(db, storage, importId, directory, crm);
   } catch (error) {
-    if (lastAttempt) {
-      await finishImport(db, storage, importId, { status: "failed", code: "IMPORT_FAILED", message: IMPORT_FAILED_MESSAGE }).catch((failure) =>
+    // A busy CRM is left for the sweep to try again later; it gives up only after hours.
+    if (lastAttempt && !(error instanceof RetryLater)) {
+      const sourceType = (await loadImport(db, importId).catch(() => null))?.record.sourceType ?? "csv";
+      await finishImport(db, storage, importId, { status: "failed", code: "IMPORT_FAILED", message: failedMessage(sourceType) }).catch((failure) =>
         // The sweep ends it later.
         log.error("could not mark an import failed", undefined, { importId, failure: describeFailure(failure) })
       );
@@ -287,6 +265,11 @@ export async function runImportJob(db: Db, storage: ImportStorage, importId: str
 
 /** What the report's first column counts. */
 const positionLabel = (sourceType: string) => (sourceType === "csv" ? "Line in file" : "Position in selection");
+/** The report's other columns: those of the file or selection, after the record's id for a CRM. */
+function reportHeaders(record: { sourceType: string; plan: unknown }): string[] {
+  const headers = (record.plan as ImportPlan | null)?.headers ?? [];
+  return isCrmSource(record.sourceType) ? ["CRM record ID", ...headers] : headers;
+}
 
 const RESULT_LABEL: Record<Issue["kind"], string> = {
   duplicate: "Duplicate",
@@ -340,7 +323,7 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
   const found = await loadImport(db, importId);
   if (!found) return;
   if (!FINISHED.has(found.record.status)) {
-    const headers = (found.record.plan as unknown as ImportPlan | null)?.headers ?? [];
+    const headers = reportHeaders(found.record);
     const reportedUpTo = countsOf(found.record.counts).processed;
     let reported = false;
     try {
@@ -373,9 +356,10 @@ export async function finishImport(db: Db, storage: ImportStorage, importId: str
       if (added > 0) {
         const [workbook] = await tx.select({ rowCount: workbooks.rowCount }).from(workbooks).where(eq(workbooks.id, record.workbookId));
         const requestId = (record.plan as unknown as ImportPlan | null)?.requestId ?? undefined;
+        const from = isCrmSource(record.sourceType) ? (record.plan as unknown as CrmImportPlan).crm : null;
         await recordWorkbookActivity(tx, { workspaceId: found.workspaceId, userId: record.createdBy, requestId }, record.workbookId, {
           action: "workbook.rows.added",
-          after: { source: record.sourceType, rows: added, rowCount: workbook?.rowCount ?? added },
+          after: { source: record.sourceType, rows: added, rowCount: workbook?.rowCount ?? added, ...(from ? { object: from.object, ...(from.viewName ? { viewName: from.viewName } : {}) } : {}) },
           channel: "worker",
         });
       }
@@ -392,7 +376,7 @@ export async function housekeepImport(db: Db, storage: ImportStorage, importId: 
   const found = await loadImport(db, importId);
   if (!found || !FINISHED.has(found.record.status)) return;
   try {
-    const headers = (found.record.plan as unknown as ImportPlan | null)?.headers ?? [];
+    const headers = reportHeaders(found.record);
     if (await writeReport(db, storage, found.workspaceId, importId, headers, positionLabel(found.record.sourceType))) {
       await db.delete(workbookImportIssues).where(eq(workbookImportIssues.importId, importId));
     }
@@ -425,7 +409,7 @@ export async function sweepImports(db: Db, storage: ImportStorage, queue: Import
     .update(workbookImports)
     .set({
       status: "cancelled",
-      error: { code: "EXPIRED", message: "The import was not confirmed within 24 hours, so the file was removed. Upload it again." },
+      error: { code: "EXPIRED", message: "The import was not confirmed within 24 hours, so what was read for it was removed. Start it again." },
       preview: null,
       finishedAt: sql`now()`,
       updatedAt: sql`now()`,
@@ -434,7 +418,7 @@ export async function sweepImports(db: Db, storage: ImportStorage, queue: Import
     .returning({ id: workbookImports.id });
 
   const stalled = await db
-    .select({ id: workbookImports.id, confirmedAt: workbookImports.confirmedAt, workspaceId: workbooks.workspaceId })
+    .select({ id: workbookImports.id, sourceType: workbookImports.sourceType, confirmedAt: workbookImports.confirmedAt, workspaceId: workbooks.workspaceId })
     .from(workbookImports)
     .innerJoin(workbooks, eq(workbooks.id, workbookImports.workbookId))
     .where(and(anyImport, inArray(workbookImports.status, ["queued", "processing"]), lt(workbookImports.updatedAt, before(REQUEUE_AFTER_MS))));
@@ -443,7 +427,7 @@ export async function sweepImports(db: Db, storage: ImportStorage, queue: Import
   for (const item of stalled) {
     try {
       if (item.confirmedAt && item.confirmedAt < before(GIVE_UP_AFTER_MS)) {
-        await finishImport(db, storage, item.id, { status: "failed", code: "IMPORT_STALLED", message: IMPORT_FAILED_MESSAGE });
+        await finishImport(db, storage, item.id, { status: "failed", code: "IMPORT_STALLED", message: failedMessage(item.sourceType) });
         gaveUp += 1;
       } else {
         await queue.enqueue({ importId: item.id, workspaceId: item.workspaceId });

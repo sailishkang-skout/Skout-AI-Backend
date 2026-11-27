@@ -139,6 +139,10 @@ export const workbookRows = pgTable(
     index("workbook_rows_workbook_position_idx").on(t.workbookId, t.position),
     // A prospect is in a workbook once (WB2-021).
     uniqueIndex("workbook_rows_workbook_prospect_key").on(t.workbookId, t.prospectId).where(sql`${t.prospectId} IS NOT NULL`),
+    // A CRM record is in a workbook once (WB2-023).
+    uniqueIndex("workbook_rows_workbook_crm_ref_key")
+      .on(t.workbookId, sql`(${t.crmRef} ->> 'provider')`, sql`coalesce(${t.crmRef} ->> 'accountId', '')`, sql`(${t.crmRef} ->> 'object')`, sql`(${t.crmRef} ->> 'id')`)
+      .where(sql`(${t.crmRef} ->> 'object') IS NOT NULL`),
   ]
 );
 

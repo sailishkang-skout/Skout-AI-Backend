@@ -304,6 +304,11 @@ const envSchema = z
     COGNISM_BASE_URL: z.string().default("https://app.cognism.com/api"),
     HUBSPOT_CLIENT_ID: z.string().optional(),
     HUBSPOT_CLIENT_SECRET: z.string().optional(),
+    /**
+     * "true" asks HubSpot for permission to read companies when someone connects (WB2-023). Set it only after the
+     * HubSpot app lists crm.objects.companies.read and crm.schemas.companies.read as optional scopes.
+     */
+    HUBSPOT_COMPANY_SCOPES: z.enum(["true", "false"]).optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     /** AUTH-ADI-09 / AUTH-BE-16 — dedicated Google OAuth credentials for login */

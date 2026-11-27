@@ -66,7 +66,8 @@ export interface MappingProblem {
     | "COLUMN_LIMIT_EXCEEDED"
     | "DEDUPE_COLUMN_REQUIRED"
     | "DEDUPE_COLUMN_AMBIGUOUS"
-    | "DEDUPE_COLUMN_INVALID";
+    | "DEDUPE_COLUMN_INVALID"
+    | "INCOMPATIBLE_FIELD";
   message: string;
 }
 

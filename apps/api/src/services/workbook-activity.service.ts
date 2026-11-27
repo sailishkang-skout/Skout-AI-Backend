@@ -270,7 +270,7 @@ const RUN = ["runId", ...COLUMN];
 function detailsOf(action: WorkbookAction, before: Stored, after: Stored, charged: ReadonlyMap<string, number>): Record<string, unknown> {
   switch (action) {
     case "workbook.rows.added":
-      return pick(after, ["source", "rows", "rowCount", "copiedFromWorkbookId"]);
+      return pick(after, ["source", "rows", "rowCount", "copiedFromWorkbookId", "object", "viewName"]);
     case "workbook.rows.delete":
       return { rows: after.deleted, rowCount: after.rowCount };
     case "workbook.column.added":

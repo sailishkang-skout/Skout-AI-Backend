@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022), CRM import (WB2-023)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -366,4 +366,79 @@ The answer:
 ```
 
 `row` counts from the top of the block, from 0; each list holds the first 100.
+
+## CRM import
+
+Contacts and companies from the workspace's own CRM connection. **Only HubSpot can be imported from**: Salesforce and
+Pipedrive have no connector in Skout, and are reported as `not_available`.
+
+| Method and path (`/api/v1/workbooks-v2`) | Permission |
+| --- | --- |
+| `GET /:id/crm-sources` | `enrichment:capture` |
+| `GET /:id/crm-sources/:provider/:object` (`contact` or `company`) | `enrichment:capture` |
+| `POST /:id/crm-imports` (accepts `Idempotency-Key`) | `enrichment:capture` |
+
+All three also need the workspace's CRM feature. The connection is always the session workspace's own; no request names
+one, and no response carries a token.
+
+1. `crm-sources` lists each CRM with `status`: `connected`, `needs_reauth`, `not_connected`, `not_configured` (no
+   HubSpot app on this server) or `not_available`, and the objects it offers. Connecting is the existing flow
+   (`POST /crm/hubspot/connect`).
+2. `crm-sources/:provider/:object` answers the fields (`name`, `label`, `type`, `operators`), `defaultFields`, the
+   saved selections (`views`: for HubSpot, its lists; `available: false` with a `reason` when they can't be read) and
+   `filters.max`. HubSpot's saved views have no API, so they are not offered.
+3. `crm-imports` reads the first 20 records and returns an import `awaiting_confirmation` with the same `preview` as a
+   CSV upload. Nothing is added yet.
+
+```json
+{ "provider": "hubspot", "object": "contact", "fields": ["firstname", "email"],
+  "filters": [{ "field": "lifecyclestage", "operator": "equals", "value": "lead" }] }
+```
+
+Send 1 to 50 `fields`, and either `viewId` or `filters` (all must match; at most 5), or neither for every record.
+Operators: `equals`, `not_equals`, `contains`, `not_contains`, `greater_than`, `at_least`, `less_than`, `at_most`,
+`has_value`, `is_empty`, limited per field type. A date given for a date-and-time field covers the whole day (UTC).
+
+4. Confirm, follow, cancel and download the report with the import routes above (`/imports/:importId…`). The mapping and
+   deduplication key work as for CSV. A field may only go into a column type listed in its header's `fits`
+   (`422 INVALID_IMPORT_MAPPING` with `INCOMPATIBLE_FIELD`).
+
+An import's `sourceType` is the provider, `crm` is `{ provider, object }` and `sourceName` the list's name. More than
+1,000 records, or a count the CRM won't give, run in the background.
+
+### What is stored
+
+Each row has `source` `{ type: "hubspot", object, importId, importedAt, viewId?, viewName?, filtered? }` and
+
+```json
+{ "crmRef": { "provider": "hubspot", "object": "contact", "id": "1001", "accountId": "1234567" } }
+```
+
+`accountId` is the HubSpot portal. A write-back must check it against the connected portal before using `id`, which
+means nothing in another account. A workbook holds each `(provider, accountId, object, id)` once (unique index), so
+importing again adds only new records. Records are not updated by a later import.
+
+### Processing
+
+Records are read 100 at a time and added in chunks of 500, each chunk saving where to read next. Rows already added stay
+when an import stops. A rate limit or an unreachable CRM is retried later (a small import moves to the background); the
+sweep gives up after six hours. When the workbook fills up, the import completes, lists what did not fit in the chunk it
+reached, sets `truncated` and reads no further. Nothing runs on new rows, and nothing is written to the CRM.
+
+| Code | Meaning |
+| --- | --- |
+| `CRM_NOT_AVAILABLE` (422, or 403 without the CRM feature) | No connector, or CRM not in the plan |
+| `CRM_NOT_CONNECTED`, `CRM_RECONNECT_REQUIRED`, `CRM_SCOPE_MISSING` (409) | Connect, reconnect, or grant access |
+| `CRM_ACCOUNT_CHANGED` (409) | A different account is connected than the preview read |
+| `CRM_UNKNOWN_FIELD`, `CRM_UNKNOWN_VIEW`, `CRM_INVALID_FILTER`, `CRM_QUERY_REJECTED` (422) | The selection can't be used |
+| `CRM_RATE_LIMITED` (429), `CRM_UNAVAILABLE` (502) | Try again later |
+| `NOTHING_TO_ADD` (422) | The selection is empty |
+
+An import that fails after confirmation carries the same codes, plus `CRM_VIEW_NOT_FOUND`, in `error`.
+
+### Before using it
+
+Companies need two more HubSpot permissions. Add `crm.objects.companies.read` and `crm.schemas.companies.read` to the
+HubSpot app as **optional** scopes, then set `HUBSPOT_COMPANY_SCOPES=true`, then reconnect. Setting the variable before
+the app lists the scopes can stop people connecting HubSpot at all.
 

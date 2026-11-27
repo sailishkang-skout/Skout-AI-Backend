@@ -207,6 +207,12 @@ function notFoundCases(): Case[] {
   on(paste, "paste into their workbook with my column", (m, t) => pasteOver(t.workbook, m.input, m.row1, m.row2));
   on(paste, "replay their keyed paste", (_, t) => pasteRequest(t));
 
+  const crmImport = (workbook: string): Req => ({ method: "POST", path: `/${workbook}/crm-imports`, body: { provider: "hubspot", object: "contact", fields: ["email"] } });
+  on("GET /workbooks-v2/:id/crm-sources", "list CRMs through their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/crm-sources` }));
+  // These tenants' connections hold no usable token, so an owner is asked to reconnect (409) and no CRM is called.
+  on("GET /workbooks-v2/:id/crm-sources/:provider/:object", "read a CRM through their workbook", (_, t) => ({ method: "GET", path: `/${t.workbook}/crm-sources/hubspot/contact` }), 409);
+  on("POST /workbooks-v2/:id/crm-imports", "import from a CRM into their workbook", (_, t) => crmImport(t.workbook), 409);
+
   const editRow = "PATCH /workbooks-v2/:id/rows/:rowId";
   on(editRow, "edit their cell", (_, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${t.row1}`, body: { cells: { [t.input]: "overwritten" } } }));
   on(editRow, "edit my row inside their workbook", (m, t) => ({ method: "PATCH", path: `/${t.workbook}/rows/${m.row1}`, body: { cells: { [m.input]: "x" } } }));

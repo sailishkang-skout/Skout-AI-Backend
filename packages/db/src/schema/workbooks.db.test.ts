@@ -132,7 +132,8 @@ maybe("Workbooks V2 schema (Postgres)", () => {
             from pg_index i join pg_class c on c.oid = i.indexrelid where i.indrelid = ${name}::regclass and not i.indisprimary`;
           const fromDb = idx.map((r) => `${r.name}(${r.cols})${r.partial ? " partial" : ""}`).sort();
           const fromDrizzle = [
-            ...config.indexes.map((x) => `${x.config.name}(${x.config.columns.map((c) => (c as { name: string }).name).join(",")})${x.config.where ? " partial" : ""}`),
+            // Expression keys have no column name on either side; the columns beside them are compared.
+            ...config.indexes.map((x) => `${x.config.name}(${x.config.columns.flatMap((c) => (c as { name?: string }).name ?? []).join(",")})${x.config.where ? " partial" : ""}`),
             ...config.uniqueConstraints.map((u) => `${u.name}(${u.columns.map((c) => c.name).join(",")})`),
           ].sort();
           expect(fromDb).toEqual(fromDrizzle);
@@ -244,6 +245,25 @@ maybe("Workbooks V2 schema (Postgres)", () => {
 
     it("a workbook must belong to an existing workspace", async () => {
       expect(await failsWith(() => db.insert(workbooks).values({ workspaceId: "00000000-0000-4000-8000-00000000dead", name: "orphan" }))).toBe("23503");
+    });
+
+    it("a CRM record is in a workbook once, per provider, account and object (WB2-023)", async () => {
+      const ref = { provider: "hubspot", object: "contact", id: "1", accountId: "100" };
+      const add = (workbookId: string, crmRef: Record<string, string>) => () => db.insert(workbookRows).values({ workbookId, position: 500, crmRef });
+      expect(await failsWith(add(a.wb.id, ref))).toBe("no error");
+      expect(await failsWith(add(a.wb.id, ref))).toBe("23505");
+      for (const other of [{ ...ref, id: "2" }, { ...ref, object: "company" }, { ...ref, accountId: "200" }, { ...ref, provider: "salesforce" }]) {
+        expect(await failsWith(add(a.wb.id, other))).toBe("no error");
+      }
+      expect(await failsWith(add(b.wb.id, ref))).toBe("no error");
+      // A reference with no account is still one record.
+      const bare = { provider: "hubspot", object: "contact", id: "9" };
+      expect(await failsWith(add(a.wb.id, bare))).toBe("no error");
+      expect(await failsWith(add(a.wb.id, bare))).toBe("23505");
+      // The shorter reference the Rows API accepts names no object, so it is not constrained.
+      const short = { provider: "hubspot", id: "1" };
+      expect(await failsWith(add(a.wb.id, short))).toBe("no error");
+      expect(await failsWith(add(a.wb.id, short))).toBe("no error");
     });
 
     it("row ids come from the database and are unique across workbooks", async () => {
