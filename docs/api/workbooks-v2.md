@@ -1,4 +1,4 @@
-# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022), CRM import (WB2-023) — inbound webhook (WB2-026)
+# Workbooks V2 API: workbooks (WB2-011), rows (WB2-012), columns (WB2-013), permissions (WB2-014), activity (WB2-016), CSV import (WB2-020) and rows from Skout prospects (WB2-021), paste and type (WB2-022), CRM import (WB2-023) — inbound webhook (WB2-026), suppression (WB2-027)
 
 Base path `/api/v1/workbooks-v2`.
 
@@ -718,4 +718,61 @@ values. Row codes: `NOT_AN_OBJECT`, `INVALID_VALUE`, `REPEATED_FIELD`, `AMBIGUOU
   `request_accepted` (counts), `request_rejected` (the code, for an authenticated request refused as a whole) and
   `rate_limited` (at most once a minute). Requests with a bad token are not audited.
 - No token, token hash or received value is logged or audited.
+
+## Suppression
+
+Suppressed and opted-out people are imported like anyone else, and their row is marked `suppressed: true` (WB2-027,
+PRD ROW-11 and SEC-8). Nothing that runs a column may act on such a row. The API gives the mark only, never why.
+
+### Who counts
+
+Decided by the contact gate (`findOptedOut` in `cops-can-contact.ts`), from existing records of the workspace:
+
+- an address on the suppression list;
+- an email address or phone number marked do-not-contact on a CRM contact;
+- email consent revoked, with no other active consent for the same subject.
+
+A bounced address does not count. A row is matched on its linked prospect and on the email addresses, LinkedIn
+profile URLs and (in phone columns) phone numbers in its **input and enrichment** cells. Addresses ignore case and
+surrounding spaces and must be the whole value; phone numbers are compared by their digits, with no country-code
+conversion. A prospect, address or LinkedIn profile is followed to the CRM contact that holds it; a phone number is
+only matched itself. A company, a name or a domain matches nobody.
+
+### When the mark is set
+
+Whenever a row is added or its values change: typing, the rows API, paste, CSV, lists, smart lists, Search, CRM,
+Apollo, Google Sheets and webhooks. A copy of a workbook keeps the marks. **An opt-out recorded later does not
+re-mark existing rows by itself**; the mark is brought up to date when the row is edited or a run checks it.
+
+### For whoever builds the run engine (WB2-050)
+
+No column runs yet; the run routes answer `501`. Every run scope, retry, resumed job and action must use
+`workbook-v2-runs.service.ts`:
+
+1. `rowsThatMayRun(db, workspaceId, workbookId, columnId, rowIds)` for a chunk **before reserving credits or AI
+   actions**. Count the `suppressed` rows as skipped.
+2. `runForRow(…, rowId, execute)` around **each** external operation. It reads the records again and calls `execute`
+   only for a row that is still there and not suppressed.
+
+Both record `state: "skipped"`, `errorCode: "suppressed"` on the row's cell in that column, unless the cell holds a
+value, which is left as it is.
+
+### Erasure
+
+Two existing flows now remove the person from every workbook of the workspace, deleted workbooks included:
+
+| Flow | Matches by |
+|---|---|
+| `PATCH /api/v1/dsar/:id` to `completed`, for an `erasure` request (owner or admin) | The request's address and `subjectId`. Also adds the address to the suppression list, reason `dsar_erasure` |
+| `DELETE /api/v1/enrichment/people/:id` | That person |
+
+A row is removed when it is linked to one of the person's prospect ids, holds their LinkedIn profile URL, or holds one
+of their addresses in an email column (or in any column, if it has no other address in an email column). A row about
+someone else that only mentions the address elsewhere keeps everything but that cell. Phone numbers and names remove
+nothing. Skipped-row reports lose the person's lines, uploads still awaiting confirmation that hold them are cancelled,
+and queued additions skip their prospect id. The DSAR answer adds `erasure: { rowsRemoved, cellsCleared, workbooks,
+reportsCleaned, previewsCancelled }`; the audit log records the same counts as `workbook.person.erased`.
+
+Not removed: text that merely contains the address; audit logs; saved `Idempotency-Key` answers (24 hours); and rows
+that an import already confirmed and still running adds afterwards (they are marked suppressed).
 

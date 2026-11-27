@@ -973,4 +973,30 @@ describe.skipIf(!hasDatabase)("Workbooks V2 CSV import", () => {
       expect(importStorage({ ...config, NODE_ENV: "production", EXPORTS_BUCKET: "bucket" })).not.toBeNull();
     });
   });
+
+  // ── Suppression (WB2-027) ──────────────────────────────────────────────────
+
+  describe("suppression", () => {
+    it("imports a suppressed person from a CSV file and marks their row, in the request and in the background", async () => {
+      const u = await user();
+      await db.insert(schema.suppressions).values({ workspaceId: u.workspaceId, email: "gone@example.com", reason: "unsubscribed" });
+      for (const background of [false, true]) {
+        const b = await book(u);
+        const filler = Array.from({ length: background ? 1_200 : 0 }, (_, i) => `Filler ${i},f${i}@example.com`);
+        const imp = await uploaded(u, b.id, csv("Name,Email", ["Gone, GONE@Example.com ", "Stays,stays@example.com", "Nobody,", ...filler, "Again,gone@example.com"]));
+        const res = await confirm(u, b.id, imp.id, [{ header: 0, columnId: b.col.name }, { header: 1, columnId: b.col.email }]);
+        expect(res.statusCode, res.body).toBe(background ? 202 : 200);
+        if (background) await work(imp.id);
+        const rows = await stored(b);
+        expect(rows).toHaveLength(4 + filler.length);
+        expect(rows.filter((r) => r.suppressed).map((r) => r.values.name)).toEqual(["Gone", "Again"]);
+        // Everything else about the row is as for anyone.
+        expect(rows[0]!.source).toMatchObject({ type: "csv", importId: imp.id });
+        expect(rows[0]!.values.email).toBeTruthy();
+        const done = await status(u, b.id, imp.id);
+        expect(done.counts).toMatchObject({ imported: 4 + filler.length, skipped: 0 });
+        expect(JSON.stringify([done, await addedEvents(b)])).not.toMatch(/suppress|unsubscribed/i);
+      }
+    });
+  });
 });

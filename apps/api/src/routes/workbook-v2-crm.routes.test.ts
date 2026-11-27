@@ -1043,4 +1043,29 @@ describe.skipIf(!hasDatabase)("Workbooks V2 CRM import", () => {
       expect((await preview(u, b.id)).statusCode).toBe(403);
     });
   });
+
+  // ── Suppression (WB2-027) ──────────────────────────────────────────────────
+
+  describe("suppression", () => {
+    it("imports a suppressed CRM contact and marks the row", async () => {
+      const u = await user();
+      contacts(3, 7_001);
+      await db.insert(schema.suppressions).values({ workspaceId: u.workspaceId, email: "person7002@example.com" });
+      const b = await workbook(u);
+      const done = await imported(u, b.id);
+      expect(done.counts).toMatchObject({ imported: 3 });
+      const rows = await stored(b.id);
+      expect(rows.map((r) => [r.ref.id, r.suppressed])).toEqual([["7001", false], ["7002", true], ["7003", false]]);
+      expect(rows[1]!.source).toMatchObject({ type: "hubspot" });
+    });
+
+    it("does not mark a company because someone who works there, or its switchboard, opted out", async () => {
+      const u = await user();
+      companies(2, 8_001);
+      await db.insert(schema.suppressions).values({ workspaceId: u.workspaceId, email: "ceo@company8001.com" });
+      const b = await workbook(u);
+      await imported(u, b.id, { object: "company", fields: ["name", "domain"] });
+      expect((await stored(b.id)).map((r) => r.suppressed)).toEqual([false, false]);
+    });
+  });
 });

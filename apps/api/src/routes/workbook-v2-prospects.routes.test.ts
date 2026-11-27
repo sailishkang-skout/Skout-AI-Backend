@@ -830,4 +830,47 @@ describe.skipIf(!hasDatabase)("Workbooks V2 rows from Skout prospects", () => {
       expect(result.data.counts).toMatchObject({ imported: 1, skipped: 1 });
     });
   });
+
+  // ── Suppression (WB2-027) ──────────────────────────────────────────────────
+
+  describe("suppression", () => {
+    it("adds suppressed people from a list or smart list and marks them, whichever record shows who they are", async () => {
+      const u = await user();
+      const [byEmail, bySnapshot, byConsent, fine] = await people(u, 4, "supp");
+      await enriched(u, byEmail!.id, { email: "enriched-out@their.com", status: "valid" });
+      await enriched(u, fine!.id, { email: "enriched-in@their.com", status: "valid" });
+      const [held] = await db.select().from(prospectActivations).where(and(eq(prospectActivations.workspaceId, u.workspaceId), eq(prospectActivations.prospectId, bySnapshot!.id)));
+      await db.update(prospectActivations).set({ snapshot: { ...(held!.snapshot as object), email: "Snapshot-Out@their.com" } }).where(eq(prospectActivations.id, held!.id));
+      await db.insert(schema.suppressions).values([
+        { workspaceId: u.workspaceId, email: "enriched-out@their.com" },
+        { workspaceId: u.workspaceId, email: "snapshot-out@their.com" },
+      ]);
+      await db.insert(schema.consents).values({ workspaceId: u.workspaceId, subjectType: "prospect", subjectId: byConsent!.id, type: "email", basis: "test", revokedAt: new Date() });
+      const everyone = [byEmail!, bySnapshot!, byConsent!, fine!];
+      const sources = [
+        { type: "list", listId: await list(u, everyone.map((p) => p.id)) },
+        { type: "search" },
+      ];
+      for (const source of sources) {
+        const b = await workbook(u);
+        const done = await added(u, b.id, source, { prospectIds: everyone.map((p) => p.id) });
+        expect(done.counts).toMatchObject({ imported: 4, skipped: 0 });
+        const rows = await stored(b.id);
+        expect(Object.fromEntries(rows.map((r) => [r.prospectId, r.suppressed]))).toEqual({ [byEmail!.id]: true, [bySnapshot!.id]: true, [byConsent!.id]: true, [fine!.id]: false });
+        expect(rows.every((r) => (r.source as { type: string }).type === source.type)).toBe(true);
+      }
+    });
+
+    it("marks them from a smart list too", async () => {
+      const u = await user();
+      const doc = DEMO[30]!;
+      await db.insert(schema.consents).values({ workspaceId: u.workspaceId, subjectType: "prospect", subjectId: doc.prospectId, type: "email", basis: "test", revokedAt: new Date() });
+      const b = await workbook(u);
+      const id = await smartList(u, { companyDomain: doc.companyDomain });
+      await added(u, b.id, { type: "smart_list", smartListId: id }, { all: true });
+      const rows = await stored(b.id);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.filter((r) => r.suppressed).map((r) => r.prospectId)).toEqual([doc.prospectId]);
+    });
+  });
 });

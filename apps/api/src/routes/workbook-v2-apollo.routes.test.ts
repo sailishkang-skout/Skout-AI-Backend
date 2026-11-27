@@ -983,4 +983,19 @@ describe.skipIf(!hasDatabase)("Workbooks V2 Apollo import", () => {
       expect(await stored(b.id)).toEqual([]);
     });
   });
+
+  // ── Suppression (WB2-027) ──────────────────────────────────────────────────
+
+  describe("suppression", () => {
+    it("imports a suppressed Apollo contact and marks the row", async () => {
+      const u = await user();
+      const b = await workbook(u);
+      saved(u, 3, (i) => ({ ...contact(i), email: `apollo-supp-${i}@example.com` }));
+      await db.insert(schema.suppressions).values({ workspaceId: u.workspaceId, email: "apollo-supp-2@example.com" });
+      expect((await imported(u, b.id)).counts).toMatchObject({ imported: 3 });
+      const rows = await stored(b.id);
+      expect(rows.map((r) => r.suppressed)).toEqual([false, true, false]);
+      expect(rows[1]!.from).toMatchObject({ type: "apollo" });
+    });
+  });
 });

@@ -100,6 +100,8 @@ export const contacts = pgTable(
     index("contacts_workspace_company_idx").on(table.workspaceId, table.companyId),
     index("contacts_workspace_email_idx").on(table.workspaceId, table.email),
     index("contacts_workspace_source_prospect_idx").on(table.workspaceId, table.sourceProspectId),
+    // WB2-027: the opt-out check matches addresses without regard to case or surrounding spaces.
+    index("contacts_workspace_email_match_idx").on(table.workspaceId, sql`lower(btrim(${table.email}))`),
   ]
 );
 

@@ -9,6 +9,7 @@ import { ImportStopped, Superseded, countsOf, lockImport, recordChunk, type Issu
 import { getReusableContacts, type ReusableContact, type ReusableValue } from "./enrichment/contact-data.service.js";
 import { snapshotFromCorpusDoc } from "../utils/verified-email.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
+import { markRowSuppression } from "./workbook-suppression.service.js";
 
 /**
  * Adds a selection of Skout prospects to a workbook (WB2-021): from a list, a smart list or Search.
@@ -295,6 +296,7 @@ async function addChunk(db: Db, directory: ProspectDirectory, workspaceId: strin
           SELECT ${record.workbookId}::uuid, x.r, x.c, x.v, x.s, x.e, x.f, x.ver, x.p
           FROM jsonb_to_recordset(${JSON.stringify(cells)}::text::jsonb) AS x (r bigint, c uuid, v jsonb, s text, e text, f text, ver text, p jsonb)`);
       }
+      await markRowSuppression(tx, workspaceId, record.workbookId, [...idAt.values()]);
       await tx.update(workbooks).set({ rowCount: existing + accepted.length, updatedAt: sql`now()` }).where(eq(workbooks.id, record.workbookId));
     }
     await recordChunk(tx, record.id, counts, { processed: items.length, imported: accepted.length }, issues);

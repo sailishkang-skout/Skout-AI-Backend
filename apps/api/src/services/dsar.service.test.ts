@@ -103,7 +103,8 @@ describe("DsarService.runAutoExport", () => {
 describe("DsarService.updateStatus", () => {
   it("sets completedAt for completed/rejected and clears it otherwise", async () => {
     for (const [status, expectDate] of [["completed", true], ["rejected", true], ["in_progress", false]] as const) {
-      const db = makeDb({ updates: [[dsarRow({ status })]] });
+      // Completing reads the request first, to see whether it is an erasure.
+      const db = makeDb({ selects: status === "completed" ? [[dsarRow()]] : [], updates: [[dsarRow({ status })]] });
       await new DsarService(db).updateStatus("ws-1", "d1", status);
       const set = db.__updateChains[0].set.mock.calls[0][0];
       expect(set.completedAt instanceof Date).toBe(expectDate);
@@ -111,10 +112,16 @@ describe("DsarService.updateStatus", () => {
   });
 
   it("404s when the request is not in this workspace", async () => {
-    const db = makeDb({ updates: [[]] });
-    await expect(new DsarService(db).updateStatus("ws-1", "x", "completed")).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    for (const status of ["completed", "rejected"] as const) {
+      const db = makeDb({ selects: [[]], updates: [[]] });
+      await expect(new DsarService(db).updateStatus("ws-1", "x", status)).rejects.toMatchObject({ statusCode: 404 });
+    }
+  });
+
+  it("never marks an erasure completed without being able to carry it out", async () => {
+    const db = makeDb({ selects: [[dsarRow({ requestType: "erasure" })]] });
+    await expect(new DsarService(db).updateStatus("ws-1", "d1", "completed")).rejects.toMatchObject({ statusCode: 500 });
+    expect(db.update).not.toHaveBeenCalled();
   });
 });
 

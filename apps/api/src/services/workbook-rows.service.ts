@@ -4,6 +4,7 @@ import { WorkbookV2Error, findLiveWorkbook, getWorkspaceRowLimit, lockLiveWorkbo
 import { inputDataType, normalizeInputValue, type NormalizedCell } from "./workbook-cell-values.js";
 import { recordWorkbookActivity } from "./workbook-activity-log.js";
 import { queryRowIds, type RowQuery } from "./workbook-rows.query.js";
+import { markRowSuppression } from "./workbook-suppression.service.js";
 
 /**
  * Workbook rows (WB2-012). A row belongs to one workbook; each value is a row in `workbook_cells`, and an empty cell
@@ -244,6 +245,7 @@ export async function addRows(
       rowCells.flatMap(({ columnId, cell }) => (cell.kind === "value" ? [cellRecord(workbookId, idAt.get(first + i)!, columnId, cell)] : []))
     );
     for (let i = 0; i < cells.length; i += CELL_INSERT_CHUNK) await tx.insert(workbookCells).values(cells.slice(i, i + CELL_INSERT_CHUNK));
+    await markRowSuppression(tx, actor.workspaceId, workbookId, [...idAt.values()]);
 
     const rowCount = existing + input.length;
     await touchWorkbook(tx, workbookId, rowCount);
@@ -287,6 +289,8 @@ export async function updateRowCells(db: Db, actor: WorkbookActor, workbookId: s
         .values({ workbookId, rowId, columnId, ...fields })
         .onConflictDoUpdate({ target: [workbookCells.workbookId, workbookCells.rowId, workbookCells.columnId], set: { ...fields, updatedAt: sql`now()` } });
     }
+    // The row may now identify someone else.
+    await markRowSuppression(tx, actor.workspaceId, workbookId, [rowId]);
     await touchWorkbook(tx, workbookId);
     return (await loadRows(tx, workbookId, [rowId]))[0]!;
   });

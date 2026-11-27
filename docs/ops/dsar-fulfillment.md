@@ -19,6 +19,12 @@ curl -X POST "$API/api/v1/dsar" -H "Authorization: Bearer $TOKEN" \
   -d '{"requestType":"access","subjectEmail":"a@b.com","fulfillmentMode":"manual"}'
 ```
 
+## Completing an erasure: what happens by itself
+Marking an **erasure** request `completed` (owner or admin) permanently removes the person from every Workbooks V2
+workbook of the workspace and adds their address to the suppression list (`dsar_erasure`). The matching rules and what
+is left are in [Workbooks V2 suppression](../api/workbooks-v2.md#erasure). If it fails, the request stays open; send it
+again. **Do the other erasure steps first, then mark it completed.**
+
 ## SLA (current product decision)
 **30 calendar days** from intake (`slaDueAt`). Legal may shorten via contract later.
 
@@ -34,7 +40,7 @@ contact id, the engineering tickets linked to that contact (id, title, status, c
 Ticket descriptions and comments are left out on purpose: they can hold internal notes and other
 people's data, and need a human to review before release.
 
-Erasure is still manual. For a CustomerOps subject, review these tables for the contact or address:
+Apart from workbooks (above), erasure is manual. For a CustomerOps subject, review these tables for the contact or address:
 
 | Table | What to do |
 |---|---|

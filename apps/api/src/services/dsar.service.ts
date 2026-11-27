@@ -2,6 +2,9 @@ import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema, scopedById, scopedTo } from "@skout/db";
 import { HttpError } from "../utils/http.js";
+import { addSuppression } from "./suppression.service.js";
+import { auditErasure, erasureSubject, eraseFromImportFiles, eraseFromWorkbooks, type ErasureCounts, type ImportFileCounts } from "./workbook-erasure.service.js";
+import type { ImportStorage } from "./workbook-import-storage.js";
 
 const { dataSubjectRequests, consents, suppressions, copsOnboardingEmailSends, engineeringTickets } = schema;
 
@@ -12,6 +15,17 @@ export type DsarStatus = "received" | "in_progress" | "completed" | "rejected";
 export type DsarFulfillmentMode = "manual" | "auto";
 
 const DEFAULT_SLA_DAYS = 30;
+/** The suppression list reason for someone whose erasure request was completed. */
+export const DSAR_ERASURE_REASON = "dsar_erasure";
+
+/** What completing an erasure needs beyond the database: who is doing it, and where import files are kept. */
+export interface ErasureContext {
+  userId: string;
+  requestId: string;
+  storage: ImportStorage | null;
+}
+
+export type ErasureReport = ErasureCounts & ImportFileCounts;
 
 export interface DsarDto {
   id: string;
@@ -137,13 +151,47 @@ export class DsarService {
     return rows.map(toDto);
   }
 
+  /**
+   * Changes a request's status. Marking an **erasure** request completed also removes the person from every Workbooks
+   * V2 workbook and adds their address to the suppression list, so a later import is marked and nothing runs for it
+   * (WB2-027). All of that and the new status are saved together; doing it again is safe. The other erasure steps of the
+   * runbook are still done by hand.
+   */
   async updateStatus(
     workspaceId: string,
     id: string,
     status: DsarStatus,
-    notes?: string
-  ): Promise<DsarDto> {
-    const [row] = await this.db
+    notes?: string,
+    context?: ErasureContext
+  ): Promise<DsarDto & { erasure?: ErasureReport }> {
+    if (status === "completed") {
+      const [request] = await this.db.select().from(dataSubjectRequests).where(scopedById(dataSubjectRequests, workspaceId, id)).limit(1);
+      if (!request) throw new HttpError("dsar_not_found", 404);
+      if (request.requestType === "erasure") {
+        if (!context) throw new HttpError("dsar_erasure_context_missing", 500);
+        return this.completeErasure(workspaceId, request, notes, context);
+      }
+    }
+    return this.saveStatus(this.db, workspaceId, id, status, notes);
+  }
+
+  private async completeErasure(workspaceId: string, request: typeof dataSubjectRequests.$inferSelect, notes: string | undefined, context: ErasureContext): Promise<DsarDto & { erasure: ErasureReport }> {
+    const known = { email: request.subjectEmail, subjectId: request.subjectId };
+    const files = await eraseFromImportFiles(this.db, context.storage, workspaceId, await erasureSubject(this.db, workspaceId, known));
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as Db;
+      const actor = { workspaceId, userId: context.userId, requestId: context.requestId };
+      // First, so that a row arriving while workbooks are being cleared is already marked.
+      await addSuppression(tx, workspaceId, request.subjectEmail, DSAR_ERASURE_REASON);
+      const removed = await eraseFromWorkbooks(tx, actor, await erasureSubject(tx, workspaceId, known));
+      const erasure = { ...removed, ...files };
+      await auditErasure(tx, actor, { type: "dsar_request", id: request.id }, erasure);
+      return { ...(await this.saveStatus(tx, workspaceId, request.id, "completed", notes)), erasure };
+    });
+  }
+
+  private async saveStatus(db: Db, workspaceId: string, id: string, status: DsarStatus, notes?: string): Promise<DsarDto> {
+    const [row] = await db
       .update(dataSubjectRequests)
       .set({
         status,

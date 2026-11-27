@@ -1390,4 +1390,25 @@ describe.skipIf(!hasDatabase)("Workbooks V2 Google Sheets import", () => {
       expect((await send(u, "DELETE", "/google-sheets/connection")).statusCode).toBe(200);
     });
   });
+
+  // ── Suppression (WB2-027) ──────────────────────────────────────────────────
+
+  describe("suppression", () => {
+    it("imports suppressed people from a sheet and marks their rows, also those a later pull adds", async () => {
+      const u = await user();
+      await db.insert(schema.suppressions).values([
+        { workspaceId: u.workspaceId, email: "p2@company2.com" },
+        { workspaceId: u.workspaceId, email: "p5@company5.com" },
+      ]);
+      const b = await workbook(u);
+      const s = sheet(u, people(3));
+      await imported(u, b.id, s);
+      expect((await stored(b.id)).map((r) => r.suppressed)).toEqual([false, true, false]);
+      s.set(people(5));
+      await pulled(u, b.id);
+      const rows = await stored(b.id);
+      expect(rows.map((r) => r.suppressed)).toEqual([false, true, false, false, true]);
+      expect(rows[4]!.from).toMatchObject({ type: "google_sheets" });
+    });
+  });
 });

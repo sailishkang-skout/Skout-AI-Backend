@@ -17,6 +17,7 @@ import { addProspects } from "./workbook-prospect-runner.js";
 import type { ProspectDirectory } from "./prospect-directory.js";
 import { removeStaleTempFiles, reportKey, saveStream, withTempFile, type ImportStorage } from "./workbook-import-storage.js";
 import { recordWorkbookActivity } from "./workbook-activity-log.js";
+import { markRowSuppression } from "./workbook-suppression.service.js";
 
 /**
  * Does a confirmed CSV import (WB2-020).
@@ -178,6 +179,7 @@ async function importChunk(db: Db, run: Run, chunk: Pending[]): Promise<void> {
           SELECT ${run.workbookId}::uuid, x.r, x.c, x.v, 'found'
           FROM jsonb_to_recordset(${JSON.stringify(cells.slice(i, i + CHUNK_CELLS))}::text::jsonb) AS x (r bigint, c uuid, v jsonb)`);
       }
+      await markRowSuppression(tx, run.workspaceId, run.workbookId, [...idAt.values()]);
       await tx.update(workbooks).set({ rowCount: existing + accepted.length, updatedAt: sql`now()` }).where(eq(workbooks.id, run.workbookId));
     }
     if (run.sheet) await rememberKeys(tx, run.sheet.sourceId, remembered);

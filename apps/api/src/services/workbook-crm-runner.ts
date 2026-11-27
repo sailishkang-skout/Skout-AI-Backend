@@ -8,6 +8,7 @@ import { KeyIndex } from "./workbook-import-keys.js";
 import { crmMessage, providerCode, type CrmAccess, type CrmSession } from "./workbook-crm-access.js";
 import { CrmSourceError, type CrmPage, type CrmRecordSource } from "./crm-record-source.js";
 import type { CrmPlan } from "./workbook-crm.service.js";
+import { markRowSuppression } from "./workbook-suppression.service.js";
 
 /**
  * Does a confirmed CRM import (WB2-023) or Apollo import (WB2-024).
@@ -212,6 +213,7 @@ async function importChunk(db: Db, run: Run, expected: number, chunk: Chunk): Pr
           SELECT ${run.workbookId}::uuid, x.r, x.c, x.v, 'found'
           FROM jsonb_to_recordset(${JSON.stringify(cells.slice(i, i + CELL_CHUNK))}::text::jsonb) AS x (r bigint, c uuid, v jsonb)`);
       }
+      await markRowSuppression(tx, run.workspaceId, run.workbookId, [...idAt.values()]);
       await tx.update(workbooks).set({ rowCount: existing + accepted.length, updatedAt: sql`now()` }).where(eq(workbooks.id, run.workbookId));
     }
 

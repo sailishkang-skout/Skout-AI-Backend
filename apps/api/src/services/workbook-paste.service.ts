@@ -4,6 +4,7 @@ import { WorkbookV2Error, getWorkspaceRowLimit, lockLiveWorkbook, type WorkbookA
 import { inputDataType, looksLike, normalizeInputValue, type InputDataType, type NormalizedCell } from "./workbook-cell-values.js";
 import { recordWorkbookActivity } from "./workbook-activity-log.js";
 import { cellRecord, columnsOf, countRows, touchWorkbook } from "./workbook-rows.service.js";
+import { markRowSuppression } from "./workbook-suppression.service.js";
 
 /**
  * A pasted block (WB2-022, PRD ROW-3): rows of text laid over a workbook, starting at one of its rows and one of its
@@ -243,6 +244,8 @@ export async function pasteIntoWorkbook(db: Db, actor: WorkbookActor, workbookId
         });
     }
     result.cellsWritten = writes.length;
+    // Rows that gained, lost or changed a value may now identify someone else.
+    await markRowSuppression(tx, actor.workspaceId, workbookId, [...new Set([...writes.map((w) => w.rowId), ...[...clears.values()].flat()])]);
 
     if (result.added || result.cellsWritten || result.cellsCleared) await touchWorkbook(tx, workbookId, result.rowCount);
     if (result.added) {
