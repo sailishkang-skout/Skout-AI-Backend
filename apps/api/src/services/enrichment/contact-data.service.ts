@@ -6,7 +6,7 @@
  *     results that produced them, with one provenance per value.
  *   - Review date: revisit once apps/crm's internal API surface fully shipped (Wave 2)
  */
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNull } from "drizzle-orm";
 import type { Db } from "@skout/db";
 import { schema } from "@skout/db";
 import { createLogger } from "@skout/observability";
@@ -121,60 +121,15 @@ function recordValue(value: string | null | undefined, fieldSources: unknown, fi
   };
 }
 
-export async function getContactData(db: Db, workspaceId: string, prospectId: string, now = new Date()): Promise<ContactData | null> {
-  const [activation] = await db
-    .select({ id: prospectActivations.id })
-    .from(prospectActivations)
-    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
-    .limit(1);
-  if (!activation) return null;
+/** The contact record fields a value can come from. */
+type ContactRow = { id: string; email: string | null; phone: string | null; fieldSources: unknown; updatedAt: Date };
+type VerificationRow = typeof emailVerifications.$inferSelect;
 
-  const [[contact], results, [verification], [lastJob]] = await Promise.all([
-    db
-      .select({ id: contacts.id, email: contacts.email, phone: contacts.phone, fieldSources: contacts.fieldSources, updatedAt: contacts.updatedAt })
-      .from(contacts)
-      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId), isNull(contacts.deletedAt)))
-      .limit(1),
-    db
-      .select({
-        id: enrichmentResults.id,
-        enrichmentJobId: enrichmentResults.enrichmentJobId,
-        workspaceId: enrichmentResults.workspaceId,
-        prospectId: enrichmentResults.prospectId,
-        fieldName: enrichmentResults.fieldName,
-        fieldValue: enrichmentResults.fieldValue,
-        fieldValueJson: enrichmentResults.fieldValueJson,
-        sourceProvider: enrichmentResults.sourceProvider,
-        confidence: enrichmentResults.confidence,
-        validationStatus: enrichmentResults.validationStatus,
-        isPrimary: enrichmentResults.isPrimary,
-        createdAt: enrichmentResults.createdAt,
-        correlationId: enrichmentJobs.correlationId,
-      })
-      .from(enrichmentResults)
-      .innerJoin(enrichmentJobs, eq(enrichmentJobs.id, enrichmentResults.enrichmentJobId))
-      .where(
-        and(
-          eq(enrichmentResults.workspaceId, workspaceId),
-          eq(enrichmentResults.prospectId, prospectId),
-          inArray(enrichmentResults.fieldName, ["email", "email_status", "phone"])
-        )
-      )
-      .orderBy(desc(enrichmentResults.createdAt))
-      .limit(200),
-    db
-      .select()
-      .from(emailVerifications)
-      .where(and(eq(emailVerifications.workspaceId, workspaceId), eq(emailVerifications.prospectId, prospectId)))
-      .limit(1),
-    db
-      .select({ id: enrichmentJobs.id, status: enrichmentJobs.status, completedAt: enrichmentJobs.completedAt, queuedAt: enrichmentJobs.queuedAt })
-      .from(enrichmentJobs)
-      .where(and(eq(enrichmentJobs.workspaceId, workspaceId), eq(enrichmentJobs.prospectId, prospectId), eq(enrichmentJobs.kind, "contact_waterfall")))
-      .orderBy(desc(enrichmentJobs.queuedAt))
-      .limit(1),
-  ]);
-
+/**
+ * Which email and phone stand behind a person, from their stored results (newest first), stored verdict and CRM record.
+ * One definition for the contact panel and for copying values elsewhere.
+ */
+function resolveContactValues(contact: ContactRow | undefined, results: unknown[], verification: VerificationRow | undefined, now: Date) {
   const nowMs = now.getTime();
   const rows = results as ResultRow[];
   const statusOf = (jobId: string) => rows.find((row) => row.enrichmentJobId === jobId && row.fieldName === "email_status");
@@ -256,6 +211,65 @@ export async function getContactData(db: Db, workspaceId: string, prospectId: st
   }
   phone ??= contact ? recordValue(contact.phone, contact.fieldSources, "phone", contact.updatedAt, nowMs) : null;
 
+  return { email, phone, otherPhones };
+}
+
+export async function getContactData(db: Db, workspaceId: string, prospectId: string, now = new Date()): Promise<ContactData | null> {
+  const [activation] = await db
+    .select({ id: prospectActivations.id })
+    .from(prospectActivations)
+    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .limit(1);
+  if (!activation) return null;
+
+  const [[contact], results, [verification], [lastJob]] = await Promise.all([
+    db
+      .select({ id: contacts.id, email: contacts.email, phone: contacts.phone, fieldSources: contacts.fieldSources, updatedAt: contacts.updatedAt })
+      .from(contacts)
+      .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId), isNull(contacts.deletedAt)))
+      .limit(1),
+    db
+      .select({
+        id: enrichmentResults.id,
+        enrichmentJobId: enrichmentResults.enrichmentJobId,
+        workspaceId: enrichmentResults.workspaceId,
+        prospectId: enrichmentResults.prospectId,
+        fieldName: enrichmentResults.fieldName,
+        fieldValue: enrichmentResults.fieldValue,
+        fieldValueJson: enrichmentResults.fieldValueJson,
+        sourceProvider: enrichmentResults.sourceProvider,
+        confidence: enrichmentResults.confidence,
+        validationStatus: enrichmentResults.validationStatus,
+        isPrimary: enrichmentResults.isPrimary,
+        createdAt: enrichmentResults.createdAt,
+        correlationId: enrichmentJobs.correlationId,
+      })
+      .from(enrichmentResults)
+      .innerJoin(enrichmentJobs, eq(enrichmentJobs.id, enrichmentResults.enrichmentJobId))
+      .where(
+        and(
+          eq(enrichmentResults.workspaceId, workspaceId),
+          eq(enrichmentResults.prospectId, prospectId),
+          inArray(enrichmentResults.fieldName, ["email", "email_status", "phone"])
+        )
+      )
+      .orderBy(desc(enrichmentResults.createdAt))
+      .limit(200),
+    db
+      .select()
+      .from(emailVerifications)
+      .where(and(eq(emailVerifications.workspaceId, workspaceId), eq(emailVerifications.prospectId, prospectId)))
+      .limit(1),
+    db
+      .select({ id: enrichmentJobs.id, status: enrichmentJobs.status, completedAt: enrichmentJobs.completedAt, queuedAt: enrichmentJobs.queuedAt })
+      .from(enrichmentJobs)
+      .where(and(eq(enrichmentJobs.workspaceId, workspaceId), eq(enrichmentJobs.prospectId, prospectId), eq(enrichmentJobs.kind, "contact_waterfall")))
+      .orderBy(desc(enrichmentJobs.queuedAt))
+      .limit(1),
+  ]);
+
+  const { email, phone, otherPhones } = resolveContactValues(contact, results, verification, now);
+
   return {
     prospectId,
     contactId: contact?.id ?? null,
@@ -272,6 +286,79 @@ export async function getContactData(db: Db, workspaceId: string, prospectId: st
       : null,
     freshnessDays: CONTACT_FRESHNESS_DAYS,
   };
+}
+
+/** How old a stored value may be and still be copied for free (PRD WF-9). */
+export const REUSE_DAYS = 30;
+
+export interface ReusableValue {
+  value: string;
+  /** For an email: how it was verified. */
+  verification: VerificationStatus;
+  /** SERVER ONLY: where it came from. */
+  provenance: { kind: ContactValue["provenance"]["kind"]; provider: string; observedAt: string; verifiedAt: string | null };
+}
+
+export interface ReusableContact {
+  email?: ReusableValue;
+  phone?: ReusableValue;
+}
+
+/**
+ * A value may be reused when it was found or verified within `REUSE_DAYS` and has not been verified as invalid. A CRM
+ * value with no recorded date does not count as found recently just because its record was edited.
+ */
+function reusable(value: ContactValue | null, contact: ContactRow | undefined, field: "email" | "phone", now: Date): ReusableValue | undefined {
+  if (!value || value.verification.status === "invalid") return undefined;
+  const fromRecord = value.provenance.jobId === null;
+  const dated = !fromRecord || Boolean(((contact?.fieldSources ?? {}) as FieldSources)[field]?.setAt);
+  const since = now.getTime() - REUSE_DAYS * DAY_MS;
+  const recent = (at: string | null, known = true) => known && at !== null && Date.parse(at) >= since;
+  if (!recent(value.provenance.observedAt, dated) && !recent(value.verification.verifiedAt)) return undefined;
+  return {
+    value: value.value,
+    verification: value.verification.status,
+    provenance: { kind: value.provenance.kind, provider: value.provenance.provider, observedAt: value.provenance.observedAt ?? "", verifiedAt: value.verification.verifiedAt },
+  };
+}
+
+/**
+ * Stored email and phone for many of the workspace's prospects at once, free to copy (WB2-021). Reads only what is
+ * already stored: no provider is called and nothing is charged.
+ */
+export async function getReusableContacts(db: Db, workspaceId: string, prospectIds: string[], now = new Date()): Promise<Map<string, ReusableContact>> {
+  const out = new Map<string, ReusableContact>();
+  if (!prospectIds.length) return out;
+  const [records, results, verifications] = await Promise.all([
+    db
+      .select({ id: contacts.id, email: contacts.email, phone: contacts.phone, fieldSources: contacts.fieldSources, updatedAt: contacts.updatedAt, prospectId: contacts.sourceProspectId })
+      .from(contacts)
+      .where(and(eq(contacts.workspaceId, workspaceId), inArray(contacts.sourceProspectId, prospectIds), isNull(contacts.deletedAt)))
+      .orderBy(desc(contacts.updatedAt)),
+    db
+      .select({ ...getTableColumns(enrichmentResults), correlationId: enrichmentJobs.correlationId })
+      .from(enrichmentResults)
+      .innerJoin(enrichmentJobs, eq(enrichmentJobs.id, enrichmentResults.enrichmentJobId))
+      .where(and(eq(enrichmentResults.workspaceId, workspaceId), inArray(enrichmentResults.prospectId, prospectIds), inArray(enrichmentResults.fieldName, ["email", "email_status", "phone"])))
+      .orderBy(desc(enrichmentResults.createdAt)),
+    db.select().from(emailVerifications).where(and(eq(emailVerifications.workspaceId, workspaceId), inArray(emailVerifications.prospectId, prospectIds))),
+  ]);
+  const recordOf = new Map<string, ContactRow>();
+  for (const record of records) if (record.prospectId && !recordOf.has(record.prospectId)) recordOf.set(record.prospectId, record);
+  const resultsOf = new Map<string, typeof results>();
+  for (const row of results) {
+    const list = resultsOf.get(row.prospectId);
+    if (list) list.push(row);
+    else resultsOf.set(row.prospectId, [row]);
+  }
+  const verdictOf = new Map(verifications.map((v) => [v.prospectId, v]));
+  for (const prospectId of prospectIds) {
+    const record = recordOf.get(prospectId);
+    const { email, phone } = resolveContactValues(record, resultsOf.get(prospectId) ?? [], verdictOf.get(prospectId), now);
+    const reuse = { email: reusable(email, record, "email", now), phone: reusable(phone, record, "phone", now) };
+    if (reuse.email || reuse.phone) out.set(prospectId, reuse);
+  }
+  return out;
 }
 
 /**
