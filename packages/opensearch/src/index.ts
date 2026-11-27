@@ -401,7 +401,7 @@ export function seniorityClause(values: string[]): object {
 }
 
 /** Build OpenSearch query from product filters + free-text query. */
-export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25) {
+export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25, idField = "prospectId") {
   const must: object[] = [];
   const filter: object[] = [];
 
@@ -575,7 +575,7 @@ export function buildSearchQuery(filters: SearchFilters, page = 1, pageSize = 25
       })(),
     },
     sort: filters.stableOrder
-      ? [{ updatedAt: "asc" }, { prospectId: "asc" }]
+      ? [{ updatedAt: "asc" }, { [idField]: "asc" }]
       : [{ updatedAt: "desc" }],
   };
 }
@@ -652,7 +652,7 @@ async function searchProspectsWithPostProcess(
   let exhausted = false;
 
   while (processed.length < targetEnd && osFrom < maxScan) {
-    const body = buildSearchQuery(filters, 1, batchSize);
+    const body = await searchBody(cfg, filters, 1, batchSize);
     body.from = osFrom;
     body.size = batchSize;
 
@@ -679,7 +679,7 @@ async function searchProspectsWithPostProcess(
   let total = processed.length;
   if (!exhausted && osFrom < rawTotal) {
     while (osFrom < rawTotal && osFrom < maxScan) {
-      const body = buildSearchQuery(filters, 1, batchSize);
+      const body = await searchBody(cfg, filters, 1, batchSize);
       body.from = osFrom;
       body.size = batchSize;
       const res = await osFetch<{
@@ -712,7 +712,7 @@ export async function searchProspects(
   }
 
   const index = cfg.index ?? PROSPECTS_INDEX;
-  const body = buildSearchQuery(filters, page, pageSize);
+  const body = await searchBody(cfg, filters, page, pageSize);
   const res = await osFetch<{
     hits: { total: { value: number }; hits: { _source: ProspectDocument }[] };
   }>(cfg, `/${index}/_search`, { method: "POST", body: JSON.stringify(body) });
@@ -824,6 +824,30 @@ export async function prospectIdsStillMatching(
     body: JSON.stringify({ size: prospectIds.length, _source: ["prospectId"], query }),
   });
   return new Set(res.hits.hits.map((h) => h._source.prospectId));
+}
+
+const idSortFields = new Map<string, string>();
+
+/**
+ * The field that orders documents by prospect id. Indexes we create map `prospectId` as keyword; ones created by
+ * dynamic mapping (Bonsai) store text, which cannot be sorted on, with a `.keyword` beside it.
+ */
+async function idSortField(cfg: OpenSearchConfig): Promise<string> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const key = `${cfg.url}/${index}`;
+  const known = idSortFields.get(key);
+  if (known) return known;
+  type Mapping = { mappings?: { properties?: { prospectId?: { type?: string; fields?: { keyword?: unknown } } } } };
+  const res = await osFetch<Record<string, Mapping>>(cfg, `/${index}/_mapping`);
+  const mapped = Object.values(res)[0]?.mappings?.properties?.prospectId;
+  const field = mapped?.type === "text" && mapped.fields?.keyword ? "prospectId.keyword" : "prospectId";
+  if (mapped) idSortFields.set(key, field);
+  return field;
+}
+
+/** buildSearchQuery for a live index: a stable order has to sort on the id field that index really has. */
+async function searchBody(cfg: OpenSearchConfig, filters: SearchFilters, page: number, pageSize: number) {
+  return buildSearchQuery(filters, page, pageSize, filters.stableOrder ? await idSortField(cfg) : undefined);
 }
 
 /**
