@@ -55,7 +55,7 @@ describe("webhook signatures (PAPI-070)", () => {
       eventId: "evt_1",
       attempt: 1,
       payload: { job_id: "job_abc", status: "completed", note: "unicode ✓ é" },
-    } as never);
+    } as never, { isBlocked: () => false }); // the receiver is on 127.0.0.1, which PAPI-071 blocks in production
     return received.at(-1)!;
   }
 

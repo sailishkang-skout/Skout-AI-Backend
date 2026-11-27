@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { Worker } from "bullmq";
 import { context as otelContext } from "@opentelemetry/api";
 import { eq } from "drizzle-orm";
@@ -7,6 +9,7 @@ import { createLogger, extractTraceContext, withSpan } from "@skout/observabilit
 import type { Env } from "../config/env.js";
 import { loadEnv } from "../config/env.js";
 import { isRedisAvailable, redisBullMqConnection } from "../lib/redis.js";
+import { assertPublicAddress, guardedLookup, type LookupAllFn } from "../services/webhook-url-guard.js";
 import {
   WEBHOOK_DELIVERY_QUEUE,
   enqueueWebhookDelivery,
@@ -81,10 +84,29 @@ interface DeliveryResult {
   durationMs: number;
 }
 
-/** One signed POST to an endpoint (also used by "Send test event" in admin). */
+/** Test seams for deliverOnce; production passes nothing. */
+export interface DeliverOptions {
+  /** DNS resolver (all addresses). */
+  resolve?: LookupAllFn;
+  /** Which addresses are refused; defaults to isPrivateAddress. */
+  isBlocked?: (address: string) => boolean;
+  timeoutMs?: number;
+}
+
+const MAX_RESPONSE_BYTES = 64 * 1024;
+
+/**
+ * One signed POST to an endpoint (also used by "Send test event" in admin).
+ *
+ * PAPI-071 / JOB-6: the host's resolved addresses are checked inside the socket's own DNS lookup
+ * (guardedLookup), so the address checked is the address connected to, and a host that resolves to
+ * a private, loopback, link-local or metadata address is refused with BlockedAddressError, even if it
+ * was public when the endpoint was saved (DNS rebinding). Redirects are not followed.
+ */
 export async function deliverOnce(
   deliveryId: string,
-  job: WebhookDeliveryJobPayload
+  job: WebhookDeliveryJobPayload,
+  options: DeliverOptions = {}
 ): Promise<DeliveryResult> {
   const body = JSON.stringify({
     id: job.eventId,
@@ -96,36 +118,64 @@ export async function deliverOnce(
 
   const timestampSec = Math.floor(Date.now() / 1000);
   const signature = signPayload(job.secret, timestampSec, body);
+  const url = new URL(job.url);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error(`Unsupported webhook URL scheme: ${url.protocol}`);
+  assertPublicAddress(url.hostname, options.isBlocked);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
   const start = Date.now();
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const send = url.protocol === "https:" ? httpsRequest : httpRequest;
 
-  try {
-    const res = await fetch(job.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-skout-event": job.eventType,
-        "x-skout-delivery": deliveryId,
-        "x-skout-timestamp": String(timestampSec),
-        "x-skout-signature": signature,
-        // JOB-4: the documented header; x-skout-signature/-timestamp stay for existing receivers.
-        "skout-signature": skoutSignatureHeader(job.secret, timestampSec, body),
-        "user-agent": "Skout-Webhook/1.0",
+  return new Promise<DeliveryResult>((resolve, reject) => {
+    const req = send(
+      url,
+      {
+        method: "POST",
+        lookup: guardedLookup(options.resolve, options.isBlocked) as never,
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          "x-skout-event": job.eventType,
+          "x-skout-delivery": deliveryId,
+          "x-skout-timestamp": String(timestampSec),
+          "x-skout-signature": signature,
+          // JOB-4: the documented header; x-skout-signature/-timestamp stay for existing receivers.
+          "skout-signature": skoutSignatureHeader(job.secret, timestampSec, body),
+          "user-agent": "Skout-Webhook/1.0",
+        },
       },
-      body,
-      signal: controller.signal,
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (c: Buffer) => {
+          if (size < MAX_RESPONSE_BYTES) chunks.push(c);
+          size += c.length;
+        });
+        res.on("end", () => {
+          clearTimeout(timer);
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            responseBody: Buffer.concat(chunks).toString("utf8").slice(0, 1000),
+            durationMs: Date.now() - start,
+          });
+        });
+        res.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      const err = new Error(`No answer within ${timeoutMs / 1000} seconds`);
+      err.name = "AbortError"; // the test-send route reports this as a timeout
+      req.destroy(err);
+    }, timeoutMs);
+    req.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
     });
-    const responseBody = await res.text().catch(() => "");
-    return {
-      statusCode: res.status,
-      responseBody: responseBody.slice(0, 1000),
-      durationMs: Date.now() - start,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+    req.end(body);
+  });
 }
 
 type DbClient = ReturnType<typeof createDb>["db"];

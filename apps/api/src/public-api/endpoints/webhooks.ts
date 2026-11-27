@@ -3,6 +3,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import type { Env } from "../../config/env.js";
 import { PUBLIC_API_WEBHOOK_EVENTS, buildWebhookService } from "../../services/webhook.service.js";
+import { webhookUrlProblem } from "../../services/webhook-url-guard.js";
 import { PublicApiError } from "../errors.js";
 import type { PublicEndpoint } from "../pipeline.js";
 
@@ -65,13 +66,16 @@ export function createListWebhooksEndpoint(deps: { env: Env; db: Db }): PublicEn
 
 const createInput = z
   .object({
-    // JOB-6: https only. Private / loopback address blocking (at save and delivery) is PAPI-071.
+    // JOB-6 / PAPI-071: public https only (no private, loopback, link-local or metadata addresses).
+    // The delivery worker checks the resolved addresses again on every send (DNS rebinding).
     url: z
       .string()
       .trim()
       .max(2000)
-      .url()
-      .refine((u) => u.startsWith("https://"), { message: "Webhook URLs must use https" }),
+      .superRefine((u, ctx) => {
+        const problem = webhookUrlProblem(u);
+        if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Webhook URL: ${problem}` });
+      }),
     events: z.array(z.enum(PUBLIC_API_WEBHOOK_EVENTS)).min(1).max(PUBLIC_API_WEBHOOK_EVENTS.length),
     description: z.string().trim().max(200).optional(),
   })
