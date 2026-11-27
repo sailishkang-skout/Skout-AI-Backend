@@ -826,6 +826,80 @@ export async function prospectIdsStillMatching(
   return new Set(res.hits.hits.map((h) => h._source.prospectId));
 }
 
+/** The documents for these ids. An id with no document is simply absent from the answer. */
+export async function getProspectsByIds(cfg: OpenSearchConfig, prospectIds: string[]): Promise<ProspectDocument[]> {
+  if (prospectIds.length === 0) return [];
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  // Either mapping of prospectId (see prospectIdsStillMatching).
+  const query = {
+    bool: {
+      should: [{ terms: { prospectId: prospectIds } }, { terms: { "prospectId.keyword": prospectIds } }],
+      minimum_should_match: 1,
+    },
+  };
+  const res = await osFetch<{ hits: { hits: { _source: ProspectDocument }[] } }>(cfg, `/${index}/_search`, {
+    method: "POST",
+    body: JSON.stringify({ size: prospectIds.length, query }),
+  });
+  return res.hits.hits.map((h) => h._source);
+}
+
+const idSortFields = new Map<string, string>();
+
+/**
+ * The field that orders documents by prospect id. Indexes we create map `prospectId` as keyword; ones created by
+ * dynamic mapping (Bonsai) store text, which cannot be sorted on, with a `.keyword` beside it.
+ */
+async function idSortField(cfg: OpenSearchConfig): Promise<string> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const key = `${cfg.url}/${index}`;
+  const known = idSortFields.get(key);
+  if (known) return known;
+  type Mapping = { mappings?: { properties?: { prospectId?: { type?: string; fields?: { keyword?: unknown } } } } };
+  const res = await osFetch<Record<string, Mapping>>(cfg, `/${index}/_mapping`);
+  const mapped = Object.values(res)[0]?.mappings?.properties?.prospectId;
+  const field = mapped?.type === "text" && mapped.fields?.keyword ? "prospectId.keyword" : "prospectId";
+  if (mapped) idSortFields.set(key, field);
+  return field;
+}
+
+/**
+ * Walks every match of a filter set, a page at a time, ordered by prospect id. `search_after` has no 10,000-result
+ * window, unlike `from`. Pass the previous answer's `next` until it is null.
+ */
+export async function matchingProspectsAfter(
+  cfg: OpenSearchConfig,
+  filters: SearchFilters,
+  size: number,
+  after: unknown[] | null = null
+): Promise<{ hits: ProspectDocument[]; next: unknown[] | null }> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const { query } = buildSearchQuery(filters, 1, size);
+  const res = await osFetch<{ hits: { hits: { _source: ProspectDocument; sort?: unknown[] }[] } }>(cfg, `/${index}/_search`, {
+    method: "POST",
+    body: JSON.stringify({ query, size, sort: [{ [await idSortField(cfg)]: "asc" }], ...(after ? { search_after: after } : {}) }),
+  });
+  const found = res.hits.hits;
+  const last = found.length === size ? (found[found.length - 1]!.sort ?? null) : null;
+  return { hits: found.map((h) => h._source), next: last };
+}
+
+/** One numbered page of a filter set's matches, ordered by prospect id so pages do not overlap, with the exact total. */
+export async function matchingProspectsPage(
+  cfg: OpenSearchConfig,
+  filters: SearchFilters,
+  page: number,
+  pageSize: number
+): Promise<SearchResult> {
+  const index = cfg.index ?? PROSPECTS_INDEX;
+  const { query, from, size } = buildSearchQuery(filters, page, pageSize);
+  const res = await osFetch<{ hits: { total: { value: number }; hits: { _source: ProspectDocument }[] } }>(cfg, `/${index}/_search`, {
+    method: "POST",
+    body: JSON.stringify({ query, from, size, sort: [{ [await idSortField(cfg)]: "asc" }], track_total_hits: true }),
+  });
+  return { hits: res.hits.hits.map((h) => h._source), total: res.hits.total.value };
+}
+
 /**
  * Query OpenSearch when it is configured. The in-process demo corpus is only used when no
  * OpenSearch is configured at all (local dev). A configured cluster that fails must surface as an

@@ -25,6 +25,7 @@ import {
   reviewJobChange,
   toCsv,
 } from "../services/enrichment/research.service.js";
+import { importStorage } from "../services/workbook-import-storage.js";
 
 const uuid = z.string().uuid();
 const page = z.coerce.number().int().min(1).max(10_000).default(1);
@@ -109,7 +110,7 @@ export async function enrichmentResearchRoutes(app: FastifyInstance) {
   app.delete("/enrichment/people/:id", mutation, async (request, reply) => {
     const { db, actor } = await authorize(request, "enrichment:delete");
     const { id } = request.params as { id: string };
-    const result = await deletePerson(db, actor, id);
+    const result = await deletePerson(db, actor, id, importStorage(app.config));
     if (!result) {
       return reply.status(404).send({ error: "prospect_not_found", message: "The requested person does not exist in your workspace" });
     }

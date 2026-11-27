@@ -1,4 +1,5 @@
-import { boolean, integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { inboxThreads } from "./inbox.js";
 import { sequenceEnrollmentSteps } from "./sequences.js";
 import { users } from "./users.js";
@@ -25,6 +26,38 @@ export const aiDrafts = pgTable("ai_drafts", {
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   reviewedBy: uuid("reviewed_by").references(() => users.id, { onDelete: "set null" }),
 });
+
+/**
+ * A member's own Google account, connected within a workspace to read spreadsheets (WB2-025). Tokens are encrypted
+ * with the integration key and never leave the server.
+ */
+export const googleSheetsConnections = pgTable(
+  "google_sheets_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** pending (signing in), connected or needs_reauth. */
+    status: text("status").notNull().default("pending"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    /** Hash of the one-time sign-in state; cleared when it is used. */
+    stateHash: text("state_hash"),
+    stateExpiresAt: timestamp("state_expires_at", { withTimezone: true }),
+    connectedAt: timestamp("connected_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("google_sheets_connections_member_key").on(t.workspaceId, t.userId),
+    check("google_sheets_connections_status_check", sql`${t.status} IN ('pending','connected','needs_reauth')`),
+  ]
+);
 
 export const crmConnections = pgTable(
   "crm_connections",

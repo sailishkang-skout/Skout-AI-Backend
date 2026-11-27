@@ -208,7 +208,8 @@ as a warning on the pull request.
 
 - **Delete one person or company:** `DELETE /api/v1/enrichment/people/:id` /
   `…/companies/:id` (`enrichment:delete`, audited). Removes identity keys, evidence, snapshots,
-  change events, discovery links, jobs and raw responses in one transaction.
+  change events, discovery links, jobs and raw responses in one transaction. Also removes the person's rows from every
+  Workbooks V2 workbook.
 - **Data-subject request:** follow `docs/ops/dsar-fulfillment.md`; the enrichment delete above is
   the enrichment step of it.
 - **Workspace offboarding:** every enrichment table has `workspace_id` with `ON DELETE CASCADE`.

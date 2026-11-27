@@ -172,7 +172,11 @@ export const consents = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     recordedBy: uuid("recorded_by").references(() => users.id, { onDelete: "set null" }),
   },
-  (table) => [index("consents_workspace_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId)]
+  (table) => [
+    index("consents_workspace_subject_idx").on(table.workspaceId, table.subjectType, table.subjectId),
+    // WB2-027: revoked email consent, found by whoever's identifier it was recorded under.
+    index("consents_revoked_email_idx").on(table.workspaceId, sql`lower(${table.subjectId})`).where(sql`${table.type} = 'email' AND ${table.revokedAt} IS NOT NULL`),
+  ]
 );
 
 /**

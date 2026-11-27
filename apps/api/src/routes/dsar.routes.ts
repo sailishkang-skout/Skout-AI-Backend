@@ -3,6 +3,7 @@ import { z } from "zod";
 import { errorResponse } from "../utils/http.js";
 import { buildDsarService } from "../services/dsar.service.js";
 import { HttpError } from "@skout/auth";
+import { importStorage } from "../services/workbook-import-storage.js";
 
 const createSchema = z.object({
   requestType: z.enum(["access", "erasure", "rectification", "portability"]),
@@ -75,8 +76,10 @@ export async function dsarRoutes(app: FastifyInstance) {
       return reply.status(400).send(errorResponse("Invalid status payload", 400, parsed.error.flatten()));
     }
     try {
-      const row = await svc.updateStatus(request.workspaceId, id, parsed.data.status, parsed.data.notes);
-      return reply.send({ data: row });
+      const context = request.userId ? { userId: request.userId, requestId: request.id, storage: importStorage(app.config) } : undefined;
+      const { erasure, ...row } = await svc.updateStatus(request.workspaceId, id, parsed.data.status, parsed.data.notes, context);
+      // Counts only, for the person fulfilling the request.
+      return reply.send({ data: row, ...(erasure ? { erasure } : {}) });
     } catch (err) {
       if (err instanceof HttpError) {
         return reply.status(err.statusCode).send(errorResponse(err.message, err.statusCode));

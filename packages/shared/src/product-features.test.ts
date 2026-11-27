@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  OPT_IN_FEATURES,
+  defaultFeatures,
+  isOptInFeature,
   FEATURE_API_PREFIXES,
   FEATURE_LABELS,
   PLAN_PRESETS,
@@ -8,7 +11,7 @@ import {
 } from "./product-features.js";
 
 describe("product feature catalog", () => {
-  it("has exactly the twelve spec keys", () => {
+  it("has the twelve spec keys, then the opt-in WORKBOOKS_V2 switch", () => {
     expect([...PRODUCT_FEATURES]).toEqual([
       "ai",
       "sequences",
@@ -22,6 +25,7 @@ describe("product feature catalog", () => {
       "warmup",
       "meeting_voice",
       "analytics",
+      "workbooks_v2",
     ]);
   });
 
@@ -56,10 +60,27 @@ describe("product feature catalog", () => {
     expect(featureForApiPath("/api/v1/aiming")).toBeNull();
   });
 
-  it("presets turn every feature on with 500 credits", () => {
+  it("presets turn every general feature on with 500 credits, and leave opt-in features off", () => {
     for (const plan of ["full", "multichannel"] as const) {
       expect(PLAN_PRESETS[plan].credits).toBe(500);
-      for (const f of PRODUCT_FEATURES) expect(PLAN_PRESETS[plan].features[f]).toBe(true);
+      for (const f of PRODUCT_FEATURES) expect(PLAN_PRESETS[plan].features[f]).toBe(!isOptInFeature(f));
+      expect(PLAN_PRESETS[plan].features.workbooks_v2).toBe(false);
     }
+  });
+
+  describe("WORKBOOKS_V2 (opt-in)", () => {
+    it("is the only opt-in feature and is off by default while the rest are on", () => {
+      expect([...OPT_IN_FEATURES]).toEqual(["workbooks_v2"]);
+      const d = defaultFeatures();
+      expect(d.workbooks_v2).toBe(false);
+      for (const f of PRODUCT_FEATURES.filter((x) => x !== "workbooks_v2")) expect(d[f]).toBe(true);
+    });
+
+    it("gates /api/v1/workbooks-v2 and leaves the legacy /workbooks routes under enrichment", () => {
+      expect(featureForApiPath("/api/v1/workbooks-v2/status")).toBe("workbooks_v2");
+      expect(featureForApiPath("/api/v1/workbooks-v2")).toBe("workbooks_v2");
+      expect(featureForApiPath("/api/v1/workbooks/123/runs")).toBe("enrichment");
+      expect(featureForApiPath("/api/v1/workbooks-v22")).toBeNull();
+    });
   });
 });

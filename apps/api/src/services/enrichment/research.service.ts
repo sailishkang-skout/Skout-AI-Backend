@@ -17,6 +17,8 @@ import { jobRoleCounts } from "./company-jobs.service.js";
 import { resolveCompanyCountry } from "./company-country.js";
 import { cleanCompanyName, normalizedCompanyName, prospectIdForCanonicalKey, publicIdFromProfileUrl } from "./capture-identity.js";
 import { deleteCaptureEvidence } from "./capture-evidence.js";
+import { auditErasure, erasureSubject, eraseFromImportFiles, eraseFromWorkbooks } from "../workbook-erasure.service.js";
+import type { ImportStorage } from "../workbook-import-storage.js";
 import { CaptureError, type CaptureActor } from "./capture-ingest.service.js";
 
 const {
@@ -966,6 +968,8 @@ export interface DeleteResult {
   evidenceRemoved: number;
   /** False when the CRM contact existed before capture and was kept (unlinked from the capture). */
   contactRemoved: boolean;
+  /** Rows of this person removed from Workbooks V2 workbooks. Only for a person. */
+  workbookRowsRemoved?: number;
 }
 
 /**
@@ -973,8 +977,16 @@ export interface DeleteResult {
  * snapshots, change history, discovery edges, jobs and list memberships. The CRM contact is
  * removed only when the capture created it; a contact that already existed keeps its CRM data.
  */
-export async function deletePerson(db: Db, actor: CaptureActor, prospectId: string): Promise<DeleteResult | null> {
+export async function deletePerson(db: Db, actor: CaptureActor, prospectId: string, storage: ImportStorage | null = null): Promise<DeleteResult | null> {
   const { workspaceId } = actor;
+  const [held] = await db
+    .select({ prospectId: prospectActivations.prospectId })
+    .from(prospectActivations)
+    .where(and(eq(prospectActivations.workspaceId, workspaceId), eq(prospectActivations.prospectId, prospectId)))
+    .limit(1);
+  if (!held) return null;
+  // WB2-027: the person leaves every Workbooks V2 workbook too. Import files first; they can't join the transaction.
+  const files = await eraseFromImportFiles(db, storage, workspaceId, await erasureSubject(db, workspaceId, { prospectId }));
   return db.transaction(async (tx) => {
     const [activation] = await tx
       .select({ prospectId: prospectActivations.prospectId })
@@ -989,6 +1001,10 @@ export async function deletePerson(db: Db, actor: CaptureActor, prospectId: stri
       .where(and(eq(contacts.workspaceId, workspaceId), eq(contacts.sourceProspectId, prospectId), isNull(contacts.deletedAt)))
       .limit(1);
 
+    // Before anything is deleted: what the person is known by is read from these records, and workbooks are locked
+    // before the rows of anything else.
+    const eraser = { workspaceId, userId: actor.userId };
+    const erased = await eraseFromWorkbooks(tx as unknown as Db, eraser, await erasureSubject(tx as unknown as Db, workspaceId, { prospectId }));
     let evidenceRemoved = await deleteCaptureEvidence(tx, workspaceId, "prospect", [prospectId]);
     let contactRemoved = false;
     if (contact) {
@@ -1045,7 +1061,10 @@ export async function deletePerson(db: Db, actor: CaptureActor, prospectId: stri
       beforeState: { prospectId, contactId: contact?.id ?? null },
       afterState: { deleted: true, evidenceRemoved, contactRemoved },
     });
-    return { deletedId: prospectId, evidenceRemoved, contactRemoved };
+    if (erased.rowsRemoved || erased.cellsCleared || files.reportsCleaned || files.previewsCancelled) {
+      await auditErasure(tx as unknown as Db, eraser, { type: "person", id: contact?.id ?? workspaceId }, { ...erased, ...files });
+    }
+    return { deletedId: prospectId, evidenceRemoved, contactRemoved, workbookRowsRemoved: erased.rowsRemoved };
   });
 }
 

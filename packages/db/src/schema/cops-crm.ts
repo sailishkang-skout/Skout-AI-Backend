@@ -1,5 +1,6 @@
 import { boolean, index, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspaces } from "./workspaces.js";
+import { sql } from "drizzle-orm";
 import { companies, contacts, deals } from "./crm.js";
 
 /**
@@ -58,6 +59,10 @@ export const contactChannels = pgTable(
   (t) => ({
     uniqueValue: unique("contact_channels_unique").on(t.workspaceId, t.contactId, t.channel, t.value),
     workspaceIdx: index("contact_channels_workspace_idx").on(t.workspaceId, t.contactId),
+    // WB2-027: the opt-out check, by address and by the digits of a do-not-contact number.
+    emailMatchIdx: index("contact_channels_email_match_idx").on(t.workspaceId, sql`lower(btrim(${t.value}))`).where(sql`${t.channel} = 'email'`),
+    suppressedContactIdx: index("contact_channels_suppressed_contact_idx").on(t.workspaceId, t.contactId).where(sql`${t.suppressed}`),
+    suppressedPhoneIdx: index("contact_channels_suppressed_phone_idx").on(t.workspaceId, sql`regexp_replace(${t.value}, '[^0-9]', '', 'g')`).where(sql`${t.suppressed} AND ${t.channel} = 'phone'`),
   })
 );
 
