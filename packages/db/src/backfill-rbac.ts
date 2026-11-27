@@ -44,6 +44,9 @@ const PERMISSION_CATALOG: Array<{ key: string; description: string; category: st
   { key: "enrichment:export", description: "Export workspace enrichment data.", category: "enrichment" },
   { key: "enrichment:delete", description: "Delete workspace enrichment data.", category: "enrichment" },
   { key: "enrichment:admin", description: "Manage enrichment provider connections and settings.", category: "enrichment" },
+  // Workbooks V2 (WB2-014, migration 0178). Owner and admin hold it; member does not, so spending credits is opt-in.
+  // The dot is the name the Workbooks PRD uses.
+  { key: "enrichment.run", description: "Run workbook columns and push workbook data to a CRM. Spends credits.", category: "enrichment" },
   // COPS-15: entry to the CustomerOps portal. Granted explicitly, never through owner/admin.
   { key: "ops:access", description: "Use the CustomerOps portal (Skout staff only).", category: "ops" },
   // Early access (migration 0161): approve self-signups, set plans and feature switches. Only acts

@@ -7,6 +7,7 @@ import { errorResponse } from "../utils/http.js";
 import { buildEntitlementsService } from "../services/entitlements.service.js";
 import { isPlatformAdmin } from "../services/regional-brief.service.js";
 import { INTERNAL_ACCESS_ENTITLEMENT } from "../services/enrichment/release-gate.js";
+import { WORKBOOK_ROW_LIMIT_ENTITLEMENT } from "../services/workbook-v2.service.js";
 
 const setSchema = z.object({
   value: z.unknown(),
@@ -21,6 +22,8 @@ const setSchema = z.object({
 export function isPlatformManagedEntitlement(key: string): boolean {
   // Early access: feature switches and the plan are Skout's call (COPS), never the customer's.
   if (key.startsWith("feature.") || key.startsWith("access.") || key === "plan.code") return true;
+  // The rows-per-workbook limit is set by CustomerOps (PRD WB-4); a workspace cannot raise its own.
+  if (key === WORKBOOK_ROW_LIMIT_ENTITLEMENT) return true;
   return key === INTERNAL_ACCESS_ENTITLEMENT || key.endsWith(".internal_access");
 }
 
