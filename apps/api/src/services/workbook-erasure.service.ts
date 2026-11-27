@@ -1,3 +1,12 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (WB2-027 additions).
+ *   - Tables touched directly: contacts - read only (owned by apps/crm)
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: an erasure finds everything the person is known by and removes their workbook rows in one transaction
+ *     with the request's status; an HTTP call into apps/crm cannot take part in it.
+ *   - Review date: 2026-11-27
+ */
 import { open } from "node:fs/promises";
 import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";

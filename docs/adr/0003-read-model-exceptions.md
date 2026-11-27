@@ -244,3 +244,17 @@ by apps/api.
 ### Subscription auto-start additions (2026-11-17)
 
 - `apps/api/src/services/cops-subscriptions.service.ts`: reads `deals` and `pipeline_stages`, and sets a deal to won, when a paid proposal starts its subscription (`startSubscriptionOnProposalPayment` / `markDealWonOnPayment`). Done in the payment webhook's transaction so payment, subscription and deal stay consistent. Review when apps/crm exposes a "mark deal won" API.
+
+## WB2-027 additions (2026-11-27)
+
+| File | Tables | Access |
+| --- | --- | --- |
+| `apps/api/src/services/cops-can-contact.ts` | contacts | read only: `findOptedOut` follows a workbook row's prospect, address or LinkedIn identity to the CRM contact, to know whether that person opted out |
+| `apps/api/src/services/workbook-erasure.service.ts` | contacts | read only: the addresses, prospect ids and profile a person to be erased is known by |
+| `apps/api/src/routes/workbook-v2-suppression.routes.test.ts` | contacts | test fixtures |
+
+Workbook rows are marked in the transaction that writes them, the same lookup runs before every operation a column makes
+for a row, and an erasure removes rows in one transaction with its request's status. An HTTP call into apps/crm cannot
+take part in those transactions, and one call per row would be far too slow. Both service files carry the formal
+exception comment block.
+

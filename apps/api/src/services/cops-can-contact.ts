@@ -1,3 +1,12 @@
+/**
+ * Section 7.1 / Section 5 DOCUMENTED READ-MODEL EXCEPTION (Enterprise Completion Plan) - see
+ * docs/adr/0003-read-model-exceptions.md (WB2-027 additions).
+ *   - Tables touched directly: contacts - read only (owned by apps/crm), in findOptedOut
+ *   - Owning service: apps/crm (apps/api has direct Postgres access via the shared instance)
+ *   - Reason: a batch opt-out lookup joins contacts to suppressions and consent for thousands of workbook rows, inside
+ *     the transaction that writes the rows and again before every operation on a row.
+ *   - Review date: 2026-11-27
+ */
 import { and, eq, sql } from "drizzle-orm";
 import { schema, type Db } from "@skout/db";
 import type { Env } from "../config/env.js";
